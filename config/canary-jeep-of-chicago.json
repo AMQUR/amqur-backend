@@ -45,7 +45,13 @@
     "existingChatWidgetRisk": true,
     "cspHeaderDetected": false,
     "installAuthorized": false,
-    "blocker": "Path A: tagmanager.google.com Sign-in required (no session). Path B: org OAuth client not approved. Path C: no TeamVelocity channel. Stock Cloud SDK GTM OAuth permanently unsupported. Handoff/CRM_WEBHOOK unset. PREPARED_NOT_INSTALLED; no publish attempted."
+    "blocker": "Google auth succeeded; account sees Jeep of Chicago Google tags G-VPK5NDXW9G and GT-KDDGB74T (GA4/Google tags \u2014 not GTM; do not modify). GTM container GTM-MP5XGBXQ not accessible on GTM Accounts. Path B org OAuth / Path C TeamVelocity still required for GTM deploy. PREPARED_NOT_INSTALLED; no publish.",
+    "googleAuthStatus": "SUCCEEDED_GOOGLE_TAGS_VISIBLE",
+    "gtmContainerAccess": "MISSING",
+    "observedGoogleTagsNotGtm": [
+      "G-VPK5NDXW9G",
+      "GT-KDDGB74T"
+    ]
   },
   "origins": {
     "requiredCorsAndAllowedOrigins": [
@@ -70,7 +76,10 @@
   },
   "theme": {
     "launcherPlacement": "bottom-right",
-    "languages": ["en", "es"]
+    "languages": [
+      "en",
+      "es"
+    ]
   },
   "analytics": {
     "identifiers": {
@@ -87,12 +96,32 @@
     "note": "Escalations persist to DB; CRM_WEBHOOK_URL unset. Customer traffic requires verified recipient."
   },
   "canaryTraffic": {
-    "level0_disabled": { "percent": 0, "active": true },
-    "level1_employee": { "percent": 0, "active": false, "gate": "hashed_query_or_cookie_allowlist" },
-    "level2_one_percent": { "percent": 1, "active": false, "bucketing": "stable_session_hash" },
-    "level3_five_percent": { "percent": 5, "active": false },
-    "level4_twenty_five_percent": { "percent": 25, "active": false },
-    "level5_full_rooftop": { "percent": 100, "active": false }
+    "level0_disabled": {
+      "percent": 0,
+      "active": true
+    },
+    "level1_employee": {
+      "percent": 0,
+      "active": false,
+      "gate": "hashed_query_or_cookie_allowlist"
+    },
+    "level2_one_percent": {
+      "percent": 1,
+      "active": false,
+      "bucketing": "stable_session_hash"
+    },
+    "level3_five_percent": {
+      "percent": 5,
+      "active": false
+    },
+    "level4_twenty_five_percent": {
+      "percent": 25,
+      "active": false
+    },
+    "level5_full_rooftop": {
+      "percent": 100,
+      "active": false
+    }
   },
   "rollback": {
     "flag": "amqur_canary_kill=1",
@@ -127,7 +156,7 @@
       "vehicleCompare": true,
       "savedVehicles": true,
       "financeCalculator": true,
-      "note": "Fixture inventory ONLY on visibly labeled staging/employee pages — never public customer mode"
+      "note": "Fixture inventory ONLY on visibly labeled staging/employee pages \u2014 never public customer mode"
     },
     "hardDisabled": [
       "tekionIntegration",

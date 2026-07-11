@@ -5,7 +5,7 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-11 (Path A: tagmanager.google.com Sign-in required — no session; Path B: org OAuth requirements documented; Path C: TV template not submitted; stock Cloud SDK GTM OAuth permanently unsupported)
+**Last discovery pass:** 2026-07-11 (Path A: Google auth succeeded for Jeep of Chicago **Google tags** `G-VPK5NDXW9G` / `GT-KDDGB74T` — these are GA4/Google tag IDs, **not** GTM. Container `GTM-MP5XGBXQ` not verified accessible on GTM Accounts. Path B/C unchanged. Stock Cloud SDK GTM OAuth unsupported.)
 
 ---
 
@@ -41,12 +41,15 @@ Primary observed container commonly referenced: **GTM-MP5XGBXQ**
 | TeamVelocity / Apollo portal credential | Absent |
 | GTM workspace / Preview | **Not created** |
 | Public GTM publish | **Not attempted** |
+| Operator Google auth (Path A) | **Succeeded** (redacted account) |
+| Jeep of Chicago Google tags visible | `G-VPK5NDXW9G`, `GT-KDDGB74T` — **Google/GA4 tags, not GTM containers**; do not modify |
+| GTM Accounts: `GTM-MP5XGBXQ` | **Not accessible / not listed** for current account — GTM container Edit unavailable |
 
 ### Required next external action (approved paths only)
 
 | Path | Action | Status |
 |---|---|---|
-| **A** | Sign in at [tagmanager.google.com](https://tagmanager.google.com) with Jeep of Chicago–authorized account; create unpublished workspace `AMQUR Internal Employee Canary`; Preview only | **WAITING** — official Sign-in page open; no session verified |
+| **A** | Sign in at [tagmanager.google.com](https://tagmanager.google.com); confirm **GTM container** `GTM-MP5XGBXQ` (or correct Jeep of Chicago container) on Accounts; create unpublished workspace; Preview only | **PARTIAL** — Google auth succeeded; operator can see Google tags `G-VPK5NDXW9G` / `GT-KDDGB74T` (**not** GTM containers — do not modify). **`GTM-MP5XGBXQ` not listed / not accessible** on GTM Accounts for this account → **lacks GTM container access** |
 | **B** | Org-owned OAuth client per `docs/integrations/GTM_ORG_OAUTH_CLIENT_REQUIREMENTS.md` | **BLOCKED** — awaiting org project owner |
 | **C** | Submit TeamVelocity request via verified support channel | **BLOCKED** — no portal/CSM channel on this machine |
 
