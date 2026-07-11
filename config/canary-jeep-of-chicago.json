@@ -1,105 +1,165 @@
 {
   "canaryId": "dag-jeep-chicago-001",
+  "designation": "production_canary_package",
   "status": "PREPARED_NOT_INSTALLED",
+  "releaseLevel": 0,
+  "blockedReasons": [
+    "PRODUCTION_API_NOT_PROVISIONED",
+    "PRODUCTION_CDN_NOT_PROVISIONED",
+    "GTM_OR_TEAMVELOCITY_DEPLOY_ACCESS_MISSING",
+    "HUMAN_HANDOFF_DESTINATION_UNVERIFIED",
+    "LIVE_INVENTORY_SOURCE_MISSING",
+    "ALERT_ROUTING_UNVERIFIED"
+  ],
   "selectedRooftop": {
     "publicSite": "https://www.jeepofchicago.com",
-    "brand": "Jeep",
-    "rationale": [
-      "Single-brand rooftop (lower blast radius than dialautogroup.com)",
-      "Public HTML exposes Google Tag Manager containers — safest auditable install path",
-      "TeamVelocity / dealer.com fingerprint — standard dealer website vendor path",
-      "Clearer tenant/location mapping than multi-brand group homepage"
+    "hostnamesAllowed": [
+      "www.jeepofchicago.com",
+      "jeepofchicago.com"
     ],
-    "rejectedAlternatives": [
-      {
-        "site": "dialnissan.com",
-        "reason": "Probe returned minimal HTML (likely bot shield); install path unclear without vendor access"
-      },
-      {
-        "site": "dialchevy.com",
-        "reason": "DealerOn stack; deferred until DealerOn/GTM API access confirmed"
-      },
-      {
-        "site": "dialjeep.com",
-        "reason": "Minimal probe response; prefer jeepofchicago.com which returned full document"
-      },
-      {
-        "site": "dialautogroup.com",
-        "reason": "Group marketing site — higher risk of wrong rooftop attribution"
-      }
-    ]
+    "brand": "Jeep / CDJR of Chicago",
+    "publicTitleObserved": "Chrysler Dodge Jeep RAM of Chicago, Jeep of Chicago Dealer",
+    "dealerCodeObserved": "chryslerdodgejeepramofchicagoilcllc",
+    "addressObservedPublic": "5950 N Western Ave, Chicago, IL 60659",
+    "timezone": "America/Chicago"
   },
   "proposedTenant": {
     "tenantSlug": "dial-auto-group",
     "locationSlug": "jeep-of-chicago",
-    "timezone": "America/Chicago",
-    "note": "Production tenant/location not seeded until website install + inventory + handoff verified"
+    "locationName": "Jeep of Chicago",
+    "seededInProduction": false
   },
   "websiteInstallation": {
-    "method": "Google Tag Manager (preferred)",
+    "methodPreferred": "Google Tag Manager",
+    "methodFallback": "TeamVelocity / dealer.com script manager",
     "observedGtmContainers": [
       "GTM-MP5XGBXQ",
       "GTM-MV862RN",
+      "GTM-NFTX3XB",
       "GTM-PZR8D88Z",
       "GTM-TPV8SZS7",
       "GTM-WQP4BHQ4"
     ],
-    "cmsFingerprint": "TeamVelocity / dealer.com",
+    "cmsFingerprint": "TeamVelocity / dealer.com / Kestrel",
+    "consentPlatformDetected": false,
+    "existingChatWidgetRisk": true,
+    "cspHeaderDetected": false,
     "installAuthorized": false,
-    "blocker": "No authenticated GTM API, TeamVelocity, or dealer.com deployment credential available on this machine",
-    "rollback": "Disable GTM tag / trigger; or set location featureFlags chat=false"
-  },
-  "trafficProgression": [
-    { "phase": 1, "audience": "internal_employees", "percent": 0, "gate": "staff allowlist cookie or GTM lookup table" },
-    { "phase": 2, "audience": "allowlisted_testers", "percent": 0, "gate": "explicit allowlist" },
-    { "phase": 3, "audience": "customers", "percent": 5, "gate": "error/claim/handoff SLOs" },
-    { "phase": 4, "audience": "customers", "percent": 25, "gate": "same" },
-    { "phase": 5, "audience": "customers", "percent": 50, "gate": "same" },
-    { "phase": 6, "audience": "customers", "percent": 100, "gate": "pilot rooftop only" }
-  ],
-  "currentPhase": 0,
-  "enabledFeaturesWhenLive": {
-    "chat": true,
-    "inventory": true,
-    "vehicleCompare": true,
-    "savedVehicles": true,
-    "leadCapture": true,
-    "financeCalculator": true,
-    "serviceAi": true,
-    "partsAi": true,
-    "multilingual": true,
-    "handoff": true,
-    "leadScoring": true,
-    "copilot": true,
-    "proactiveEngagement": true
-  },
-  "disabledUntilVerified": {
-    "tekionIntegration": true,
-    "vAutoFeed": true,
-    "automatedFollowup": true,
-    "voiceAi": true,
-    "crossStoreInventory": true,
-    "priceDropAlerts": true,
-    "liveAppointmentConfirmation": true,
-    "repairOrderStatusClaims": true,
-    "financeApprovalClaims": true
+    "blocker": "No authenticated GTM API, TeamVelocity, or dealer.com deployment credential on this machine"
   },
   "origins": {
     "requiredCorsAndAllowedOrigins": [
       "https://www.jeepofchicago.com",
       "https://jeepofchicago.com"
     ],
-    "api": "PRODUCTION_API_NOT_PROVISIONED_FOR_CANARY",
-    "widgetCdn": "PRODUCTION_CDN_NOT_PROVISIONED"
+    "api": {
+      "status": "BLOCKED",
+      "value": null,
+      "note": "Do not invent. Provision production API then set explicitly."
+    },
+    "widgetAsset": {
+      "status": "BLOCKED",
+      "value": null,
+      "note": "Do not invent CDN URL. Version-pin IIFE when provisioned."
+    },
+    "stagingOnlyReference": {
+      "api": "https://backend-staging-staging-b699.up.railway.app",
+      "widget": "https://widget-staging-staging.up.railway.app",
+      "allowedFor": "employee_labeled_test_pages_only"
+    }
+  },
+  "theme": {
+    "launcherPlacement": "bottom-right",
+    "languages": ["en", "es"]
+  },
+  "analytics": {
+    "identifiers": {
+      "status": "BLOCKED",
+      "note": "Assign production analytics property before Level 2+"
+    },
+    "doNotCaptureMessageContent": true
+  },
+  "humanHandoff": {
+    "status": "BLOCKED",
+    "destinationVerified": false,
+    "crmWebhookConfigured": false,
+    "testRecipientApproved": false,
+    "note": "Escalations persist to DB; CRM_WEBHOOK_URL unset. Customer traffic requires verified recipient."
+  },
+  "canaryTraffic": {
+    "level0_disabled": { "percent": 0, "active": true },
+    "level1_employee": { "percent": 0, "active": false, "gate": "hashed_query_or_cookie_allowlist" },
+    "level2_one_percent": { "percent": 1, "active": false, "bucketing": "stable_session_hash" },
+    "level3_five_percent": { "percent": 5, "active": false },
+    "level4_twenty_five_percent": { "percent": 25, "active": false },
+    "level5_full_rooftop": { "percent": 100, "active": false }
+  },
+  "rollback": {
+    "flag": "amqur_canary_kill=1",
+    "gtm": "Unpublish or pause AMQUR tags; revert container version",
+    "featureFlags": "Set location featureFlags.chat=false",
+    "asset": "Point CDN latest to previous versioned IIFE"
+  },
+  "featureFlags": {
+    "publicCustomerMode": {
+      "chat": true,
+      "inventory": false,
+      "vehicleCompare": false,
+      "savedVehicles": false,
+      "financeCalculator": false,
+      "leadCapture": true,
+      "serviceAi": true,
+      "partsAi": true,
+      "multilingual": true,
+      "handoff": true,
+      "leadScoring": true,
+      "copilot": true,
+      "proactiveEngagement": false,
+      "tekionIntegration": false,
+      "vAutoFeed": false,
+      "automatedFollowup": false,
+      "voiceAi": false,
+      "crossStoreInventory": false,
+      "priceDropAlerts": false
+    },
+    "employeeLabeledTestModeOnly": {
+      "inventory": true,
+      "vehicleCompare": true,
+      "savedVehicles": true,
+      "financeCalculator": true,
+      "note": "Fixture inventory ONLY on visibly labeled staging/employee pages — never public customer mode"
+    },
+    "hardDisabled": [
+      "tekionIntegration",
+      "tekionCrmWriteback",
+      "tekionCustomerLookup",
+      "tekionServiceScheduling",
+      "tekionRepairOrderLookup",
+      "vAutoFeed",
+      "liveInventoryClaims",
+      "automatedSms",
+      "automatedEmail",
+      "automatedWhatsApp",
+      "outboundCalling",
+      "voiceAi",
+      "liveAppointmentConfirmation",
+      "finalFinanceApproval",
+      "finalIncentiveEligibility",
+      "crossStoreInventory",
+      "autonomousPriceNegotiation",
+      "fixtureInventoryInPublicMode"
+    ]
   },
   "autoPauseTriggers": [
     "inventory_stale",
+    "fixture_inventory_in_public_mode",
     "tekion_repeated_failure",
     "lead_writeback_failure",
     "cors_or_token_error_spike",
     "customer_visible_error_spike",
     "unsupported_claim_detected",
     "cross_tenant_access_failure",
-    "cwv_regression"
+    "cwv_regression",
+    "handoff_destination_failure"
   ]
 }
