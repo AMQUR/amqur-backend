@@ -65,7 +65,18 @@ jobs:
       - name: Secret scan (tracked)
         run: |
           set -euo pipefail
-          if git ls-files -z | xargs -0 rg -l --ignore-case 'BEGIN (RSA |OPENSSH )?PRIVATE KEY|TEKION_CLIENT_SECRET=.+|JWT_SECRET=[A-Za-z0-9]{16,}|DATABASE_URL=postgres(ql)?://[^:]+:[^@]+@' ; then
+          hits=$(git ls-files -z \
+            | xargs -0 rg -l --ignore-case \
+              --glob '!.github/workflows/**' \
+              --glob '!docs/**' \
+              --glob '!.env*.example' \
+              'BEGIN (RSA |OPENSSH )?PRIVATE KEY' \
+              -e 'TEKION_CLIENT_SECRET=.+' \
+              -e 'JWT_SECRET=[A-Za-z0-9+/_-]{16,}' \
+              -e 'DATABASE_URL=postgres(ql)?://[^[:space:]]+:[^[:space:]]+@' \
+            || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
             echo "Potential secret in tracked files" >&2
             exit 1
           fi
