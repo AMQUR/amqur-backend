@@ -45,7 +45,7 @@
     "existingChatWidgetRisk": true,
     "cspHeaderDetected": false,
     "installAuthorized": false,
-    "blocker": "GTM ADC OAuth initiated 2026-07-11 but not completed; TeamVelocity portal credential absent; no unpublished workspace created; no publish attempted"
+    "blocker": "Google blocked stock Cloud SDK ADC OAuth for Tag Manager sensitive scopes (This app is blocked); ADC absent/clean; authorized tagmanager.google.com account, org-approved OAuth client/SA, or TeamVelocity required; still PREPARED_NOT_INSTALLED; no publish attempted"
   },
   "origins": {
     "requiredCorsAndAllowedOrigins": [

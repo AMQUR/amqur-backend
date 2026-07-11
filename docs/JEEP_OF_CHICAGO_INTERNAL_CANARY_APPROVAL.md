@@ -104,7 +104,8 @@ _TBD — start/end America/Chicago_
 ## Known limitations
 
 - Production API/CDN hosts not yet provisioned in canary config (fail-closed until set)
-- GTM container access not yet verified for this operator account
+- GTM container access not verified — Google blocked stock Cloud SDK ADC OAuth for Tag Manager sensitive scopes (“This app is blocked”); use tagmanager.google.com with an authorized dealership account, an org-approved OAuth client/service account, or TeamVelocity (see widget issue #6)
+- Application Default Credentials for Tag Manager: **absent/clean** (no partial write); do not retry the same default-client ADC scope request
 - TeamVelocity portal credential not present
 - Handoff test destination not verified (`CRM_WEBHOOK_URL` unset on staging)
 - Existing third-party chat fingerprints on site — coordinate launcher placement
