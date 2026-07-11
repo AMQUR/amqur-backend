@@ -35,12 +35,16 @@ export class InventoryEngine {
             ?.toLowerCase()
             .replace(/\b(under|below|less than|\$|usd)\b/g, '')
             .replace(/\b\d{4}\b/g, '')
-            .replace(/jeeps/g, 'jeep')
+            .replace(/\btrucks\b/g, 'truck')
+            .replace(/\bsuvs\b/g, 'suv')
+            .replace(/\bsedans\b/g, 'sedan')
             .trim();
 
         let vehicles = await this.prisma.vehicle.findMany({
             where: {
                 tenantId,
+                // Only show sellable inventory — never fabricate availability
+                status: { in: ['AVAILABLE', 'IN_TRANSIT'] },
                 ...(locationId
                     ? {
                         OR: [
@@ -61,6 +65,12 @@ export class InventoryEngine {
                         },
                         {
                             make: {
+                                contains: cleanedQuery,
+                                mode: 'insensitive',
+                            },
+                        },
+                        {
+                            trim: {
                                 contains: cleanedQuery,
                                 mode: 'insensitive',
                             },
@@ -243,8 +253,9 @@ export class InventoryEngine {
         tenantId: string,
         vin: string,
     ) {
-        await this.prisma.vehicle.update({
-            where: { vin },
+        // Multi-tenant safe: only hold vehicles belonging to this tenant
+        await this.prisma.vehicle.updateMany({
+            where: { tenantId, vin },
             data: { status: 'HOLD' },
         });
     }

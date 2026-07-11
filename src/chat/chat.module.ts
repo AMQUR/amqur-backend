@@ -27,11 +27,16 @@ import { IntelligentRouter } from './intelligence/intelligent.router';
 import { IntelligentService } from './intelligence/intelligent.service';
 import { VinExplainerService } from './vin/vin-explainer.service';
 import { FollowupEngine } from './followup/followup.engine';
+import { ClaudeConversationService } from './claude/claude-conversation.service';
+import { EscalationsModule } from '../escalations/escalations.module';
+import { LeadsModule } from '../leads/leads.module';
 
 @Module({
     imports: [
         AuthModule,
         PaymentModule,
+        EscalationsModule,
+        LeadsModule,
     ],
     controllers: [ChatController],
     providers: [
@@ -47,6 +52,7 @@ import { FollowupEngine } from './followup/followup.engine';
         MediaEngine,
         IntelligentRouter,
         IntelligentService,
+        ClaudeConversationService,
 
         // memory
         ConversationStore,
@@ -69,6 +75,6 @@ import { FollowupEngine } from './followup/followup.engine';
         // calendar (E6.7)
         GoogleCalendarService,
     ],
-    exports: [ChatOrchestrator],
+    exports: [ChatOrchestrator, CrmWebhookService],
 })
 export class ChatModule { }

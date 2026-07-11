@@ -1,31 +1,38 @@
 import {
-    IsEmail,
-    IsOptional,
-    IsString,
-    MinLength,
-    IsUUID,
+  IsEmail,
+  IsEnum,
+  IsOptional,
+  IsString,
+  MinLength,
 } from 'class-validator';
+import { Role } from '@prisma/client';
 
 export class RegisterDto {
-    @IsEmail()
-    email: string;
+  @IsEmail()
+  email: string;
 
-    @IsString()
-    @MinLength(6)
-    password: string;
+  @IsString()
+  @MinLength(8)
+  password: string;
 
-    @IsString()
-    @MinLength(2)
-    firstName: string;
+  @IsString()
+  @MinLength(1)
+  firstName: string;
 
-    @IsString()
-    @MinLength(2)
-    lastName: string;
+  @IsString()
+  @MinLength(1)
+  lastName: string;
 
-    @IsUUID()
-    tenantId: string;
+  /** Prisma cuid — not UUID */
+  @IsString()
+  @MinLength(8)
+  tenantId: string;
 
-    @IsOptional()
-    @IsUUID()
-    locationId?: string;
+  @IsOptional()
+  @IsString()
+  locationId?: string;
+
+  @IsOptional()
+  @IsEnum(Role)
+  role?: Role;
 }

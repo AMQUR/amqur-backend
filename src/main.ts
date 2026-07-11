@@ -1,17 +1,19 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log'],
+  });
+  const logger = new Logger('Bootstrap');
 
-  // Global API prefix
   app.setGlobalPrefix('api');
 
-  // Request validation (DTO enforcement)
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -20,16 +22,24 @@ async function bootstrap() {
     }),
   );
 
-  // Global error formatter
   app.useGlobalFilters(new GlobalExceptionFilter());
+  app.useGlobalInterceptors(
+    new RequestIdInterceptor(),
+    new ResponseInterceptor(),
+  );
 
-  // Global success response formatter
-  app.useGlobalInterceptors(new ResponseInterceptor());
+  const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
 
-  // CORS for widget + frontend
-  // CORS for widget + dealership websites
   app.enableCors({
-    origin: true, // allow any dealership domain
+    origin:
+      corsOrigins.length > 0
+        ? corsOrigins
+        : process.env.NODE_ENV === 'production'
+          ? false
+          : true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -38,14 +48,19 @@ async function bootstrap() {
       'Accept',
       'Origin',
       'X-Requested-With',
+      'X-Request-Id',
     ],
+    exposedHeaders: ['X-Request-Id'],
   });
 
+  app.enableShutdownHooks();
 
-  const port = process.env.PORT || 3000;
+  const port = Number(process.env.PORT) || 3000;
   await app.listen(port);
-
-  console.log(`🚀 API running on http://localhost:${port}/api`);
+  logger.log(`API listening on port ${port}`);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  console.error('Fatal bootstrap error', err);
+  process.exit(1);
+});

@@ -29,12 +29,16 @@ export class WidgetAuthService {
             throw new UnauthorizedException('Invalid location');
         }
 
-        const token = this.jwt.sign({
-            sub: 'widget',
-            role: 'WIDGET',
-            tenantId: tenant.id,
-            locationId: location.id,
-        });
+        // Widget tokens are short-lived (4 h). The widget refreshes automatically on 401.
+        const token = this.jwt.sign(
+            {
+                sub: 'widget',
+                role: 'widget',
+                tenantId: tenant.id,
+                locationId: location.id,
+            },
+            { expiresIn: '4h' },
+        );
 
         return { token };
     }

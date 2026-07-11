@@ -30,12 +30,18 @@ export type FinanceEstimateOutput = {
 
 @Injectable()
 export class PaymentService {
-    // defaults you can tune later per rooftop/tenant
+    /**
+     * Educational defaults only — not dealership/lender offers.
+     * Tenant-specific APR/fees/tax must come from verified config when available.
+     */
     private DEFAULT_TERM = 72;
     private DEFAULT_APR = 9.99;
-    private DEFAULT_FEES = 899;     // placeholder
-    private DEFAULT_TAX_RATE = 9.25; // Chicago-ish placeholder
+    private DEFAULT_FEES = 899;
+    private DEFAULT_TAX_RATE = 9.25;
     private DEFAULT_TAX_ON: 'price' | 'net' = 'price';
+
+    readonly estimateDisclaimer =
+        'This is an educational payment estimate only, not a credit decision or official dealership offer. Actual APR, fees, taxes, and incentives must be verified with the dealership.';
 
     estimateFinance(input: FinanceEstimateInput): FinanceEstimateOutput {
         const price = this.money(input.price);

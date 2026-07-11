@@ -1,14 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 
 @Injectable()
 export class CrmWebhookService {
     private readonly logger = new Logger(CrmWebhookService.name);
+    private readonly webhookUrl: string | undefined;
+
+    constructor(config: ConfigService) {
+        this.webhookUrl = config.get<string>('CRM_WEBHOOK_URL');
+    }
 
     async send(payload: any) {
-        const url = process.env.CRM_WEBHOOK_URL;
+        const url = this.webhookUrl;
         if (!url) {
-            this.logger.warn(
+            this.logger.debug(
                 'CRM_WEBHOOK_URL not configured — skipping webhook.',
             );
             return;

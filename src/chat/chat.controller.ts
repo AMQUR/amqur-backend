@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Post, Req, UnauthorizedException } from '@nestjs/common';
 import { ChatService } from './chat.service';
 import { ChatDto } from './dto/chat.dto';
 
@@ -23,8 +23,8 @@ export class ChatController {
                 : req.user?.sub;
 
         if (!userId) {
-            throw new Error(
-                'Conversation identity missing. conversationId is required for widget traffic.'
+            throw new UnauthorizedException(
+                'Conversation identity missing. conversationId is required for widget traffic.',
             );
         }
 
