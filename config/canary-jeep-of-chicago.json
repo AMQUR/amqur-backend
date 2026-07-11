@@ -45,7 +45,7 @@
     "existingChatWidgetRisk": true,
     "cspHeaderDetected": false,
     "installAuthorized": false,
-    "blocker": "Google blocked stock Cloud SDK ADC OAuth for Tag Manager sensitive scopes (This app is blocked); ADC absent/clean; authorized tagmanager.google.com account, org-approved OAuth client/SA, or TeamVelocity required; still PREPARED_NOT_INSTALLED; no publish attempted"
+    "blocker": "Path A: tagmanager.google.com Sign-in required (no session). Path B: org OAuth client not approved. Path C: no TeamVelocity channel. Stock Cloud SDK GTM OAuth permanently unsupported. Handoff/CRM_WEBHOOK unset. PREPARED_NOT_INSTALLED; no publish attempted."
   },
   "origins": {
     "requiredCorsAndAllowedOrigins": [

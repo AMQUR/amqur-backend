@@ -1,10 +1,13 @@
 # Dial Auto Group — Production Rollout Report
 
-**Updated:** 2026-07-11 (external-authorization discovery — Google ADC “app blocked”)  
+**Updated:** 2026-07-11 (Paths A/B/C documented; stock Cloud SDK GTM OAuth permanently retired; Path A Sign-in pending)  
 **Canary branch:** `ops/canary-pilot-rollout` (merged)  
 **Live install / customer traffic:** **not enabled**  
 **GTM publish:** **not attempted**  
-**GTM API via stock Cloud SDK ADC:** **blocked by Google** (do not retry same client/scopes)
+**Stock Cloud SDK GTM OAuth:** **permanently unsupported** (Google “This app is blocked”)  
+**Path A (tagmanager.google.com):** Sign-in required — no authenticated session verified  
+**Path B (org OAuth client):** requirements documented — not approved  
+**Path C (TeamVelocity):** template ready — not submitted (no verified channel)
 
 ---
 
@@ -64,13 +67,14 @@ Release rule: if `tested SHA ≠ current PR head SHA` → **CI OUTDATED — NOT 
 
 | Area | Status |
 |---|---|
-| GTM access | BLOCKED BY ACCESS — Google blocked stock Cloud SDK OAuth client for Tag Manager sensitive scopes (“This app is blocked”); ADC file **absent/clean**; no container permission verified |
-| TeamVelocity access | BLOCKED BY ACCESS — no portal credential |
+| GTM access | BLOCKED BY ACCESS — Path A Sign-in pending; stock Cloud SDK GTM OAuth permanently unsupported; no container Edit verified |
+| TeamVelocity access | BLOCKED BY ACCESS — no portal/CSM channel; Path C template not submitted |
 | Human handoff | BLOCKED BY ACCESS — `CRM_WEBHOOK_URL` unset on staging; no approved test recipient |
-| Tekion | BLOCKED BY VENDOR — no partner sandbox credentials |
-| vAuto | BLOCKED BY VENDOR — no authorized feed |
+| Tekion | BLOCKED BY VENDOR — no partner sandbox credentials (does not solely block non-CRM employee canary) |
+| vAuto | BLOCKED BY VENDOR — no authorized feed; public inventory stays off |
 | Production API/CDN | BLOCKED BY ACCESS — not provisioned in canary config |
 | Business approval | BLOCKED BY BUSINESS APPROVAL — package prepared, unsigned |
+| Org OAuth client (Path B) | BLOCKED BY ACCESS — requirements in `docs/integrations/GTM_ORG_OAUTH_CLIENT_REQUIREMENTS.md` |
 | Customer traffic | **NOT AUTHORIZED** |
 
 ---
@@ -145,13 +149,13 @@ GitHub issues (external blockers — still OPEN):
 
 ## Exact remaining blockers
 
-1. **GTM / TV (hard):** An authorized Google account with Jeep of Chicago GTM access must grant access via official tagmanager.google.com (or an org-approved OAuth client / service account with Tag Manager API enabled), **OR** TeamVelocity deploy authorization — see [widget#6](https://github.com/AMQUR/amqur-widget/issues/6). Do **not** retry stock Cloud SDK ADC + Tag Manager scopes.  
+1. **GTM / TV (hard):** Complete Path A (tagmanager.google.com Sign-in + Edit on Jeep of Chicago container), **or** Path B (org OAuth client), **or** Path C (verified TeamVelocity channel). Stock Cloud SDK GTM OAuth is permanently unsupported. See [widget#6](https://github.com/AMQUR/amqur-widget/issues/6).  
 2. Production API + CDN hosts (provisioned HTTPS — no localhost)  
-3. Verified handoff test destination (`CRM_WEBHOOK_URL` or equivalent)  
+3. Verified handoff test destination (`CRM_WEBHOOK_URL` or equivalent) — [backend#8](https://github.com/AMQUR/amqur-backend/issues/8)  
 4. Alert recipients  
 5. Signed business approval for Level 1 unpublished employee canary  
-6. Tekion partner sandbox (optional for non-CRM canary)  
-7. Authorized vAuto feed (required before public inventory)
+6. Tekion partner sandbox (optional for non-CRM canary) — [backend#6](https://github.com/AMQUR/amqur-backend/issues/6)  
+7. Authorized vAuto feed (required before public inventory) — [backend#7](https://github.com/AMQUR/amqur-backend/issues/7)
 
 ---
 
@@ -176,8 +180,8 @@ READY BUT DISABLED — Level 0 snippet / pause tags / `featureFlags.chat=false` 
 
 **READY FOR EXTERNAL AUTHORIZATION**
 
-Repository-controlled work remains complete and green. Google blocked the stock Cloud SDK ADC path for Tag Manager scopes; ADC credentials were not written. Required external permissions are still missing (GTM/TV access not verified; handoff destination unverified; production hosts unset). No internal GTM Preview was installed. No public tag was published.
+Repository-controlled work remains complete and green. Stock Cloud SDK GTM OAuth is permanently retired as unsupported. Path A awaits official tagmanager.google.com Sign-in with a Jeep of Chicago–authorized account. Path B org OAuth client is not approved. Path C TeamVelocity request is not submitted (no verified channel). Handoff destination and business approval remain unverified. No unpublished GTM workspace was created. No public tag was published.
 
-Do **not** conclude **READY FOR INTERNAL EMPLOYEE CANARY** without verified GTM/TV preview access **and** verified handoff.
+Do **not** conclude **READY FOR INTERNAL EMPLOYEE CANARY** without verified GTM/TV restricted preview access **and** verified handoff **and** signed business approval.
 
 Do **not** conclude ready for public customer traffic.

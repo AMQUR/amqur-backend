@@ -13,16 +13,31 @@ test -f config/canary-jeep-of-chicago.json
 python3 -c "import json;c=json.load(open('config/canary-jeep-of-chicago.json'));assert c['featureFlags']['publicCustomerMode']['inventory'] is False"
 ```
 
-## 1. Verify provider authentication
+## 1. Verify provider authentication (approved paths only)
 
-```bash
-# Prefer gcloud / GTM API when installed and authorized
-command -v gcloud >/dev/null && gcloud auth list
-# Or confirm TeamVelocity portal session for Jeep of Chicago only
-# Do not paste tokens into chat or Git
-```
+### Unsupported — do not use
 
-Confirm the authenticated account can access the correct Jeep of Chicago GTM container (public ID observed: `GTM-MP5XGBXQ` — verify ownership).
+- Stock Cloud SDK OAuth client + Tag Manager scopes (`gcloud auth application-default login` / `gcloud auth login` requesting `tagmanager.*` via the default Cloud SDK client)
+- Google blocks that client for sensitive Tag Manager scopes (“This app is blocked”)
+- That path is **unsupported** for AMQUR GTM deployment
+
+### Path A — Direct Tag Manager web (preferred for operators)
+
+1. Sign in at [tagmanager.google.com](https://tagmanager.google.com) with an account authorized for Jeep of Chicago  
+2. Confirm container access (observed public ID `GTM-MP5XGBXQ` is discovery only — verify ownership)  
+3. Confirm **Read + Edit** (Approve optional; Publish not required for this runbook)  
+4. Do not paste passwords, cookies, or tokens into chat or Git  
+
+### Path B — Organization-controlled OAuth client
+
+See `docs/integrations/GTM_ORG_OAUTH_CLIENT_REQUIREMENTS.md`.  
+Use only an AMQUR / dealership-owned OAuth client approved for Tag Manager read/edit. Store secrets in Railway / Keychain.
+
+### Path C — TeamVelocity / Apollo
+
+Confirm authenticated support portal or CSM channel for Jeep of Chicago only.  
+Use `amqur-widget/docs/deployment/jeep-of-chicago-teamvelocity-request.md`.  
+Do not invent contacts or APIs.
 
 ## 2. Verify human-handoff routing
 
@@ -37,10 +52,10 @@ Confirm the authenticated account can access the correct Jeep of Chicago GTM con
 
 ## 4. Create unpublished / employee-only canary
 
-1. Open GTM workspace (unpublished)  
+1. Open GTM — create workspace **AMQUR Internal Employee Canary** (do not edit the live/default workspace for AMQUR tags)  
 2. Install **Level 1** snippet only (`amqur-widget/docs/deployment/snippets/level1-employee.html`) + hosted `amqur-canary-loader.js`  
 3. Set `apiBaseUrl` / `assetUrl` to provisioned **HTTPS** production hosts (refuse localhost)  
-4. Trigger: hostname allowlist + employee cookie/query gate  
+4. Trigger: hostname allowlist + employee gate (Preview / secure cookie — not a permanent plaintext password)  
 5. Use GTM **Preview** — do not publish  
 
 ## 5. Preview tests
@@ -58,7 +73,7 @@ Do **not** publish the container. Capture preview evidence. Request **final expl
 
 ## 7. Immediate rollback
 
-- Publish Level 0 / prior container version **or** pause AMQUR tags  
+- End Preview / disable AMQUR tags in the unpublished workspace **or** pause TeamVelocity script entry  
 - Set location `featureFlags.chat=false`  
 - Revert CDN pin if needed  
 
