@@ -7,7 +7,7 @@ Canonical Nest envelope: `{ success: true, data: T }` (or error shape from `Glob
 | Method | Path | Auth | Request | Response |
 |--------|------|------|---------|----------|
 | GET | `/api/public/widget-config` | none | `?tenantSlug=&locationSlug=` | `{ tenant, location, branding, features }` |
-| POST | `/api/public/widget-token` | none | `{ tenantSlug, locationSlug }` | `{ token, expiresIn }` — Origin enforced when tenant `allowedOrigins` set |
+| POST | `/api/public/widget-token` | none | `{ tenantSlug, locationSlug }` | `{ token, expiresIn }` — Origin **required**; empty `allowedOrigins` fails closed |
 | GET | `/api/health/live` | none | — | `{ ok: true }` |
 
 ## Chat

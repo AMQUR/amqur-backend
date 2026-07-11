@@ -7,10 +7,14 @@
     "sourceMap": true,
     "incremental": false
   },
+  "include": ["src/**/*"],
   "exclude": [
     "node_modules",
     "test",
     "dist",
+    "scripts",
+    "fixtures",
+    "config",
     "**/*spec.ts"
   ]
 }

@@ -24,17 +24,25 @@ export class WidgetAuthService {
       throw new UnauthorizedException('Invalid tenant');
     }
 
-    // When dealer has configured allowedOrigins, enforce Origin header
+    // Fail closed: empty allowlist must never mint tokens for arbitrary origins.
     const allowedRaw = tenant.allowedOrigins?.trim();
-    if (allowedRaw) {
-      const allowed = allowedRaw
-        .split(',')
-        .map((o) => o.trim().toLowerCase())
-        .filter(Boolean);
-      const origin = (requestOrigin ?? '').trim().toLowerCase();
-      if (!origin || !allowed.includes(origin)) {
-        throw new ForbiddenException('Origin not allowed for this tenant');
-      }
+    if (!allowedRaw) {
+      throw new ForbiddenException(
+        'Widget origins not configured for this tenant',
+      );
+    }
+    const allowed = allowedRaw
+      .split(',')
+      .map((o) => o.trim().toLowerCase())
+      .filter(Boolean);
+    if (allowed.length === 0) {
+      throw new ForbiddenException(
+        'Widget origins not configured for this tenant',
+      );
+    }
+    const origin = (requestOrigin ?? '').trim().toLowerCase();
+    if (!origin || !allowed.includes(origin)) {
+      throw new ForbiddenException('Origin not allowed for this tenant');
     }
 
     const location = await this.prisma.location.findFirst({

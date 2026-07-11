@@ -1,0 +1,38 @@
+{
+  "tenantSlug": "dial-auto-group-staging",
+  "tenantName": "Dial Auto Group (Staging Pilot)",
+  "locationSlug": "pilot-rooftop",
+  "locationName": "Dial Auto Group Pilot Rooftop",
+  "timezone": "America/Chicago",
+  "featureFlags": {
+    "chat": true,
+    "inventory": true,
+    "payments": true,
+    "vehicleCompare": true,
+    "savedVehicles": true,
+    "leadCapture": true,
+    "financeCalculator": true,
+    "serviceAi": true,
+    "partsAi": true,
+    "multilingual": true,
+    "handoff": true,
+    "leadScoring": true,
+    "copilot": true,
+    "vAutoFeed": false,
+    "tekionIntegration": false,
+    "automatedFollowup": false,
+    "voiceAi": false,
+    "proactiveEngagement": false,
+    "priceDropAlerts": false,
+    "crossStoreInventory": false
+  },
+  "disabledCapabilities": [
+    "tekionIntegration",
+    "automatedFollowup",
+    "voiceAi",
+    "liveAppointmentConfirmation",
+    "repairOrderStatusClaims",
+    "liveIncentiveClaims"
+  ],
+  "notes": "vAutoFeed stays false until an authorized staging feed URL is configured on the location. Use fixtures for inventory demos."
+}

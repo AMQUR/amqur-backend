@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Staging FIXTURE only — not a live vAuto feed. Do not treat as production inventory. -->
+<adf>
+  <prospect>
+    <id sequence="1" source="Fixture">STAGING-FIXTURE-001</id>
+    <vehicle interest="buy" status="available">
+      <year>2024</year>
+      <make>Jeep</make>
+      <model>Wrangler</model>
+      <trim>Sport</trim>
+      <vin>1C4RJFBG0JC123456</vin>
+      <stock>STG1001</stock>
+      <mileage units="mi">12000</mileage>
+      <price type="sale" currency="USD">42995</price>
+      <exteriorcolor>Black</exteriorcolor>
+      <transmission>Automatic</transmission>
+      <bodystyle>SUV</bodystyle>
+    </vehicle>
+  </prospect>
+  <prospect>
+    <id sequence="2" source="Fixture">STAGING-FIXTURE-002</id>
+    <vehicle interest="buy" status="available">
+      <year>2023</year>
+      <make>Jeep</make>
+      <model>Grand Cherokee</model>
+      <trim>Laredo</trim>
+      <vin>1C4RJFAG5PC654321</vin>
+      <stock>STG1002</stock>
+      <mileage units="mi">18500</mileage>
+      <price type="sale" currency="USD">38995</price>
+      <exteriorcolor>White</exteriorcolor>
+      <transmission>Automatic</transmission>
+      <bodystyle>SUV</bodystyle>
+    </vehicle>
+  </prospect>
+</adf>
