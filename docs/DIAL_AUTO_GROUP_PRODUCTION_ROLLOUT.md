@@ -10,7 +10,7 @@
 
 | Repo | Latest canary head SHA | PR | PR CI run | Status |
 |---|---|---|---|---|
-| backend | `d93e0dabe9630c5b04da23a65c91a57597b00171` | [#5](https://github.com/AMQUR/amqur-backend/pull/5) | [29168052151](https://github.com/AMQUR/amqur-backend/actions/runs/29168052151) | **PASSED** (tested SHA == head) |
+| backend | `5b28064cc3f00c0ada2fa4b6a524bc9fd4b1f5d3` (merged via squash) | [#5](https://github.com/AMQUR/amqur-backend/pull/5) **MERGED** | [29168187102](https://github.com/AMQUR/amqur-backend/actions/runs/29168187102) | **PASSED** (tested SHA == head) |
 | widget | `c9234f4d89891121d230e9ad2594a4834671d08b` | [#5](https://github.com/AMQUR/amqur-widget/pull/5) | [29168052735](https://github.com/AMQUR/amqur-widget/actions/runs/29168052735) | **PASSED** (tested SHA == head) |
 
 Push CI (same heads): backend [29168050657](https://github.com/AMQUR/amqur-backend/actions/runs/29168050657), widget [29168051004](https://github.com/AMQUR/amqur-widget/actions/runs/29168051004) — **PASSED**.
@@ -36,8 +36,8 @@ Release rule: if `tested SHA ≠ current PR head SHA` → **CI OUTDATED — NOT 
 
 | Repo | Merge method | Merge commit / main tip | Main CI |
 |---|---|---|---|
-| backend | squash (pending/recorded at merge) | _fill after merge_ | _fill after merge_ |
-| widget | squash (pending/recorded at merge) | _fill after merge_ | _fill after merge_ |
+| backend | squash merge PR #5 | `d2fb4da1bfd90dc7350a0dc462f97a66716e1178` | [29168237013](https://github.com/AMQUR/amqur-backend/actions/runs/29168237013) **PASSED** |
+| widget | squash merge PR #5 | `bade56d9df128d8cdf84f9de2ee6886edc52d5f8` | [29168237681](https://github.com/AMQUR/amqur-widget/actions/runs/29168237681) **PASSED** |
 
 ---
 
@@ -108,7 +108,7 @@ READY BUT DISABLED — Level 0 snippet / pause tags / `featureFlags.chat=false` 
 
 ## Verdict
 
-**READY FOR EXTERNAL AUTHORIZATION** once PR #5 merges land and main CI is green (recorded below).
+**READY FOR EXTERNAL AUTHORIZATION** — PR #5 merged; main CI green; only external credentials / vendor access / verified routing / business approval remain.
 
 **NOT READY FOR CUSTOMER TRAFFIC** — no GTM publish, no Tekion/vAuto, no live dealership install.
 
