@@ -1,9 +1,10 @@
 # Dial Auto Group — Production Rollout Report
 
-**Updated:** 2026-07-11 (external-authorization discovery pass)  
+**Updated:** 2026-07-11 (external-authorization discovery — Google ADC “app blocked”)  
 **Canary branch:** `ops/canary-pilot-rollout` (merged)  
 **Live install / customer traffic:** **not enabled**  
-**GTM publish:** **not attempted**
+**GTM publish:** **not attempted**  
+**GTM API via stock Cloud SDK ADC:** **blocked by Google** (do not retry same client/scopes)
 
 ---
 
@@ -29,6 +30,7 @@ Release rule: if `tested SHA ≠ current PR head SHA` → **CI OUTDATED — NOT 
 | [#5](https://github.com/AMQUR/amqur-backend/pull/5) | backend | Follow-up: CI repair, external-auth docs, canary harden — see merge section below. |
 | [#5](https://github.com/AMQUR/amqur-widget/pull/5) | widget | Follow-up: CI repair, GTM packages, canary loader tests — see merge section below. |
 | [#9](https://github.com/AMQUR/amqur-backend/pull/9) | backend | Docs finalize merge report — **MERGED**. |
+| [#11](https://github.com/AMQUR/amqur-backend/pull/11) | backend | External auth discovery + approval package — **MERGED** (pre–Google-block outcome). |
 
 **CI root cause (resolved):** workflows lacked reliable `ops/**` push triggers and head-SHA receipts; closed PR #4 could not receive later synchronize runs. Repaired: PR types `opened/reopened/synchronize/ready_for_review`, push to `main`/`audit/**`/`feature/**`/`ops/**`, `workflow_dispatch`, concurrency cancel-in-progress, SHA receipts, secret-scan path exclusions.
 
@@ -62,7 +64,7 @@ Release rule: if `tested SHA ≠ current PR head SHA` → **CI OUTDATED — NOT 
 
 | Area | Status |
 |---|---|
-| GTM access | BLOCKED BY ACCESS — `gcloud` installed; ADC OAuth initiated, **not completed**; no container permission verified |
+| GTM access | BLOCKED BY ACCESS — Google blocked stock Cloud SDK OAuth client for Tag Manager sensitive scopes (“This app is blocked”); ADC file **absent/clean**; no container permission verified |
 | TeamVelocity access | BLOCKED BY ACCESS — no portal credential |
 | Human handoff | BLOCKED BY ACCESS — `CRM_WEBHOOK_URL` unset on staging; no approved test recipient |
 | Tekion | BLOCKED BY VENDOR — no partner sandbox credentials |
@@ -103,7 +105,7 @@ Release rule: if `tested SHA ≠ current PR head SHA` → **CI OUTDATED — NOT 
 
 | Provider | Authorization | Environment | Live/mock | Tested | Disabled | Remaining |
 |---|---|---|---|---|---|---|
-| GTM | BLOCKED BY ACCESS | n/a | n/a | OAuth initiated only | publish | Complete OAuth + container role + unpublished workspace |
+| GTM | BLOCKED BY ACCESS | n/a | n/a | Stock Cloud SDK ADC **blocked by Google** | publish + API edit | Authorized account via tagmanager.google.com, org-approved OAuth client/SA, or TeamVelocity |
 | TeamVelocity | BLOCKED BY ACCESS | n/a | n/a | none | all | Portal or support case |
 | Handoff / CRM webhook | BLOCKED BY ACCESS | staging | n/a | none | delivery | Approved test destination + `CRM_WEBHOOK_URL` |
 | Tekion | BLOCKED BY VENDOR | disabled | mock tests only | contract/mock | production | Partner sandbox |
@@ -143,7 +145,7 @@ GitHub issues (external blockers — still OPEN):
 
 ## Exact remaining blockers
 
-1. Complete Google Tag Manager OAuth with an account that can access Jeep of Chicago container(s), **or** TeamVelocity deploy authorization  
+1. **GTM / TV (hard):** An authorized Google account with Jeep of Chicago GTM access must grant access via official tagmanager.google.com (or an org-approved OAuth client / service account with Tag Manager API enabled), **OR** TeamVelocity deploy authorization — see [widget#6](https://github.com/AMQUR/amqur-widget/issues/6). Do **not** retry stock Cloud SDK ADC + Tag Manager scopes.  
 2. Production API + CDN hosts (provisioned HTTPS — no localhost)  
 3. Verified handoff test destination (`CRM_WEBHOOK_URL` or equivalent)  
 4. Alert recipients  
@@ -174,8 +176,8 @@ READY BUT DISABLED — Level 0 snippet / pause tags / `featureFlags.chat=false` 
 
 **READY FOR EXTERNAL AUTHORIZATION**
 
-Repository-controlled work remains complete and green. Required external permissions are still missing (GTM/TV access not verified; handoff destination unverified; production hosts unset). No internal GTM Preview was installed. No public tag was published.
+Repository-controlled work remains complete and green. Google blocked the stock Cloud SDK ADC path for Tag Manager scopes; ADC credentials were not written. Required external permissions are still missing (GTM/TV access not verified; handoff destination unverified; production hosts unset). No internal GTM Preview was installed. No public tag was published.
 
-**NOT READY FOR INTERNAL CANARY** is not selected because no repository-controlled defect was found — the gate is external access only.
+Do **not** conclude **READY FOR INTERNAL EMPLOYEE CANARY** without verified GTM/TV preview access **and** verified handoff.
 
 Do **not** conclude ready for public customer traffic.

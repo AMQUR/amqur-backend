@@ -5,7 +5,7 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-11 (gcloud installed; ADC OAuth initiated and awaiting operator approval; Railway staging key-name scan completed)
+**Last discovery pass:** 2026-07-11 (Google blocked stock Cloud SDK OAuth client for Tag Manager scopes; ADC absent/clean; stuck gcloud login killed; no retry loop)
 
 ---
 
@@ -31,13 +31,20 @@ Primary observed container commonly referenced: **GTM-MP5XGBXQ**
 | Store | Result |
 |---|---|
 | Google Cloud SDK | Installed locally (`gcloud` 575.0.1) |
-| Application Default Credentials | **Missing** until OAuth completes |
-| ADC OAuth (Tag Manager read + edit.containers; no publish scope) | **Initiated — awaiting browser approval** |
+| Application Default Credentials | **Absent / clean** — no `application_default_credentials.json` written (no partial/broken creds) |
+| ADC OAuth via stock Cloud SDK client | **BLOCKED BY GOOGLE** — consent UI: “This app is blocked — This app tried to access sensitive info in your Google Account.” Default Cloud SDK client `764086051850-6qr4p6gpi6hn506pt8ejuq83di341hur` requesting Tag Manager scopes (`tagmanager.readonly`, `tagmanager.edit.containers`; publish scope not requested) |
+| Why it failed | Google blocks the stock Cloud SDK OAuth client from Tag Manager **sensitive** scopes unless the org/user uses an **approved OAuth client**, Workspace admin allows the client, or access is granted via **tagmanager.google.com** with an authorized dealership Google account (or equivalent org-approved path) |
+| Retry policy | **Do not** re-run the same default-client ADC Tag Manager scope request in a loop |
+| Stuck process | Terminal `gcloud auth application-default login` (Tag Manager scopes) **terminated** after block |
 | GitHub Actions GTM secrets | None listed |
 | Railway staging GTM/Google vars | Absent |
 | TeamVelocity / Apollo portal credential | Absent |
-| GTM workspace / Preview | **Not created** (no auth yet) |
+| GTM workspace / Preview | **Not created** |
 | Public GTM publish | **Not attempted** |
+
+### Required next external action
+
+An authorized Google account with **Jeep of Chicago** GTM access must grant access via official [tagmanager.google.com](https://tagmanager.google.com) (or an **org-approved OAuth client** / service account with Tag Manager API enabled), **OR** TeamVelocity deploy authorization.
 
 Operator packages (ready, not activated):
 
