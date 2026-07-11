@@ -45,13 +45,14 @@
     "existingChatWidgetRisk": true,
     "cspHeaderDetected": false,
     "installAuthorized": false,
-    "blocker": "Google auth succeeded; account sees Jeep of Chicago Google tags G-VPK5NDXW9G and GT-KDDGB74T (GA4/Google tags \u2014 not GTM; do not modify). GTM container GTM-MP5XGBXQ not accessible on GTM Accounts. Path B org OAuth / Path C TeamVelocity still required for GTM deploy. PREPARED_NOT_INSTALLED; no publish.",
+    "blocker": "GTM-MP5XGBXQ Edit not verified in controllable automation session (Playwright Sign-in; system-browser login not shared). Google tags G-VPK5NDXW9G/GT-KDDGB74T are not GTM. No AMQUR workspace created. PREPARED_NOT_INSTALLED; unpublished.",
     "googleAuthStatus": "SUCCEEDED_GOOGLE_TAGS_VISIBLE",
-    "gtmContainerAccess": "MISSING",
+    "gtmContainerAccess": "MISSING_OR_UNVERIFIED_IN_AUTOMATION",
     "observedGoogleTagsNotGtm": [
       "G-VPK5NDXW9G",
       "GT-KDDGB74T"
-    ]
+    ],
+    "unpublishedWorkspace": null
   },
   "origins": {
     "requiredCorsAndAllowedOrigins": [

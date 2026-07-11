@@ -67,7 +67,7 @@ Release rule: if `tested SHA ≠ current PR head SHA` → **CI OUTDATED — NOT 
 
 | Area | Status |
 |---|---|
-| GTM access | BLOCKED BY ACCESS — Google auth OK; Google tags `G-VPK5NDXW9G`/`GT-KDDGB74T` visible (not GTM); **`GTM-MP5XGBXQ` not accessible** on GTM Accounts; stock Cloud SDK GTM OAuth unsupported |
+| GTM access | BLOCKED BY ACCESS — `GTM-MP5XGBXQ` Edit not verified in automation session; Google tags are not GTM; no unpublished workspace; stock Cloud SDK GTM OAuth unsupported |
 | TeamVelocity access | BLOCKED BY ACCESS — no portal/CSM channel; Path C template not submitted |
 | Human handoff | BLOCKED BY ACCESS — `CRM_WEBHOOK_URL` unset on staging; no approved test recipient |
 | Tekion | BLOCKED BY VENDOR — no partner sandbox credentials (does not solely block non-CRM employee canary) |
@@ -179,6 +179,8 @@ READY BUT DISABLED — Level 0 snippet / pause tags / `featureFlags.chat=false` 
 ## Final verdict
 
 **READY FOR EXTERNAL AUTHORIZATION**
+
+Path A automation note (2026-07-11): operator login in system Chrome does not authenticate the Playwright headed profile (still Sign-in). Unpublished workspace was **not** created. Handoff (#8) and business approval remain unverified.
 
 Repository-controlled work remains complete and green. Stock Cloud SDK GTM OAuth is permanently retired as unsupported. Path A: Google authentication succeeded, but the current account lacks GTM container access (`GTM-MP5XGBXQ` not listed). Google tags `G-VPK5NDXW9G` / `GT-KDDGB74T` are not GTM containers and were not modified. Path B org OAuth client is not approved. Path C TeamVelocity request is not submitted (no verified channel). Handoff destination and business approval remain unverified. No unpublished GTM workspace was created. No public tag was published.
 
