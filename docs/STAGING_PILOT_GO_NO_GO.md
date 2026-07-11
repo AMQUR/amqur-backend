@@ -23,7 +23,7 @@
 | Backend deployment | `85dd1a42-…` SUCCESS @ 2026-07-11 14:43 CT |
 | Widget deployment | `bb2b48c9-…` SUCCESS @ 2026-07-11 14:56 CT |
 | Backend branch tip | `c5a5c08519d4cc806636e460cd880897019dbd41` |
-| Widget branch tip | `e5e27b1acaeafcdee1a3a92b579b3324a50e3a74` |
+| Widget branch tip | `e892887` (CI green; includes Vite/Playwright CI fixes) |
 
 **Explicitly unused:** `divine-integrity` (unlabeled / non-staging), `distinguished-laughter`, Dial Auto Group live domains.
 
