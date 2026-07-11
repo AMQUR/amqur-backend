@@ -55,3 +55,10 @@ Includes `lastSeenAt`, `source` for freshness.
 2. Verify `/api/health`
 3. Deploy widget IIFE
 4. Set `CORS_ORIGINS` and optional tenant `allowedOrigins`
+
+## Phase 2 additions
+- Bootstrap `features` expanded (compare, savedVehicles, serviceAi, partsAi, multilingual, proactiveEngagement, …)
+- `GET /api/integrations/health` (staff)
+- `GET|POST|DELETE /api/saved-vehicles` (widget JWT)
+- `GET /api/copilot/conversations/:id` (staff)
+- Inventory vehicles may include `freshnessState` and `source`

@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryVehicle } from '../chat/types/vehicle.types';
-import { VehicleStatus, Prisma } from '@prisma/client';
+import { VehicleStatus, Prisma, InventoryFreshnessState } from '@prisma/client';
 
 @Injectable()
 export class InventoryService {
@@ -68,8 +68,17 @@ export class InventoryService {
     tenantId: string,
     locationId: string | null,
     vehicles: InventoryVehicle[],
+    meta?: {
+      source?: string;
+      importRunId?: string;
+      freshnessState?: InventoryFreshnessState;
+    },
   ) {
     const now = new Date();
+    const source = meta?.source ?? null;
+    const importRunId = meta?.importRunId ?? null;
+    const freshnessState =
+      meta?.freshnessState ?? InventoryFreshnessState.FRESH;
 
     for (const v of vehicles) {
       if (!v?.vin) continue;
@@ -97,6 +106,9 @@ export class InventoryService {
           locationId,
           status: VehicleStatus.AVAILABLE,
           lastSeenAt: now,
+          source: source ?? v.source ?? undefined,
+          importRunId: importRunId ?? undefined,
+          freshnessState,
         },
         create: {
           vin,
@@ -118,6 +130,9 @@ export class InventoryService {
           locationId,
           status: VehicleStatus.AVAILABLE,
           lastSeenAt: now,
+          source: source ?? v.source ?? null,
+          importRunId,
+          freshnessState,
         },
       });
     }

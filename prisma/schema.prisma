@@ -15,14 +15,26 @@ model Tenant {
   /// Optional comma-separated allowlist of widget origins (e.g. https://dealer.com)
   allowedOrigins String?
 
-  locations     Location[]
-  users         User[]
-  vehicles      Vehicle[]
-  conversations Conversation[]
-  leads         Lead[]
-  appointments  Appointment[]
-  escalations   Escalation[]
-  auditLogs     AuditLog[]
+  /// JSON map of feature flag overrides for this tenant
+  featureFlags Json?
+
+  locations            Location[]
+  users                User[]
+  vehicles             Vehicle[]
+  conversations        Conversation[]
+  leads                Lead[]
+  appointments         Appointment[]
+  escalations          Escalation[]
+  auditLogs            AuditLog[]
+  integrationConnections IntegrationConnection[]
+  sourceAuthorityRules SourceAuthorityRule[]
+  sourceConflicts      SourceConflict[]
+  inventoryImportRuns  InventoryImportRun[]
+  savedVehicles        SavedVehicle[]
+  partsInquiries       PartsInquiry[]
+  outboxEvents         OutboxEvent[]
+  webhookInboxes       WebhookInbox[]
+  followUpCampaigns    FollowUpCampaign[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -46,12 +58,28 @@ model Location {
   inventoryFeedUrl  String?
   inventoryFeedType InventoryFeedType?
 
+  /// Optional provider-specific external IDs (Tekion store id, vAuto feed id, etc.)
+  externalIds Json?
+
+  /// Location-level feature flag overrides (merged over tenant)
+  featureFlags Json?
+
+  /// Inventory freshness SLA hours (default 24)
+  inventoryFreshnessHours Int @default(24)
+
+  /// Minimum records expected from a snapshot feed (anomaly guard)
+  inventoryMinRecords Int @default(1)
+
   users         User[]
   vehicles      Vehicle[]         @relation("LocationVehicles")
   conversations Conversation[]
   leads         Lead[]
   appointments  Appointment[]
   escalations   Escalation[]
+  integrationConnections IntegrationConnection[]
+  inventoryImportRuns InventoryImportRun[]
+  savedVehicles SavedVehicle[]
+  partsInquiries PartsInquiry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -129,11 +157,26 @@ model Vehicle {
   photos   Json?
   features Json?
 
+  /// new | used | certified | unknown — merchandising condition when supplied by feed
+  condition String?
+
   status VehicleStatus @default(AVAILABLE)
 
-  /// Provenance: feed source identifier
+  /// Provenance: feed source identifier (e.g. vauto_feed, tekion_dms)
   source     String?
   lastSeenAt DateTime?
+
+  /// Derived freshness for customer-facing disclosure
+  freshnessState InventoryFreshnessState @default(UNAVAILABLE)
+
+  /// Last successful import run that touched this vehicle
+  importRunId String?
+
+  /// Provider source timestamp when available from feed
+  sourceTimestamp DateTime?
+
+  /// Raw provider payload snippet for audit (minimized)
+  rawSource Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -145,8 +188,16 @@ model Vehicle {
   @@index([tenantId, status])
   @@index([tenantId, make, model])
   @@index([tenantId, price])
+  @@index([tenantId, freshnessState])
   @@index([locationId])
   @@index([stock])
+}
+
+enum InventoryFreshnessState {
+  FRESH
+  DEGRADED
+  STALE
+  UNAVAILABLE
 }
 
 enum VehicleStatus {
@@ -192,6 +243,11 @@ enum ConversationChannel {
   STAFF
   SMS
   EMAIL
+  WHATSAPP
+  MESSENGER
+  INSTAGRAM
+  VOICE
+  GOOGLE_BUSINESS
 }
 
 model Message {
@@ -242,8 +298,30 @@ model Lead {
   desiredPayment   Int?
   financingNeeded  Boolean?
   preferredContact String?
+  languagePreference String?
+  purchaseTimeline String?
+  tradeInInterest  Boolean?
+  leaseVsPurchase  String?
   consentToText    Boolean @default(false)
   consentToEmail   Boolean @default(false)
+  consentToCall    Boolean @default(false)
+  optOutAt         DateTime?
+
+  /// Transparent score reason codes + rule version
+  scoreReasons Json?
+  scoreVersion String?
+
+  /// Attribution
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+
+  /// External CRM identity after successful writeback (Tekion customer/lead id)
+  externalCrmCustomerId String?
+  externalCrmLeadId     String?
+  crmSyncStatus         CrmSyncStatus @default(NONE)
+  crmLastSyncedAt       DateTime?
+  crmLastError          String?
 
   source  String @default("widget")
   score   Int    @default(0)
@@ -252,6 +330,7 @@ model Lead {
 
   assignedUserId String?
   notes          String?
+  nextBestAction String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -259,7 +338,16 @@ model Lead {
   @@index([tenantId, status])
   @@index([tenantId, email])
   @@index([tenantId, phone])
+  @@index([tenantId, externalCrmLeadId])
   @@index([conversationId])
+}
+
+enum CrmSyncStatus {
+  NONE
+  PENDING
+  SYNCED
+  CONFLICT
+  FAILED
 }
 
 enum LeadStage {
@@ -415,3 +503,316 @@ model AuditLog {
   @@index([tenantId, createdAt])
   @@index([action])
 }
+
+/// Provider connection config per tenant/location (Tekion, vAuto, messaging, etc.)
+model IntegrationConnection {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  provider IntegrationProvider
+  /// Logical capability set: crm | dms | inventory_feed | appointments | messaging | voice
+  capability String
+
+  enabled Boolean @default(false)
+  /// Live credentials + partner docs required before enabling
+  liveReady Boolean @default(false)
+
+  /// Non-secret config (base URL placeholder, API version, dealer mapping ids)
+  config Json @default("{}")
+
+  healthStatus IntegrationHealthStatus @default(UNKNOWN)
+  lastHealthAt DateTime?
+  lastSuccessAt DateTime?
+  lastError     String?
+  circuitOpenUntil DateTime?
+
+  /// Sync cursor for incremental reconciliation
+  syncCursor String?
+
+  secrets IntegrationSecret[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationId, provider, capability])
+  @@index([tenantId, provider])
+  @@index([tenantId, enabled])
+}
+
+enum IntegrationProvider {
+  TEKION
+  VAUTO
+  TWILIO
+  GOOGLE_CALENDAR
+  GENERIC_WEBHOOK
+  MOCK
+}
+
+enum IntegrationHealthStatus {
+  UNKNOWN
+  HEALTHY
+  DEGRADED
+  UNHEALTHY
+  DISABLED
+}
+
+/// Encrypted secret material for an integration connection
+model IntegrationSecret {
+  id String @id @default(cuid())
+
+  connectionId String
+  connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  keyName String
+  /// AES-256-GCM ciphertext (base64) — never log plaintext
+  ciphertext String
+  iv         String
+  authTag    String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([connectionId, keyName])
+}
+
+/// Field-level source-of-truth rules
+model SourceAuthorityRule {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  field            String
+  primarySource    String
+  fallbackSource   String?
+  freshnessSlaHours Int @default(24)
+  notes            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, field])
+  @@index([tenantId])
+}
+
+model SourceConflict {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  field          String
+  entityType     String
+  entityId       String
+  primaryValue   String?
+  conflictingValue String?
+  primarySource  String
+  conflictingSource String
+  status         SourceConflictStatus @default(OPEN)
+  resolvedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, entityType, entityId])
+}
+
+enum SourceConflictStatus {
+  OPEN
+  RESOLVED
+  IGNORED
+}
+
+model InventoryImportRun {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  provider IntegrationProvider @default(VAUTO)
+  transport String?
+  format    String?
+
+  status InventoryImportStatus @default(PENDING)
+
+  sourceIdentifier String?
+  checksum         String?
+  recordCount      Int?
+  validCount       Int?
+  rejectedCount    Int?
+  anomalyFlags     Json?
+
+  rawArtifactPath String?
+  errorMessage    String?
+
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+
+  @@index([tenantId, startedAt])
+  @@index([locationId, startedAt])
+  @@index([status])
+}
+
+enum InventoryImportStatus {
+  PENDING
+  DOWNLOADED
+  VALIDATING
+  STAGED
+  RECONCILING
+  SUCCEEDED
+  FAILED
+  REJECTED_ANOMALY
+}
+
+model SavedVehicle {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  conversationExternalKey String
+  vin String
+
+  alertPriceDrop Boolean @default(false)
+  alertBackInStock Boolean @default(false)
+  consentOutbound Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, conversationExternalKey, vin])
+  @@index([tenantId, vin])
+}
+
+model PartsInquiry {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  conversationId String?
+  vin            String?
+  partDescription String
+  status         PartsInquiryStatus @default(REQUESTED)
+  fitmentVerified Boolean @default(false)
+  availabilityVerified Boolean @default(false)
+  priceVerified Boolean @default(false)
+  notes String?
+  customerName  String?
+  customerPhone String?
+  customerEmail String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+}
+
+enum PartsInquiryStatus {
+  REQUESTED
+  PENDING_STAFF
+  FITMENT_PENDING
+  QUOTED
+  ORDERED
+  CLOSED
+  CANCELLED
+}
+
+/// Transactional outbox for reliable async side-effects
+model OutboxEvent {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  topic   String
+  payload Json
+  idempotencyKey String?
+
+  status OutboxStatus @default(PENDING)
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  lastError String?
+  publishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([status, nextAttemptAt])
+  @@index([tenantId, topic])
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+  DEAD
+}
+
+/// Inbound webhooks with replay protection
+model WebhookInbox {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  provider IntegrationProvider
+  externalEventId String
+  signatureValid Boolean @default(false)
+  payload Json
+  status WebhookInboxStatus @default(RECEIVED)
+  processedAt DateTime?
+  errorMessage String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, provider, externalEventId])
+  @@index([status, createdAt])
+}
+
+enum WebhookInboxStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  DUPLICATE
+  REJECTED
+}
+
+model FollowUpCampaign {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name    String
+  trigger String
+  channel String
+  enabled Boolean @default(false)
+  /// Quiet hours, caps, stop conditions as JSON
+  policy  Json @default("{}")
+  template String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, name])
+  @@index([tenantId, enabled])
+}
+
