@@ -5,7 +5,7 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-11 (Google blocked stock Cloud SDK OAuth client for Tag Manager scopes; ADC absent/clean; stuck gcloud login killed; no retry loop)
+**Last discovery pass:** 2026-07-11 (Path A: tagmanager.google.com Sign-in required — no session; Path B: org OAuth requirements documented; Path C: TV template not submitted; stock Cloud SDK GTM OAuth permanently unsupported)
 
 ---
 
@@ -42,9 +42,15 @@ Primary observed container commonly referenced: **GTM-MP5XGBXQ**
 | GTM workspace / Preview | **Not created** |
 | Public GTM publish | **Not attempted** |
 
-### Required next external action
+### Required next external action (approved paths only)
 
-An authorized Google account with **Jeep of Chicago** GTM access must grant access via official [tagmanager.google.com](https://tagmanager.google.com) (or an **org-approved OAuth client** / service account with Tag Manager API enabled), **OR** TeamVelocity deploy authorization.
+| Path | Action | Status |
+|---|---|---|
+| **A** | Sign in at [tagmanager.google.com](https://tagmanager.google.com) with Jeep of Chicago–authorized account; create unpublished workspace `AMQUR Internal Employee Canary`; Preview only | **WAITING** — official Sign-in page open; no session verified |
+| **B** | Org-owned OAuth client per `docs/integrations/GTM_ORG_OAUTH_CLIENT_REQUIREMENTS.md` | **BLOCKED** — awaiting org project owner |
+| **C** | Submit TeamVelocity request via verified support channel | **BLOCKED** — no portal/CSM channel on this machine |
+
+**Permanently unsupported:** stock Cloud SDK OAuth client + Tag Manager scopes.
 
 Operator packages (ready, not activated):
 
@@ -52,6 +58,7 @@ Operator packages (ready, not activated):
 - `amqur-widget/docs/deployment/jeep-of-chicago-teamvelocity-request.md`
 - `amqur-widget/docs/deployment/snippets/level0-disabled.html` … `level5-full-rooftop.html`
 - Resume runbook: `backend/scripts/resume-canary-after-authorization.md`
+- Path B requirements: `docs/integrations/GTM_ORG_OAUTH_CLIENT_REQUIREMENTS.md`
 - Approval package: `backend/docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md`
 
 Tracking: https://github.com/AMQUR/amqur-widget/issues/6
