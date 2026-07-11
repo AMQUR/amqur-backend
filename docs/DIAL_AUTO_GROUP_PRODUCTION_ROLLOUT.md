@@ -5,7 +5,7 @@
 **Live install / customer traffic:** **not enabled**  
 **GTM publish:** **not attempted**  
 **Stock Cloud SDK GTM OAuth:** **permanently unsupported** (Google “This app is blocked”)  
-**Path A (tagmanager.google.com):** Sign-in required — no authenticated session verified  
+**Path A:** Google auth succeeded; Google tags visible; **GTM container `GTM-MP5XGBXQ` not accessible**  
 **Path B (org OAuth client):** requirements documented — not approved  
 **Path C (TeamVelocity):** template ready — not submitted (no verified channel)
 
@@ -67,7 +67,7 @@ Release rule: if `tested SHA ≠ current PR head SHA` → **CI OUTDATED — NOT 
 
 | Area | Status |
 |---|---|
-| GTM access | BLOCKED BY ACCESS — Path A Sign-in pending; stock Cloud SDK GTM OAuth permanently unsupported; no container Edit verified |
+| GTM access | BLOCKED BY ACCESS — Google auth OK; Google tags `G-VPK5NDXW9G`/`GT-KDDGB74T` visible (not GTM); **`GTM-MP5XGBXQ` not accessible** on GTM Accounts; stock Cloud SDK GTM OAuth unsupported |
 | TeamVelocity access | BLOCKED BY ACCESS — no portal/CSM channel; Path C template not submitted |
 | Human handoff | BLOCKED BY ACCESS — `CRM_WEBHOOK_URL` unset on staging; no approved test recipient |
 | Tekion | BLOCKED BY VENDOR — no partner sandbox credentials (does not solely block non-CRM employee canary) |
@@ -180,7 +180,7 @@ READY BUT DISABLED — Level 0 snippet / pause tags / `featureFlags.chat=false` 
 
 **READY FOR EXTERNAL AUTHORIZATION**
 
-Repository-controlled work remains complete and green. Stock Cloud SDK GTM OAuth is permanently retired as unsupported. Path A awaits official tagmanager.google.com Sign-in with a Jeep of Chicago–authorized account. Path B org OAuth client is not approved. Path C TeamVelocity request is not submitted (no verified channel). Handoff destination and business approval remain unverified. No unpublished GTM workspace was created. No public tag was published.
+Repository-controlled work remains complete and green. Stock Cloud SDK GTM OAuth is permanently retired as unsupported. Path A: Google authentication succeeded, but the current account lacks GTM container access (`GTM-MP5XGBXQ` not listed). Google tags `G-VPK5NDXW9G` / `GT-KDDGB74T` are not GTM containers and were not modified. Path B org OAuth client is not approved. Path C TeamVelocity request is not submitted (no verified channel). Handoff destination and business approval remain unverified. No unpublished GTM workspace was created. No public tag was published.
 
 Do **not** conclude **READY FOR INTERNAL EMPLOYEE CANARY** without verified GTM/TV restricted preview access **and** verified handoff **and** signed business approval.
 
