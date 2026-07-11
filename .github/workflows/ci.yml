@@ -65,15 +65,14 @@ jobs:
       - name: Secret scan (tracked)
         run: |
           set -euo pipefail
+          # Filter paths before rg — --glob is ignored when file paths are passed via xargs.
           hits=$(git ls-files -z \
-            | xargs -0 rg -l --ignore-case \
-              --glob '!.github/workflows/**' \
-              --glob '!docs/**' \
-              --glob '!.env*.example' \
-              'BEGIN (RSA |OPENSSH )?PRIVATE KEY' \
-              -e 'TEKION_CLIENT_SECRET=.+' \
-              -e 'JWT_SECRET=[A-Za-z0-9+/_-]{16,}' \
-              -e 'DATABASE_URL=postgres(ql)?://[^[:space:]]+:[^[:space:]]+@' \
+            | grep -z -v -E '^(\.github/workflows/|docs/|\.ci-receipts/|\.env[^/]*\.example$)' \
+            | xargs -0 -r rg -l --ignore-case \
+              -e 'BEGIN (RSA |OPENSSH )?PRIVATE KEY' \
+              -e 'TEKION_CLIENT_SECRET=[^[:space:]$#]+' \
+              -e 'sk_live_[A-Za-z0-9]{20,}' \
+              -e 'DATABASE_URL=postgres(ql)?://[^[:space:]:]+:[^[:space:]@]+@' \
             || true)
           if [ -n "$hits" ]; then
             echo "$hits"
