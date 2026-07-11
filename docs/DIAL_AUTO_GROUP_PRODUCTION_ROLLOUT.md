@@ -1,208 +1,200 @@
 # Dial Auto Group — Production Rollout Report
 
-**Date:** 2026-07-11  
-**Authoring branch:** `ops/canary-pilot-rollout`  
-**Scope:** Post-staging canary preparation for one Dial Auto Group rooftop  
-**Production customer traffic:** **not enabled**
+**Updated:** 2026-07-11 (final canary preparation pass)  
+**Branches:** `ops/canary-pilot-rollout`  
+**Production customer traffic:** **not enabled**  
+**Live tag publish:** **not performed**
 
 ---
 
-## Staging results
+## PR #4 status
 
-| Gate | Result |
+| Repo | PR | State | CI | Reviews | Mergeable | Action |
+|---|---|---|---|---|---|---|
+| amqur-backend | [PR #4](https://github.com/AMQUR/amqur-backend/pull/4) | open | build-test **success** | none | clean | Ready to merge when workflow owners approve; **not auto-merged** (docs/gates package; subsequent commits may land on same branch) |
+| amqur-widget | [PR #4](https://github.com/AMQUR/amqur-widget/pull/4) | open | build **success** | none | clean | Same |
+
+Source branch both: `ops/canary-pilot-rollout` → `main`.
+
+---
+
+## Local verification
+
+| Check | Backend | Widget |
+|---|---|---|
+| npm ci | PASSED | PASSED |
+| Prisma generate | PASSED | n/a |
+| Prisma validate | PASSED (with dummy `DATABASE_URL` for CLI) | n/a |
+| Typecheck | PASSED | PASSED (via `tsc -b` in build) |
+| Unit / contract / truth / provider tests | PASSED **69** tests / 30 suites | PASSED **12** (+ canary package tests) |
+| Tenant isolation (staging live) | PASSED (prior + config gates) | n/a |
+| Production build | PASSED | PASSED |
+| Migration destructive scan | PASSED — only `DROP INDEX/CONSTRAINT IF EXISTS` rebuilds | n/a |
+| Dependency audit | INFO (known advisories; not release-blocking for canary prep) | INFO (vite advisories) |
+| Secret scan tracked | PASSED | PASSED |
+| IIFE secret scan | n/a | PASSED |
+| Accessibility suite | UNAVAILABLE (not configured as separate job) | SKIPPED |
+| Staging E2E (prior gate) | n/a | PASSED 12/12 |
+
+---
+
+## Access discovery
+
+| Area | Label |
 |---|---|
-| `STAGING_PILOT_GO_NO_GO.md` verdict | **GO FOR INTERNAL STAGING TESTING** |
-| Staging API health | PASSED (`/api/health/live`, `/api/health`) |
-| Staging widget host | PASSED |
-| Playwright staging E2E | **12/12 PASSED** (re-run 2026-07-11) |
-| Origin-restricted widget tokens | PASSED (evil/missing 403; allowed 201) |
-| Tenant isolation (unknown tenant) | PASSED 401 Invalid tenant |
-| Stale / fabricated inventory claims | PASSED (no ready-for-pickup / final APR claims) |
-| Secret scan (tracked) | PASSED |
-| Staging rollback smoke | PASSED (`railway redeploy --service widget-staging`; host remained 200) |
-| Staging PRs merged to `main` | PASSED — backend [#3](https://github.com/AMQUR/amqur-backend/pull/3), widget [#3](https://github.com/AMQUR/amqur-widget/pull/3) |
-| `main` CI | PASSED (backend `7f5e583`, widget `951eedb`) |
+| Google Cloud CLI | BLOCKED BY ACCESS |
+| GTM API / ADC | BLOCKED BY ACCESS |
+| TeamVelocity / Apollo API | BLOCKED BY ACCESS |
+| Keychain usable GTM secrets | BLOCKED BY ACCESS |
+| Railway GTM/alert vars | BLOCKED BY ACCESS |
+| GitHub Actions GTM secrets | NOT IMPLEMENTED |
+| Official OAuth available to initiate | NOT IMPLEMENTED (no gcloud/gtm tool) |
 
-Staging URLs (internal only):
-- API: https://backend-staging-staging-b699.up.railway.app  
-- Widget: https://widget-staging-staging.up.railway.app  
+Unavoidable authorization: Google account with GTM publish rights on observed containers **or** TeamVelocity script install.
 
 ---
 
-## Tekion readiness
+## Live website integration surface (read-only)
 
-| Item | Status |
+| Item | Result | Label |
+|---|---|---|
+| GTM installed | Yes — containers listed below | READY |
+| GTM IDs | GTM-MP5XGBXQ, GTM-MV862RN, GTM-NFTX3XB, GTM-PZR8D88Z, GTM-TPV8SZS7, GTM-WQP4BHQ4 | READY |
+| TeamVelocity / dealer.com | Fingerprints + `pix-aop-auto.js` dealerCode `chryslerdodgejeepramofchicagoilcllc` | READY |
+| CSP header | None observed | READY BUT DISABLED (document if added later) |
+| Consent CMP | Not detected | READY |
+| Async scripts | Present (gtag etc.) | READY |
+| SPA full client router | Not detected | READY |
+| Existing chat risk | Messaging/chat fingerprints present | READY BUT DISABLED — coordinate before launch |
+| HSTS | Present | READY |
+| Address public | 5950 N Western Ave, Chicago, IL 60659 | READY BUT DISABLED pending staff confirm |
+| Phones public | Multiple numbers; department map unknown | BLOCKED |
+
+No live changes made.
+
+---
+
+## Canary configuration audit
+
+File: `config/canary-jeep-of-chicago.json`
+
+| Field | Status |
 |---|---|
-| Adapter + mock + contract tests | Present |
-| Official credentials in secure stores | **NOT FOUND** |
-| Sandbox verification (16-step checklist) | **NOT RUN** |
-| Production Tekion | **DISABLED** |
-
-Artifact: `docs/integrations/TEKION_VENDOR_ONBOARDING.md`
+| Tenant / location slugs | READY (proposed; not prod-seeded) |
+| Hostnames | READY |
+| API / CDN | BLOCKED — null, explicitly marked |
+| Public inventory flags | READY — **disabled** (no live vAuto) |
+| Tekion / outbound / voice | READY — disabled |
+| Handoff | BLOCKED — destination unverified |
+| Traffic levels 0–5 | READY BUT DISABLED (level 0 active) |
+| Placeholders like example.com | PASSED (none used as live values) |
 
 ---
 
-## vAuto readiness
+## GTM snippet / package audit
 
-| Item | Status |
+| Artifact | Label |
 |---|---|
-| Authorized feed download pipeline | Present in code |
-| Live authorized feed URL/credentials | **NOT FOUND** |
-| Staging inventory | Fixture XML only |
-| Repeated live imports | **NOT RUN** |
-| Production vAuto | **DISABLED** |
+| `amqur-canary-loader.js` | READY BUT DISABLED |
+| Levels 0–5 snippets | READY BUT DISABLED |
+| `jeep-of-chicago-gtm-canary.md` | READY |
+| TeamVelocity request template | READY |
+| Activated on live site | FAILED / not attempted |
 
-Artifact: `docs/integrations/VAUTO_FEED_ONBOARDING.md`
-
----
-
-## Pilot rooftop selection
-
-**Selected:** Jeep of Chicago — https://www.jeepofchicago.com  
-
-**Why:** single-brand rooftop; GTM containers observed; TeamVelocity/dealer.com fingerprint; lower blast radius than group site.
-
-**Not selected this phase:** dialnissan.com, dialchevy.com, dialjeep.com, dialautogroup.com (see `config/canary-jeep-of-chicago.json`).
-
-**Proposed mapping (not seeded in production DB):**
-- tenantSlug: `dial-auto-group`
-- locationSlug: `jeep-of-chicago`
+Loader enforces: hostname allowlist, kill switch, duplicate init guard, stable %, employee hash gate, HTTPS-only hosts, placeholder rejection, SPA nav kill re-check, consent hook, graceful asset failure.
 
 ---
 
-## Enabled features (when canary goes live)
+## Customer-facing inventory decision
 
-chat, inventory (verified source only), vehicle cards/compare, saved vehicles, lead capture, payment estimates w/ assumptions, service/parts request collection, EN/ES, human handoff, safe proactive engagement, analytics/provenance, lead scoring, copilot.
+**Public inventory, compare, saved vehicles, payment estimator: DISABLED** until authorized live inventory exists.
 
-## Disabled until independently verified
+Fixture inventory: staging / visibly labeled employee pages only — **release-blocking** if it appears in public mode (`hardDisabled: fixtureInventoryInPublicMode`).
 
-Tekion live, live vAuto feed, autonomous confirmed scheduling, repair-order status claims, automated outbound follow-up, voice, finance approval claims, incentives without authority, cross-store inventory, unsupervised CRM mutations.
+Safe without live inventory (still blocked on handoff/access): lead capture, service/parts request collection, multilingual, education, handoff **once destination verified**.
 
 ---
 
-## Deployment versions
+## Human-handoff readiness
 
-| Component | Version / commit |
+**BLOCKED BY ACCESS** — see `docs/dealership-knowledge/jeep-of-chicago-handoff.md`.
+
+---
+
+## Verified dealership knowledge
+
+See `docs/dealership-knowledge/jeep-of-chicago-sources.md`.  
+Most hours/phone routing: **BLOCKED** until staff-approved source.
+
+---
+
+## Analytics / monitoring
+
+| Item | Label |
 |---|---|
-| Backend `main` | `7f5e583` (includes staging automation) |
-| Widget `main` | `951eedb` |
-| Staging backend deploy | Railway `85dd1a42-…` SUCCESS |
-| Staging widget deploy | Railway `bb2b48c9-…` SUCCESS (redeploy smoke OK) |
-| Production API / CDN | **Not provisioned for canary** |
+| Health / metrics APIs | READY |
+| Canary diag events (`amqur:diag`) | READY BUT DISABLED |
+| Alert routing recipients | BLOCKED BY ACCESS |
+| Auto-pause criteria | READY (documented in config) |
+| CWV budget automation | NOT IMPLEMENTED |
 
 ---
 
-## Website installation method
+## Canary levels
 
-| Item | Detail |
+| Level | Prepared | Active |
+|---|---|---|
+| 0 Disabled | READY | yes |
+| 1 Employee | READY BUT DISABLED | no |
+| 2 1% | READY BUT DISABLED | no |
+| 3 5% | READY BUT DISABLED | no |
+| 4 25% | READY BUT DISABLED | no |
+| 5 Full rooftop | READY BUT DISABLED | no |
+
+---
+
+## Rollback readiness
+
+| Path | Label |
 |---|---|
-| Preferred path | Google Tag Manager Custom HTML (async snippet) |
-| Observed GTM IDs | GTM-MP5XGBXQ, GTM-MV862RN, GTM-PZR8D88Z, GTM-TPV8SZS7, GTM-WQP4BHQ4 |
-| CMS | TeamVelocity / dealer.com |
-| Snippet prepared | `amqur-widget/docs/canary-gtm-snippet.html` |
-| Installed on live site | **NO** |
-| Blocker | No authenticated GTM / TeamVelocity / dealer.com API or deployment credential on this machine |
-
-No production admin panel automation was attempted (not auditable without official API).
+| GTM Level 0 / prior container | READY (operator) |
+| Feature flag chat=false | READY (code) |
+| CDN version pin | READY BUT DISABLED (CDN not provisioned) |
+| Staging redeploy smoke (prior) | PASSED |
 
 ---
 
-## Canary progression
+## Tekion / vAuto
 
-Configured in `config/canary-jeep-of-chicago.json`.
-
-| Phase | Audience | % | Status |
-|---|---|---|---|
-| 0 | — | — | **Current** — prepared only |
-| 1 | Internal employees | 0 | Blocked on install + inventory + alerts |
-| 2 | Allowlisted testers | 0 | Blocked |
-| 3–6 | Customers 5→100% | — | Blocked |
-
-Auto-pause triggers documented (stale inventory, claim detection, CORS/token spikes, isolation failure, CWV regression, Tekion/lead failures).
-
----
-
-## Analytics / observability
-
-| Item | Status |
+| | |
 |---|---|
-| Health + staff metrics APIs | Available |
-| Shared multi-instance metrics | Not configured (single-instance staging) |
-| Dashboards | Spec only — `docs/OBSERVABILITY_CANARY.md` |
-| Alert routing | **Not configured** (no verified recipients / webhooks) |
-
-**Customer traffic must not start until alert routing is verified.**
+| Tekion | READY BUT DISABLED — vendor credentials absent |
+| vAuto | READY BUT DISABLED — no authorized feed |
 
 ---
 
-## Incidents
+## Exact remaining blockers (external)
 
-None in staging canary preparation window. Prior staging Prisma openssl crash was fixed before GO.
-
----
-
-## Rollback tests
-
-| Test | Result |
-|---|---|
-| Staging widget `railway redeploy` | PASSED — site remained HTTP 200 |
-| Documented image/flag/tag rollback | Documented in staging go/no-go + observability doc |
-| Destructive DB rollback | **Not performed** (forbidden) |
+1. GTM publish access **or** TeamVelocity install approval  
+2. Provisioned production API origin + CORS/allowedOrigins  
+3. Provisioned HTTPS widget CDN + versioned IIFE (+ optional SRI)  
+4. Verified human-handoff destination + approved test  
+5. Alert routing to verified recipients  
+6. Staff-confirmed hours/phone department map (for those answers)  
+7. Authorized live inventory before enabling public inventory features  
+8. Explicit approval before any container publish  
 
 ---
 
-## Security results
+## Security review (package)
 
 | Check | Result |
 |---|---|
-| Widget origin fail-closed | PASSED |
-| Bootstrap disabled on staging | PASSED (prior) |
-| Secrets not in Git | PASSED |
-| No Tekion/vAuto secrets printed | PASSED |
-
----
-
-## Tenant-isolation results
-
-Unknown tenant token mint → 401. Staging origin allowlist enforced. Cross-store inventory remains disabled in canary config.
-
----
-
-## Inventory-freshness results
-
-Staging: fixture inventory with staging labels. Live freshness pipeline not exercised (no authorized feed).
-
----
-
-## Lead-delivery results
-
-Staging chat persists to AMQUR DB. Tekion writeback disabled. No production lead routing verified (no staff inbox / CRM webhook confirmed for Jeep of Chicago).
-
----
-
-## Remaining vendor dependencies
-
-1. Tekion partner credentials + sandbox docs  
-2. Authorized vAuto (or equivalent) feed per rooftop  
-3. GTM or TeamVelocity deploy access for jeepofchicago.com  
-4. Production Railway (or equivalent) API + CDN with staging-proven config  
-5. Verified alert routing destination  
-6. Dealership-approved handoff phone/email for Jeep of Chicago  
-7. Management approval to enter phase 1 (employees only)
-
----
-
-## Per-rooftop readiness
-
-| Rooftop | Site | Ready? | Notes |
-|---|---|---|---|
-| Jeep of Chicago | jeepofchicago.com | **NO** | Canary config + GTM snippet only |
-| Dial Nissan | dialnissan.com | NO | Install path unclear |
-| Dial Chevy | dialchevy.com | NO | DealerOn; deferred |
-| Dial Jeep (alt) | dialjeep.com | NO | Prefer Jeep of Chicago |
-| Group site | dialautogroup.com | NO | Not a rooftop canary |
-
-Cross-store inventory: **disabled** for all.
+| No GTM/Railway/JWT/DB/Redis/Tekion secrets in snippets | PASSED |
+| Fail-closed missing hosts | PASSED |
+| Hostname allowlist | PASSED |
+| Production rejects localhost/placeholders | PASSED |
+| Fixture inventory blocked in public mode config | PASSED |
 
 ---
 
@@ -210,4 +202,4 @@ Cross-store inventory: **disabled** for all.
 
 **NOT READY FOR CUSTOMER TRAFFIC**
 
-Rationale: staging is GO for internal testing, but Tekion credentials, authorized vAuto feed, production API/CDN, live GTM install authorization, lead routing, and alert routing are all outstanding. Canary remains at phase 0 (prepared, not installed).
+Also **not** ready for internal employee canary on the **production hostname** until production API/CDN are provisioned and fail-closed loader hosts are set. Employee testing remains on **staging labeled hosts** only.
