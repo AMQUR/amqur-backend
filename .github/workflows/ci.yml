@@ -1,21 +1,93 @@
 name: CI
 
 on:
-  push:
-    branches: [main, 'audit/**']
   pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  push:
+    branches:
+      - main
+      - 'audit/**'
+      - 'feature/**'
+      - 'ops/**'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    env:
+      # Prisma CLI requires a URL for validate; no network access to a real DB in CI.
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
+
+      - name: Record tested SHA
+        run: |
+          echo "repository=${{ github.repository }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "branch=${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "sha=${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "event=${{ github.event_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "pr=${{ github.event.pull_request.number || 'n/a' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "run_id=${{ github.run_id }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "TESTED_SHA=${{ github.sha }}" >> "$GITHUB_ENV"
+
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - run: npm ci
       - run: npx prisma generate
+      - run: npx prisma validate
       - run: npx tsc --noEmit -p tsconfig.build.json
-      - run: npm test -- --passWithNoTests
+      - run: npm test
       - run: npm run build
+
+      - name: Migration destructive scan
+        run: |
+          set -euo pipefail
+          # Forbid table/database wipe patterns; allow additive DROP INDEX/CONSTRAINT IF EXISTS rebuilds.
+          if rg -n --ignore-case 'DROP\s+TABLE|DROP\s+DATABASE|TRUNCATE|prisma\s+migrate\s+reset|db\s+push\s+--force-reset' prisma/migrations; then
+            echo "Destructive migration pattern found" >&2
+            exit 1
+          fi
+          echo "Migration destructive scan PASSED"
+
+      - name: Secret scan (tracked)
+        run: |
+          set -euo pipefail
+          if git ls-files -z | xargs -0 rg -l --ignore-case 'BEGIN (RSA |OPENSSH )?PRIVATE KEY|TEKION_CLIENT_SECRET=.+|JWT_SECRET=[A-Za-z0-9]{16,}|DATABASE_URL=postgres(ql)?://[^:]+:[^@]+@' ; then
+            echo "Potential secret in tracked files" >&2
+            exit 1
+          fi
+          echo "Secret scan PASSED"
+
+      - name: Dependency audit (informational)
+        continue-on-error: true
+        run: npm audit --omit=dev || true
+
+      - name: Write CI head receipt
+        if: always()
+        run: |
+          mkdir -p .ci-receipts
+          cat > .ci-receipts/last-run.md <<EOF
+          # CI receipt
+          - repository: ${{ github.repository }}
+          - branch: ${{ github.ref_name }}
+          - tested_sha: ${{ github.sha }}
+          - run_id: ${{ github.run_id }}
+          - run_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          - event: ${{ github.event_name }}
+          - pr: ${{ github.event.pull_request.number || 'n/a' }}
+          - conclusion: job-local
+          EOF
+          cat .ci-receipts/last-run.md >> "$GITHUB_STEP_SUMMARY"
