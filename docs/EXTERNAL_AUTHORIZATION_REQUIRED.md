@@ -104,6 +104,15 @@ Required before Level 1 on production hostname:
 
 ---
 
+## Tracking issues
+
+- Tekion: https://github.com/AMQUR/amqur-backend/issues/6
+- vAuto: https://github.com/AMQUR/amqur-backend/issues/7
+- Human handoff: https://github.com/AMQUR/amqur-backend/issues/8
+- GTM / TeamVelocity: https://github.com/AMQUR/amqur-widget/issues/6
+
+---
+
 ## Customer traffic approval
 
 **Status:** BLOCKED BY BUSINESS APPROVAL
