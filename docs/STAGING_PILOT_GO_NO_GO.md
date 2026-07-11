@@ -42,7 +42,7 @@ Keychain labels (values not recorded): `AMQUR Staging JWT`, `AMQUR Staging Boots
 | Commit | `c5a5c08519d4cc806636e460cd880897019dbd41` |
 | Pushed | yes |
 | PR | https://github.com/AMQUR/amqur-backend/pull/3 |
-| CI | pending / check PR |
+| CI | success |
 | Uncommitted after push | report-only follow-ups may exist |
 
 ### Widget (`AMQUR/amqur-widget`)
@@ -51,10 +51,10 @@ Keychain labels (values not recorded): `AMQUR Staging JWT`, `AMQUR Staging Boots
 |---|---|
 | Branch | `ops/staging-pilot-automation` |
 | Base | `main` |
-| Commit | `e5e27b1acaeafcdee1a3a92b579b3324a50e3a74` |
+| Commit | `e892887` (CI green) |
 | Pushed | yes |
 | PR | https://github.com/AMQUR/amqur-widget/pull/3 |
-| CI | pending / check PR |
+| CI | success |
 
 ---
 
