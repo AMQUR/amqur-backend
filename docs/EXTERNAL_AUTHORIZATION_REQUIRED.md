@@ -5,6 +5,8 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
+**Last discovery pass:** 2026-07-11 (gcloud installed; ADC OAuth initiated and awaiting operator approval; Railway staging key-name scan completed)
+
 ---
 
 ## Google Tag Manager / TeamVelocity deployment
@@ -24,12 +26,28 @@ Publicly observed GTM containers (not proof of access):
 
 Primary observed container commonly referenced: **GTM-MP5XGBXQ**
 
+### Discovery evidence (2026-07-11)
+
+| Store | Result |
+|---|---|
+| Google Cloud SDK | Installed locally (`gcloud` 575.0.1) |
+| Application Default Credentials | **Missing** until OAuth completes |
+| ADC OAuth (Tag Manager read + edit.containers; no publish scope) | **Initiated — awaiting browser approval** |
+| GitHub Actions GTM secrets | None listed |
+| Railway staging GTM/Google vars | Absent |
+| TeamVelocity / Apollo portal credential | Absent |
+| GTM workspace / Preview | **Not created** (no auth yet) |
+| Public GTM publish | **Not attempted** |
+
 Operator packages (ready, not activated):
 
 - `amqur-widget/docs/deployment/jeep-of-chicago-gtm-canary.md`
 - `amqur-widget/docs/deployment/jeep-of-chicago-teamvelocity-request.md`
 - `amqur-widget/docs/deployment/snippets/level0-disabled.html` … `level5-full-rooftop.html`
 - Resume runbook: `backend/scripts/resume-canary-after-authorization.md`
+- Approval package: `backend/docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md`
+
+Tracking: https://github.com/AMQUR/amqur-widget/issues/6
 
 ---
 
@@ -47,9 +65,14 @@ Required verified details (do not invent):
 - SLA
 - Escalation channel
 
-Related: `docs/dealership-knowledge/jeep-of-chicago-handoff.md`
+### Discovery evidence (2026-07-11)
 
-Until verified, customer traffic remains NO-GO even if GTM access appears.
+Railway `amqur-platform-staging` / `backend-staging`: `CRM_WEBHOOK_URL` **not set**. No handoff-specific vars. Escalation DB persistence code path remains ready; no approved test send performed.
+
+Related: `docs/dealership-knowledge/jeep-of-chicago-handoff.md`  
+Tracking: https://github.com/AMQUR/amqur-backend/issues/8
+
+Until verified, customer traffic **and** Level 1 employee canary against production hostname remain NO-GO for handoff-dependent flows.
 
 ---
 
@@ -67,9 +90,12 @@ Required:
 - Freshness threshold
 - Approved customer-visible fields
 
-Until connected: **public inventory remains disabled**. Fixture inventory must never appear on customer pages.
+### Discovery evidence (2026-07-11)
 
-Onboarding: `docs/integrations/VAUTO_FEED_ONBOARDING.md`
+No `VAUTO_FEED_URL` / SFTP keys on Railway staging. Public inventory remains **disabled**. Fixture inventory blocked from public customer mode.
+
+Onboarding: `docs/integrations/VAUTO_FEED_ONBOARDING.md`  
+Tracking: https://github.com/AMQUR/amqur-backend/issues/7
 
 ---
 
@@ -86,9 +112,12 @@ Required:
 - Webhook signing details
 - Tenant/location mappings
 
-Keep `tekionIntegration=false` and `liveReady=false` until sandbox checklist completes.
+### Discovery evidence (2026-07-11)
 
-Onboarding: `docs/integrations/TEKION_VENDOR_ONBOARDING.md`
+No Tekion client ID/secret / base URL / webhook secret on Railway staging or GitHub Actions secrets. Keep `tekionIntegration=false` and `liveReady=false`.
+
+Onboarding: `docs/integrations/TEKION_VENDOR_ONBOARDING.md`  
+Tracking: https://github.com/AMQUR/amqur-backend/issues/6
 
 ---
 
@@ -101,6 +130,8 @@ Required before Level 1 on production hostname:
 - Provisioned HTTPS API origin
 - CORS + tenant `allowedOrigins` for jeepofchicago.com
 - Provisioned HTTPS widget CDN with version-pinned IIFE (+ optional SRI)
+
+Staging-only reference hosts exist for **labeled** employee test pages only (see `config/canary-jeep-of-chicago.json`). Do not point unlabeled production pages at staging.
 
 ---
 
@@ -124,6 +155,9 @@ Required:
 - Approved date/time window
 - Rollback owner
 - Monitoring owner / verified alert recipients
+
+Approval package: `docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md`  
+Silence is **not** approval.
 
 ---
 

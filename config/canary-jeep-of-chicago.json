@@ -45,7 +45,7 @@
     "existingChatWidgetRisk": true,
     "cspHeaderDetected": false,
     "installAuthorized": false,
-    "blocker": "No authenticated GTM API, TeamVelocity, or dealer.com deployment credential on this machine"
+    "blocker": "GTM ADC OAuth initiated 2026-07-11 but not completed; TeamVelocity portal credential absent; no unpublished workspace created; no publish attempted"
   },
   "origins": {
     "requiredCorsAndAllowedOrigins": [
