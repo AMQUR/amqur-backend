@@ -22,7 +22,8 @@
 | Staging widget URL | https://widget-staging-staging.up.railway.app |
 | Backend deployment | `85dd1a42-…` SUCCESS @ 2026-07-11 14:43 CT |
 | Widget deployment | `bb2b48c9-…` SUCCESS @ 2026-07-11 14:56 CT |
-| Deployed commit hashes | Captured on `ops/staging-pilot-automation` push (see Git section) |
+| Backend branch tip | `c5a5c08519d4cc806636e460cd880897019dbd41` |
+| Widget branch tip | `e5e27b1acaeafcdee1a3a92b579b3324a50e3a74` |
 
 **Explicitly unused:** `divine-integrity` (unlabeled / non-staging), `distinguished-laughter`, Dial Auto Group live domains.
 
@@ -38,10 +39,11 @@ Keychain labels (values not recorded): `AMQUR Staging JWT`, `AMQUR Staging Boots
 |---|---|
 | Branch | `ops/staging-pilot-automation` |
 | Base | `main` (merged hardening + Tekion/vAuto foundations) |
-| Pushed | yes (this report cycle) |
-| PR | see PR URL after open |
-| CI | pending on PR |
-| Uncommitted after push | should be clean |
+| Commit | `c5a5c08519d4cc806636e460cd880897019dbd41` |
+| Pushed | yes |
+| PR | https://github.com/AMQUR/amqur-backend/pull/3 |
+| CI | pending / check PR |
+| Uncommitted after push | report-only follow-ups may exist |
 
 ### Widget (`AMQUR/amqur-widget`)
 
@@ -49,9 +51,10 @@ Keychain labels (values not recorded): `AMQUR Staging JWT`, `AMQUR Staging Boots
 |---|---|
 | Branch | `ops/staging-pilot-automation` |
 | Base | `main` |
+| Commit | `e5e27b1acaeafcdee1a3a92b579b3324a50e3a74` |
 | Pushed | yes |
-| PR | see PR URL after open |
-| CI | pending on PR |
+| PR | https://github.com/AMQUR/amqur-widget/pull/3 |
+| CI | pending / check PR |
 
 ---
 
