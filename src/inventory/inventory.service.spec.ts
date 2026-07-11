@@ -1,22 +1,49 @@
-import { Injectable } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
+import { InventoryService } from './inventory.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-@Injectable()
-export class InventoryService {
-  constructor(private prisma: PrismaService) { }
+describe('InventoryService', () => {
+  let service: InventoryService;
+  const upsert = jest.fn();
 
-  async findAvailableVehicles(params: {
-    tenantId: string;
-    locationId?: string | null;
-    query?: string;
-  }) {
-    return this.prisma.vehicle.findMany({
-      where: {
-        tenantId: params.tenantId,
-        locationId: params.locationId ?? undefined,
-        status: 'AVAILABLE',
+  beforeEach(async () => {
+    upsert.mockReset();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        InventoryService,
+        {
+          provide: PrismaService,
+          useValue: {
+            vehicle: { upsert, updateMany: jest.fn() },
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get(InventoryService);
+  });
+
+  it('upserts by tenantId+vin composite key', async () => {
+    upsert.mockResolvedValue({ id: 'v1' });
+    await service.upsertVehicles('tenant-a', 'loc-1', [
+      {
+        vin: '1hgcm82633a004352',
+        year: 2024,
+        make: 'Honda',
+        model: 'Accord',
+        stock: 'S1',
       },
-      take: 10,
-    });
-  }
-}
+    ]);
+
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          tenantId_vin: {
+            tenantId: 'tenant-a',
+            vin: '1HGCM82633A004352',
+          },
+        },
+      }),
+    );
+  });
+});

@@ -1,1 +1,0 @@
-{"version":3,"file":"vin.module.js","sourceRoot":"","sources":["../../../src/chat/vin/vin.module.ts"],"names":[],"mappings":";;;;;;;;;AAAA,2CAAwC;AACxC,+DAA0D;AAMnD,IAAM,SAAS,GAAf,MAAM,SAAS;CAAI,CAAA;AAAb,8BAAS;oBAAT,SAAS;IAJrB,IAAA,eAAM,EAAC;QACJ,SAAS,EAAE,CAAC,uCAAiB,CAAC;QAC9B,OAAO,EAAE,CAAC,uCAAiB,CAAC;KAC/B,CAAC;GACW,SAAS,CAAI"}

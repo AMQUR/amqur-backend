@@ -1,12 +1,14 @@
 export type InventoryVehicle = {
+    id?: string;
     vin: string;
+    stock?: string | null;
 
     year?: number;
     make?: string;
     model?: string;
     trim?: string;
 
-    engine?: string;          // ✅ REQUIRED
+    engine?: string;
 
     price?: number;
     msrp?: number;
@@ -26,4 +28,11 @@ export type InventoryVehicle = {
     estimatedPayment?: number;
     paymentExplanation?: string;
     windowStickerUrl?: string;
+
+    status?: string;
+    locationId?: string | null;
+
+    /** Feed freshness — ISO timestamp when last seen in inventory sync */
+    lastSeenAt?: string | null;
+    source?: string | null;
 };

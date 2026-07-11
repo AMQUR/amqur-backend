@@ -1,18 +1,16 @@
 import { Injectable } from '@nestjs/common';
+import { ClaudeConversationService } from '../claude/claude-conversation.service';
 
 @Injectable()
 export class IntelligentService {
+    constructor(
+        private readonly claude: ClaudeConversationService,
+    ) { }
+
     async answer(params: {
         question: string;
         context: string[];
     }): Promise<string> {
-        // 🔒 TEMP PLACEHOLDER
-        // AI will be plugged in next step
-
-        return (
-            `I understand your question:\n\n` +
-            `"${params.question}"\n\n` +
-            `This feature is currently being prepared.`
-        );
+        return this.claude.answerIntelligentQuestion(params.question);
     }
 }

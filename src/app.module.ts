@@ -6,7 +6,7 @@ import {
 
 import { ConfigModule } from '@nestjs/config';
 import { envValidationSchema } from './config/env.validation';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 
@@ -20,41 +20,51 @@ import { InventoryModule } from './inventory/inventory.module';
 import { InventoryFeedModule } from './inventory-feed/inventory-feed.module';
 import { InventorySyncModule } from './inventory-sync/inventory-sync.module';
 import { PublicModule } from './public/public.module';
+import { HealthModule } from './health/health.module';
+import { LeadsModule } from './leads/leads.module';
+import { EscalationsModule } from './escalations/escalations.module';
+import { ObservabilityModule } from './observability/observability.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { RolesGuard } from './auth/guards/roles.guard';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
   imports: [
-    // 🌎 ENV VALIDATION (must be FIRST)
     ConfigModule.forRoot({
       isGlobal: true,
+      envFilePath: ['.env.local', '.env'],
       validationSchema: envValidationSchema,
+      validationOptions: {
+        abortEarly: true,
+        allowUnknown: true,
+      },
     }),
 
-    // 🚦 Rate limiting
     ThrottlerModule.forRoot([
       {
         name: 'default',
-        ttl: 60,
-        limit: 60,
+        ttl: 60_000,
+        limit: 120,
+      },
+      {
+        name: 'auth',
+        ttl: 60_000,
+        limit: 20,
       },
     ]),
 
-    // ⏱ Scheduled jobs
     ScheduleModule.forRoot(),
-
-    // 🧠 Core
     PrismaModule,
-
-    // 🏢 Platform modules
     TenantsModule,
     LocationsModule,
     UsersModule,
     AuthModule,
     PublicModule,
-
-    // 🤖 Product modules
+    HealthModule,
+    LeadsModule,
+    EscalationsModule,
+    ObservabilityModule,
     ChatModule,
     InventoryModule,
     InventoryFeedModule,
@@ -62,11 +72,9 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
   ],
 
   providers: [
-    // 🔐 Re-enable global JWT protection
-    {
-      provide: APP_GUARD,
-      useClass: JwtAuthGuard,
-    },
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
   ],
 })
 export class AppModule implements NestModule {

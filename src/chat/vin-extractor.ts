@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { extractVinCandidates, isValidVinFormat } from '../common/vin/vin.util';
 
 @Injectable()
 export class VinExtractor {
@@ -6,9 +7,10 @@ export class VinExtractor {
     extract(text: string, visibleVins: string[]) {
         const lower = text.toLowerCase();
 
-        // 1️⃣ Direct VIN pasted
-        const vinMatch = text.match(/\b[A-HJ-NPR-Z0-9]{17}\b/i);
-        if (vinMatch) return vinMatch[0];
+        const candidates = extractVinCandidates(text);
+        if (candidates.length > 0) {
+            return candidates.find(isValidVinFormat) ?? candidates[0];
+        }
 
         // 2️⃣ Ordinal selection
         if (lower.includes('first')) return visibleVins[0];

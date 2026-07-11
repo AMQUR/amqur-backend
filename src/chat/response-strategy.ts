@@ -6,22 +6,20 @@ export function inventoryResponseByStage(
     switch (stage) {
         case 'hot':
             return (
-                "This vehicle is available right now. " +
-                "I can reserve it, schedule a test drive, " +
-                "or connect you with a specialist."
+                'These are in the mix right now — solid options to move on. ' +
+                'Pick one and I’ll pull details, payments, or a test drive.'
             );
 
         case 'warm':
             return (
-                "Would you like to compare trims, " +
-                "see estimated monthly payments, " +
-                "or schedule a visit?"
+                'Here are a few that fit what you said — I’d start with these. ' +
+                'Tell me if you want cheapest payment, lowest miles, or newest year.'
             );
 
         default:
             return (
-                "Here are some options. " +
-                "Let me know if you'd like to narrow things down."
+                'Here are some solid matches based on what you told me. ' +
+                'Tap one to go deeper, or tell me if you want to tighten price or miles.'
             );
     }
 }

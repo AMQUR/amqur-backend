@@ -10,10 +10,17 @@
     "build:local": "nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-    "test": "jest"
+    "test": "jest",
+    "test:cov": "jest --coverage",
+    "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.2",
@@ -25,7 +32,7 @@
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "^6.19.2",
     "axios": "^1.13.2",
-    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "csv-parse": "^6.1.0",
