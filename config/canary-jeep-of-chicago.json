@@ -1,0 +1,105 @@
+{
+  "canaryId": "dag-jeep-chicago-001",
+  "status": "PREPARED_NOT_INSTALLED",
+  "selectedRooftop": {
+    "publicSite": "https://www.jeepofchicago.com",
+    "brand": "Jeep",
+    "rationale": [
+      "Single-brand rooftop (lower blast radius than dialautogroup.com)",
+      "Public HTML exposes Google Tag Manager containers — safest auditable install path",
+      "TeamVelocity / dealer.com fingerprint — standard dealer website vendor path",
+      "Clearer tenant/location mapping than multi-brand group homepage"
+    ],
+    "rejectedAlternatives": [
+      {
+        "site": "dialnissan.com",
+        "reason": "Probe returned minimal HTML (likely bot shield); install path unclear without vendor access"
+      },
+      {
+        "site": "dialchevy.com",
+        "reason": "DealerOn stack; deferred until DealerOn/GTM API access confirmed"
+      },
+      {
+        "site": "dialjeep.com",
+        "reason": "Minimal probe response; prefer jeepofchicago.com which returned full document"
+      },
+      {
+        "site": "dialautogroup.com",
+        "reason": "Group marketing site — higher risk of wrong rooftop attribution"
+      }
+    ]
+  },
+  "proposedTenant": {
+    "tenantSlug": "dial-auto-group",
+    "locationSlug": "jeep-of-chicago",
+    "timezone": "America/Chicago",
+    "note": "Production tenant/location not seeded until website install + inventory + handoff verified"
+  },
+  "websiteInstallation": {
+    "method": "Google Tag Manager (preferred)",
+    "observedGtmContainers": [
+      "GTM-MP5XGBXQ",
+      "GTM-MV862RN",
+      "GTM-PZR8D88Z",
+      "GTM-TPV8SZS7",
+      "GTM-WQP4BHQ4"
+    ],
+    "cmsFingerprint": "TeamVelocity / dealer.com",
+    "installAuthorized": false,
+    "blocker": "No authenticated GTM API, TeamVelocity, or dealer.com deployment credential available on this machine",
+    "rollback": "Disable GTM tag / trigger; or set location featureFlags chat=false"
+  },
+  "trafficProgression": [
+    { "phase": 1, "audience": "internal_employees", "percent": 0, "gate": "staff allowlist cookie or GTM lookup table" },
+    { "phase": 2, "audience": "allowlisted_testers", "percent": 0, "gate": "explicit allowlist" },
+    { "phase": 3, "audience": "customers", "percent": 5, "gate": "error/claim/handoff SLOs" },
+    { "phase": 4, "audience": "customers", "percent": 25, "gate": "same" },
+    { "phase": 5, "audience": "customers", "percent": 50, "gate": "same" },
+    { "phase": 6, "audience": "customers", "percent": 100, "gate": "pilot rooftop only" }
+  ],
+  "currentPhase": 0,
+  "enabledFeaturesWhenLive": {
+    "chat": true,
+    "inventory": true,
+    "vehicleCompare": true,
+    "savedVehicles": true,
+    "leadCapture": true,
+    "financeCalculator": true,
+    "serviceAi": true,
+    "partsAi": true,
+    "multilingual": true,
+    "handoff": true,
+    "leadScoring": true,
+    "copilot": true,
+    "proactiveEngagement": true
+  },
+  "disabledUntilVerified": {
+    "tekionIntegration": true,
+    "vAutoFeed": true,
+    "automatedFollowup": true,
+    "voiceAi": true,
+    "crossStoreInventory": true,
+    "priceDropAlerts": true,
+    "liveAppointmentConfirmation": true,
+    "repairOrderStatusClaims": true,
+    "financeApprovalClaims": true
+  },
+  "origins": {
+    "requiredCorsAndAllowedOrigins": [
+      "https://www.jeepofchicago.com",
+      "https://jeepofchicago.com"
+    ],
+    "api": "PRODUCTION_API_NOT_PROVISIONED_FOR_CANARY",
+    "widgetCdn": "PRODUCTION_CDN_NOT_PROVISIONED"
+  },
+  "autoPauseTriggers": [
+    "inventory_stale",
+    "tekion_repeated_failure",
+    "lead_writeback_failure",
+    "cors_or_token_error_spike",
+    "customer_visible_error_spike",
+    "unsupported_claim_detected",
+    "cross_tenant_access_failure",
+    "cwv_regression"
+  ]
+}
