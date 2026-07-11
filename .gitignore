@@ -2,7 +2,15 @@ node_modules
 .env
 .env.local
 .env.production
+.env.staging
 .DS_Store
 dist
 coverage
 *.log
+scripts/**/*.js
+scripts/**/*.js.map
+scripts/**/*.d.ts
+
+.railway-staging/
+.env.local.unlabeled.bak
+.env.staging

@@ -17,7 +17,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json --runInBand",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
-    "typecheck": "tsc --noEmit -p tsconfig.build.json"
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
+    "seed:staging-pilot": "ts-node --transpile-only scripts/seed-staging-pilot.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
