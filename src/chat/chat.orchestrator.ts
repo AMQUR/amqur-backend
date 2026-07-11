@@ -728,13 +728,30 @@ export class ChatOrchestrator {
     }): Promise<ChatResponse> {
 
         const { tenantId, userId, locationId } = input;
-        const message = input.message ?? '';
+        let message = input.message ?? '';
 
         await this.memory.ensureHydrated(userId);
+
+        // Structured widget actions take precedence over free-text intent
+        if (input.vin) {
+            const vin = input.vin.toUpperCase().trim();
+            this.memory.setInventoryState(userId, { selectedVin: vin });
+            if (input.action === 'hold_vehicle') {
+                message = message || `hold ${vin}`;
+            } else if (input.action === 'payment_estimate') {
+                message = message || `payment estimate for ${vin}`;
+            } else if (input.action === 'vehicle_detail') {
+                message = message || vin;
+            }
+        }
+
         await this.memory.appendMessage({
             userId,
             role: 'USER',
             content: message,
+            metadata: input.action
+                ? { action: input.action, vin: input.vin }
+                : undefined,
         });
 
         const prior = this.memory.getInventoryState(userId);
@@ -744,7 +761,12 @@ export class ChatOrchestrator {
             conversationTurnCount: nextTurn,
         });
 
-        const intent = IntentDetector.detect(message);
+        let intent = IntentDetector.detect(message);
+        if (input.action === 'hold_vehicle') {
+            intent = ChatIntent.HOLD_VEHICLE;
+        } else if (input.action === 'payment_estimate') {
+            intent = ChatIntent.PAYMENT_ESTIMATE;
+        }
         this.applyIntentBucketChange(userId, intent, message);
         const inventoryState =
             this.memory.getInventoryState(userId);
