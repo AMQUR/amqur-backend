@@ -136,6 +136,7 @@ export class InventoryEngine {
                         ? vehicle.lastSeenAt.toISOString()
                         : null,
                     source: vehicle.source ?? null,
+                    freshnessState: vehicle.freshnessState ?? null,
                 };
             })
             .map(vehicle => this.photoService.enrich(vehicle));
@@ -196,6 +197,7 @@ export class InventoryEngine {
                     ? vehicle.lastSeenAt.toISOString()
                     : null,
                 source: vehicle.source ?? null,
+                freshnessState: vehicle.freshnessState ?? null,
             });
         });
     }
@@ -255,6 +257,7 @@ export class InventoryEngine {
                 ? vehicle.lastSeenAt.toISOString()
                 : null,
             source: vehicle.source ?? null,
+            freshnessState: vehicle.freshnessState ?? null,
         });
     }
 

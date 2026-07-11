@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 
 @Injectable()
 export class PublicService {
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        private readonly flags: FeatureFlagsService,
+    ) { }
 
     async getWidgetConfig(
         tenantSlug: string,
@@ -30,6 +34,8 @@ export class PublicService {
             throw new NotFoundException('LOCATION_NOT_FOUND');
         }
 
+        const features = await this.flags.forWidget(tenant.id, location.id);
+
         return {
             ok: true,
 
@@ -51,11 +57,15 @@ export class PublicService {
                 logoUrl: null,
             },
 
-            features: {
-                chat: true,
-                inventory: true,
-                payments: true,
-            },
+            features,
+            proactive: features.proactiveEngagement
+                ? {
+                    enabled: true,
+                    maxPerSession: 2,
+                    signals: ['vdp_view', 'exit_intent', 'service_page'],
+                  }
+                : { enabled: false },
+            locales: features.multilingual ? ['en', 'es'] : ['en'],
         };
     }
 }

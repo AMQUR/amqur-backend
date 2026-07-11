@@ -24,6 +24,14 @@ import { HealthModule } from './health/health.module';
 import { LeadsModule } from './leads/leads.module';
 import { EscalationsModule } from './escalations/escalations.module';
 import { ObservabilityModule } from './observability/observability.module';
+import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { SourceAuthorityModule } from './source-authority/source-authority.module';
+import { IntegrationsModule } from './integrations/integrations.module';
+import { AiModule } from './ai/ai.module';
+import { SavedVehiclesModule } from './saved-vehicles/saved-vehicles.module';
+import { PartsModule } from './parts/parts.module';
+import { FollowUpModule } from './follow-up/follow-up.module';
+import { CopilotModule } from './copilot/copilot.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -56,6 +64,10 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
     ScheduleModule.forRoot(),
     PrismaModule,
+    FeatureFlagsModule,
+    SourceAuthorityModule,
+    AiModule,
+    IntegrationsModule,
     TenantsModule,
     LocationsModule,
     UsersModule,
@@ -65,6 +77,10 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     LeadsModule,
     EscalationsModule,
     ObservabilityModule,
+    SavedVehiclesModule,
+    PartsModule,
+    FollowUpModule,
+    CopilotModule,
     ChatModule,
     InventoryModule,
     InventoryFeedModule,

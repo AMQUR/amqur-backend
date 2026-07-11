@@ -43,4 +43,7 @@ export const envValidationSchema = Joi.object({
   GOOGLE_PRIVATE_KEY: Joi.string().optional().allow(''),
 
   WIDGET_TOKEN_EXPIRES_IN: Joi.string().optional().default('4h'),
+
+  /** AES key material for IntegrationSecret encryption (32+ chars). Required to store live credentials. */
+  INTEGRATION_ENCRYPTION_KEY: Joi.string().min(32).optional().allow(''),
 });

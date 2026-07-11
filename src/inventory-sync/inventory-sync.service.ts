@@ -1,10 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
-import { InventoryFeedService } from '../inventory-feed/inventory-feed.service';
-import { InventoryService } from '../inventory/inventory.service';
-import { VehicleNormalizer } from '../inventory-feed/normalizer/vehicle.normalizer';
-import { assertFeedUrlAllowed } from '../common/security/feed-url.guard';
+import { InventoryIngestionService } from '../integrations/vauto/inventory-ingestion.service';
 
 @Injectable()
 export class InventorySyncService {
@@ -12,8 +9,7 @@ export class InventorySyncService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly feed: InventoryFeedService,
-    private readonly inventory: InventoryService,
+    private readonly ingestion: InventoryIngestionService,
   ) {}
 
   @Cron('*/30 * * * *')
@@ -23,7 +19,7 @@ export class InventorySyncService {
       return;
     }
 
-    this.logger.log('Inventory auto-sync started');
+    this.logger.log('Inventory auto-sync started (validated two-phase ingestion)');
 
     const locations = await this.prisma.location.findMany({
       where: {
@@ -46,33 +42,9 @@ export class InventorySyncService {
 
     for (const location of locationsWithFeeds) {
       try {
-        this.logger.log(`Inventory sync starting for ${location.name}`);
-
-        assertFeedUrlAllowed(location.inventoryFeedUrl!);
-
-        const rawFeed = await this.feed.fetchFeed(location.inventoryFeedUrl!);
-        const records = this.feed.parseFeed(
-          location.inventoryFeedType as 'XML' | 'JSON' | 'CSV',
-          rawFeed,
-        );
-
-        const vehicles = records
-          .map((r) => VehicleNormalizer.normalize(r))
-          .filter((v): v is NonNullable<typeof v> => v !== null);
-
+        const result = await this.ingestion.runForLocation(location.id);
         this.logger.log(
-          `Parsed ${records.length} records, normalized ${vehicles.length} for ${location.name}`,
-        );
-
-        await this.inventory.upsertVehicles(
-          location.tenantId,
-          location.id,
-          vehicles,
-        );
-        await this.inventory.updateVehicleLifecycle(location.id);
-
-        this.logger.log(
-          `${vehicles.length} vehicles synced for ${location.name}`,
+          `Inventory sync ${result.status} for ${location.name} run=${result.runId}`,
         );
       } catch (error: unknown) {
         const msg = error instanceof Error ? error.message : String(error);
