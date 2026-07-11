@@ -5,7 +5,7 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-11 (Path A: Google auth succeeded for Jeep of Chicago **Google tags** `G-VPK5NDXW9G` / `GT-KDDGB74T` — these are GA4/Google tag IDs, **not** GTM. Container `GTM-MP5XGBXQ` not verified accessible on GTM Accounts. Path B/C unchanged. Stock Cloud SDK GTM OAuth unsupported.)
+**Last discovery pass:** 2026-07-11 (Path A: operator Google login reported complete in system browser; automation Playwright profile still on Sign-in and cannot share that session. Google tags `G-VPK5NDXW9G`/`GT-KDDGB74T` are not GTM. `GTM-MP5XGBXQ` Edit not verified in controllable session — no unpublished workspace created. Path B/C unchanged.)
 
 ---
 
@@ -49,7 +49,7 @@ Primary observed container commonly referenced: **GTM-MP5XGBXQ**
 
 | Path | Action | Status |
 |---|---|---|
-| **A** | Sign in at [tagmanager.google.com](https://tagmanager.google.com); confirm **GTM container** `GTM-MP5XGBXQ` (or correct Jeep of Chicago container) on Accounts; create unpublished workspace; Preview only | **PARTIAL** — Google auth succeeded; operator can see Google tags `G-VPK5NDXW9G` / `GT-KDDGB74T` (**not** GTM containers — do not modify). **`GTM-MP5XGBXQ` not listed / not accessible** on GTM Accounts for this account → **lacks GTM container access** |
+| **A** | Confirm **GTM** container `GTM-MP5XGBXQ` on Accounts with Read+Edit; create unpublished workspace `AMQUR Internal Employee Canary`; Preview only | **BLOCKED FOR AUTOMATION** — system-browser login ≠ Playwright session (Sign-in still shown in automation). Prior check: Google tags visible, **`GTM-MP5XGBXQ` not accessible**. No workspace created. No publish. |
 | **B** | Org-owned OAuth client per `docs/integrations/GTM_ORG_OAUTH_CLIENT_REQUIREMENTS.md` | **BLOCKED** — awaiting org project owner |
 | **C** | Submit TeamVelocity request via verified support channel | **BLOCKED** — no portal/CSM channel on this machine |
 
