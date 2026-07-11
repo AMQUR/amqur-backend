@@ -256,6 +256,15 @@ export class AuthService {
       if (!passwordValid) {
         throw new UnauthorizedException('Invalid credentials');
       }
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId: user.tenantId,
+          userId: user.id,
+          action: 'auth.login',
+          resource: 'User',
+          resourceId: user.id,
+        },
+      });
       return this.tokensFor(user);
     }
 
@@ -279,6 +288,16 @@ export class AuthService {
     if (!passwordValid) {
       throw new UnauthorizedException('Invalid credentials');
     }
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: user.tenantId,
+        userId: user.id,
+        action: 'auth.login',
+        resource: 'User',
+        resourceId: user.id,
+      },
+    });
 
     return this.tokensFor(user);
   }

@@ -23,6 +23,7 @@ import { PublicModule } from './public/public.module';
 import { HealthModule } from './health/health.module';
 import { LeadsModule } from './leads/leads.module';
 import { EscalationsModule } from './escalations/escalations.module';
+import { ObservabilityModule } from './observability/observability.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -63,6 +64,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     HealthModule,
     LeadsModule,
     EscalationsModule,
+    ObservabilityModule,
     ChatModule,
     InventoryModule,
     InventoryFeedModule,

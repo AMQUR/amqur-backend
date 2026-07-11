@@ -132,6 +132,10 @@ export class InventoryEngine {
                     estimatedPayment,
                     status: vehicle.status,
                     locationId: vehicle.locationId,
+                    lastSeenAt: vehicle.lastSeenAt
+                        ? vehicle.lastSeenAt.toISOString()
+                        : null,
+                    source: vehicle.source ?? null,
                 };
             })
             .map(vehicle => this.photoService.enrich(vehicle));
@@ -188,6 +192,10 @@ export class InventoryEngine {
                 estimatedPayment,
                 status: vehicle.status,
                 locationId: vehicle.locationId,
+                lastSeenAt: vehicle.lastSeenAt
+                    ? vehicle.lastSeenAt.toISOString()
+                    : null,
+                source: vehicle.source ?? null,
             });
         });
     }
@@ -243,6 +251,10 @@ export class InventoryEngine {
             estimatedPayment,
             status: vehicle.status,
             locationId: vehicle.locationId,
+            lastSeenAt: vehicle.lastSeenAt
+                ? vehicle.lastSeenAt.toISOString()
+                : null,
+            source: vehicle.source ?? null,
         });
     }
 

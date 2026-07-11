@@ -12,6 +12,19 @@ export class LeadsService {
         tenantId,
         ...(opts?.status ? { status: opts.status } : {}),
       },
+      include: {
+        location: {
+          select: { id: true, name: true, slug: true },
+        },
+        conversation: {
+          select: {
+            id: true,
+            externalKey: true,
+            lastActivityAt: true,
+            channel: true,
+          },
+        },
+      },
       orderBy: { updatedAt: 'desc' },
       take: Math.min(opts?.take ?? 50, 200),
     });

@@ -1,4 +1,5 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -14,7 +15,6 @@ import type { AuthUser } from '../common/decorators/current-user.decorator';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  /** Staff registration — requires ADMIN or SUPER_ADMIN */
   @UseGuards(RolesGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Post('register')
@@ -26,12 +26,14 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
   }
 
   @Public()
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('refresh')
   refresh(@Body() dto: RefreshDto) {
     return this.authService.refresh(dto.refresh_token);
@@ -43,11 +45,8 @@ export class AuthController {
     return this.authService.logout(dto.refresh_token);
   }
 
-  /**
-   * Bootstrap first tenant + SUPER_ADMIN.
-   * Requires BOOTSTRAP_SECRET in body matching env.
-   */
   @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('bootstrap')
   bootstrap(@Body() dto: BootstrapDto) {
     return this.authService.bootstrap(dto);

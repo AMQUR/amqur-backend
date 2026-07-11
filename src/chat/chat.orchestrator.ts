@@ -39,23 +39,36 @@ import { scoreLeadEvent, stageFromScore } from './lead-intelligence';
 import { EscalationsService } from '../escalations/escalations.service';
 import { LeadsService } from '../leads/leads.service';
 import { EscalationUrgency } from '@prisma/client';
+import { MetricsService } from '../observability/metrics.service';
+import { inventoryFreshnessDisclaimer } from './engines/inventory-freshness';
+
+/** Machine-readable truth metadata for clients and audits */
+export type ChatProvenance = {
+    sources: string[];
+    inventoryAsOf?: string | null;
+    disclaimer?: string;
+    verifiedFactsOnly: boolean;
+};
 
 type ChatResponse =
-    | { reply: string }
+    | { reply: string; provenance?: ChatProvenance }
     | {
         type: 'vehicle_detail';
         vehicle: VinProfile;
         reply: string;
+        provenance?: ChatProvenance;
     }
     | {
         type: 'vehicle_carousel';
         vehicles: InventoryVehicle[];
         reply: string;
+        provenance?: ChatProvenance;
     }
     | {
         type: 'vehicle_compare';
         vehicles: InventoryVehicle[];
         reply: string;
+        provenance?: ChatProvenance;
     }
     | {
         type: 'payment_summary';
@@ -66,6 +79,7 @@ type ChatResponse =
         downPayment: number;
         vehicleVin?: string;
         price?: number;
+        provenance?: ChatProvenance;
     };
 
 @Injectable()
@@ -89,7 +103,37 @@ export class ChatOrchestrator {
         private readonly claude: ClaudeConversationService,
         private readonly escalations: EscalationsService,
         private readonly leadsService: LeadsService,
+        private readonly metrics: MetricsService,
     ) { }
+
+    private inventoryProvenance(
+        vehicles: InventoryVehicle[],
+    ): ChatProvenance {
+        const timestamps = vehicles
+            .map((v) => (v.lastSeenAt ? Date.parse(v.lastSeenAt) : NaN))
+            .filter((n) => Number.isFinite(n)) as number[];
+        const newest = timestamps.length
+            ? new Date(Math.max(...timestamps)).toISOString()
+            : null;
+        const anyStaleDisclaimer = inventoryFreshnessDisclaimer(vehicles);
+        return {
+            sources: ['inventory_db'],
+            inventoryAsOf: newest,
+            verifiedFactsOnly: true,
+            disclaimer: anyStaleDisclaimer,
+        };
+    }
+
+    private paymentProvenance(vehicleVin?: string): ChatProvenance {
+        return {
+            sources: vehicleVin
+                ? ['inventory_db', 'payment_calculator']
+                : ['payment_calculator'],
+            verifiedFactsOnly: false,
+            disclaimer:
+                'Educational payment estimate only — not a credit decision or official dealership offer. APR, fees, taxes, and incentives must be verified with the dealership.',
+        };
+    }
 
     private async polish(
         draft: string,
@@ -308,6 +352,8 @@ export class ChatOrchestrator {
                 leadScore: inventoryState.leadScore,
             },
         });
+        this.metrics.increment('escalations.created');
+        if (notified) this.metrics.increment('escalations.notified');
 
         this.memory.setInventoryState(userId, {
             handoffRequested: true,
@@ -731,6 +777,7 @@ export class ChatOrchestrator {
         let message = input.message ?? '';
 
         await this.memory.ensureHydrated(userId);
+        this.metrics.increment('chat.requests');
 
         // Structured widget actions take precedence over free-text intent
         if (input.vin) {
@@ -1135,7 +1182,7 @@ export class ChatOrchestrator {
 
             return {
                 reply:
-                    'Done — that vehicle is on hold. Someone from the team will reach out shortly.',
+                    'I’ve marked that vehicle as held in our system — a team member will verify availability and follow up shortly. Holds are not final until staff confirms.',
             };
         }
 
@@ -1182,7 +1229,8 @@ export class ChatOrchestrator {
                 );
 
                 return {
-                    reply: 'I can schedule that — what day works best?',
+                    reply:
+                        'I can take your preferred day and time — appointments are requested until the team confirms. What day works best?',
                 };
             }
 
@@ -1270,7 +1318,7 @@ export class ChatOrchestrator {
                 this.markServiceFlowCompleted(userId);
                 const reply = await this.polishGuarded(
                     userId,
-                    'Perfect — I’ve got everything. Our team will reach out shortly to confirm your appointment.',
+                    'Perfect — I’ve got everything. I’ve logged your appointment request; our team will reach out to confirm availability. This is not a final booking until confirmed.',
                     'service',
                     { userMessage: message },
                 );
@@ -1463,6 +1511,7 @@ export class ChatOrchestrator {
                 downPayment: final.downPayment ?? 0,
                 vehicleVin: final.selectedVin,
                 price: Number(vehicle.price ?? 0),
+                provenance: this.paymentProvenance(final.selectedVin),
             };
         }
         // INVENTORY SEARCH
@@ -1607,7 +1656,42 @@ export class ChatOrchestrator {
         }
         const draft = `${base} ${follow}${outreach}`;
         const facts = `${enriched.length} vehicle(s). ${this.vehicleFactsLine(enriched)}`;
-        const reply = await this.polishGuarded(userId, draft, 'sales', {
+        const provenance = this.inventoryProvenance(enriched);
+        let draftOut = draft;
+        if (provenance.disclaimer && enriched.length > 0) {
+            // Keep disclaimer in reply when inventory may be stale
+            const stale =
+                provenance.disclaimer.includes('day behind') ||
+                enriched.some((v) => !v.lastSeenAt);
+            if (stale) {
+                draftOut = `${draft} ${provenance.disclaimer}`;
+            }
+        }
+        if (enriched.length === 0) {
+            this.metrics.increment('inventory.miss');
+            const emptyDraft =
+                'I couldn’t verify matching vehicles in our current inventory for those filters. ' +
+                'Want to broaden the search, leave your contact for a callback, or talk to someone on the floor?';
+            const emptyReply = await this.polishGuarded(userId, emptyDraft, 'sales', {
+                userMessage: message,
+                facts: '0 verified inventory matches',
+            });
+            return {
+                type: 'vehicle_carousel',
+                vehicles: [],
+                reply: emptyReply,
+                provenance: {
+                    sources: ['inventory_db'],
+                    inventoryAsOf: null,
+                    verifiedFactsOnly: true,
+                    disclaimer:
+                        'No matching vehicles found in verified inventory — I will not invent listings.',
+                },
+            };
+        }
+
+        this.metrics.increment('inventory.hit');
+        const reply = await this.polishGuarded(userId, draftOut, 'sales', {
             facts,
             userMessage: message,
         });
@@ -1616,6 +1700,7 @@ export class ChatOrchestrator {
             type: 'vehicle_carousel',
             vehicles: enriched,
             reply,
+            provenance,
         };
     }
 
