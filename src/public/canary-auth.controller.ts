@@ -49,8 +49,11 @@ export class CanaryAuthController {
   @UseGuards(RolesGuard)
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Post('canary/invites/revoke')
-  revokeInvite(@Body() dto: RevokeCanaryInviteDto) {
-    return this.canaryAuth.revokeInvite(dto.jti);
+  revokeInvite(
+    @Body() dto: RevokeCanaryInviteDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.canaryAuth.revokeInvite(dto.jti, user.sub);
   }
 
   @Public()
