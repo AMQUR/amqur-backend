@@ -5,7 +5,7 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-11 (Path A: operator Google login reported complete in system browser; automation Playwright profile still on Sign-in and cannot share that session. Google tags `G-VPK5NDXW9G`/`GT-KDDGB74T` are not GTM. `GTM-MP5XGBXQ` Edit not verified in controllable session — no unpublished workspace created. Path B/C unchanged.)
+**Last discovery pass:** 2026-07-14 (revalidated main+CI+local+staging; Path A automation still Sign-in in Playwright profile; GTM Edit for `GTM-MP5XGBXQ` unverified; handoff/`CRM_WEBHOOK` unset; stock Cloud SDK GTM OAuth unsupported)
 
 ---
 
