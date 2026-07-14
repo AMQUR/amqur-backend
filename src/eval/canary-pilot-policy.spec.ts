@@ -72,11 +72,13 @@ describe('Jeep of Chicago canary release gates', () => {
       return;
     }
     const src = fs.readFileSync(p, 'utf8');
+    expect(src).toMatch(/canary-eligibility|employee_gate_denied/);
     expect(src).toMatch(/forbidden_host_pattern/);
     expect(src).toMatch(/hostname_rejected/);
     expect(src).toMatch(/kill_switch/);
     expect(src).toMatch(/duplicate_blocked/);
     expect(src).toMatch(/stableBucket|BUCKET_KEY/);
     expect(src).not.toMatch(/JWT_SECRET|DATABASE_URL|TEKION_CLIENT_SECRET/);
+    expect(src).not.toMatch(/\bEMP_COOKIE\b|employeeTokenHash/);
   });
 });

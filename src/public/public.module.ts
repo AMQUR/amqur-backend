@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { PublicController } from './public.controller';
 import { PublicService } from './public.service';
 import { WidgetAuthService } from './widget-auth.service';
+import { CanaryAuthService } from './canary-auth.service';
+import { CanaryAuthController } from './canary-auth.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 
@@ -10,10 +12,11 @@ import { AuthModule } from '../auth/auth.module';
         PrismaModule,
         AuthModule, // provides JwtService
     ],
-    controllers: [PublicController],
+    controllers: [PublicController, CanaryAuthController],
     providers: [
-        PublicService,      // ← we accidentally removed this earlier
-        WidgetAuthService,  // ← new widget token service
+        PublicService,
+        WidgetAuthService,
+        CanaryAuthService,
     ],
 })
 export class PublicModule { }

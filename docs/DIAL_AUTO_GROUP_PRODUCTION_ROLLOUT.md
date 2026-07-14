@@ -79,13 +79,14 @@ Release rule: tested SHA must equal PR head or state is **CI OUTDATED — NOT ME
 | Area | Status |
 |---|---|
 | GTM access | BLOCKED BY ACCESS — Playwright automation still on Sign-in (isolated profile). Google tags ≠ GTM. `GTM-MP5XGBXQ` Edit not verified. Stock Cloud SDK GTM OAuth permanently unsupported. |
-| TeamVelocity | BLOCKED BY ACCESS — no verified portal/CSM channel |
+| TeamVelocity / Apollo | Pixel **saved**, **Is Enabled = False** — do not enable until gates complete |
 | Org OAuth client (Path B) | BLOCKED BY ACCESS — requirements documented |
 | Human handoff | BLOCKED BY ACCESS — no approved test destination / `CRM_WEBHOOK_URL` |
 | Business approval | BLOCKED BY BUSINESS APPROVAL — package unsigned |
 | Tekion | BLOCKED BY VENDOR — disabled |
 | vAuto | BLOCKED BY VENDOR — disabled; public inventory off |
-| Production API/CDN for jeepofchicago.com | BLOCKED BY ACCESS — not provisioned in canary config |
+| Production API/CDN for jeepofchicago.com | Staging hosts used in Apollo payload only; production canary config hosts still BLOCKED |
+| Secure employee canary auth | IMPLEMENTED IN REPO — staging migrate/env + Jeep allowlist deploy pending merge |
 | Customer traffic | **NOT AUTHORIZED** |
 
 ---
@@ -94,12 +95,14 @@ Release rule: tested SHA must equal PR head or state is **CI OUTDATED — NOT ME
 
 | Field | Value |
 |---|---|
-| Status | PREPARED_NOT_INSTALLED |
+| Status | PREPARED — Apollo pixel saved **disabled**; not customer-live |
 | Release level | 0 |
-| GTM workspace | none |
-| Preview | none |
-| Publication | **UNPUBLISHED** |
-| Enabled live | none |
+| Deployment path | Apollo / TeamVelocity (Path C) — do not dual-install GTM |
+| Apollo tag | AMQUR Internal Employee Canary · Is Enabled = **False** |
+| Apollo pixel ID | _record from UI if visible_ |
+| GTM workspace | none (do not create while on Apollo path) |
+| Preview / publish | **none** — Apollo disabled |
+| Employee gate | Signed invite → HttpOnly cookie → eligibility (see `CANARY_EMPLOYEE_AUTH.md`) |
 | Disabled | Tekion, vAuto, public inventory, messaging, voice, live appointment confirmation, customer traffic |
 
 ---
@@ -142,12 +145,14 @@ Release rule: tested SHA must equal PR head or state is **CI OUTDATED — NOT ME
 
 ## Exact remaining blockers
 
-1. Sign into headed Playwright GTM (or grant Edit on `GTM-MP5XGBXQ` via authorized account) — [widget#6](https://github.com/AMQUR/amqur-widget/issues/6)  
-2. Verified Jeep of Chicago handoff test destination — [backend#8](https://github.com/AMQUR/amqur-backend/issues/8)  
-3. Signed business approval — `docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md`  
-4. Production HTTPS API + CDN for jeepofchicago.com (fail-closed until set)  
-5. Tekion sandbox (optional for non-CRM canary) — [backend#6](https://github.com/AMQUR/amqur-backend/issues/6)  
-6. Authorized vAuto feed (required before public inventory) — [backend#7](https://github.com/AMQUR/amqur-backend/issues/7)  
+1. Staging deploy: migrate `CanaryInvite`, set `CANARY_*` + narrow Jeep `allowedOrigins`/`CORS_ORIGINS`/`CANARY_STRICT_ORIGINS` — keep Apollo **disabled**
+2. Verified Jeep of Chicago handoff test destination — [backend#8](https://github.com/AMQUR/amqur-backend/issues/8)
+3. Signed business approval — `docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md`
+4. Record Apollo pixel ID from UI (optional ops); enable Apollo only after gates 2–3
+5. Tekion sandbox (optional for non-CRM canary) — [backend#6](https://github.com/AMQUR/amqur-backend/issues/6)
+6. Authorized vAuto feed (required before public inventory) — [backend#7](https://github.com/AMQUR/amqur-backend/issues/7)
+
+Do not enable customer traffic. Do not publish GTM-MP5XGBXQ for AMQUR while Apollo is selected.
 
 ---
 

@@ -4,10 +4,10 @@
   "status": "PREPARED_NOT_INSTALLED",
   "releaseLevel": 0,
   "blockedReasons": [
-    "PRODUCTION_API_NOT_PROVISIONED",
-    "PRODUCTION_CDN_NOT_PROVISIONED",
-    "GTM_OR_TEAMVELOCITY_DEPLOY_ACCESS_MISSING",
+    "APOLLO_PIXEL_SAVED_BUT_DISABLED",
+    "STAGING_CANARY_AUTH_ENV_AND_JEEP_ORIGINS_PENDING_DEPLOY",
     "HUMAN_HANDOFF_DESTINATION_UNVERIFIED",
+    "BUSINESS_APPROVAL_UNSIGNED",
     "LIVE_INVENTORY_SOURCE_MISSING",
     "ALERT_ROUTING_UNVERIFIED"
   ],
@@ -30,8 +30,22 @@
     "seededInProduction": false
   },
   "websiteInstallation": {
-    "methodPreferred": "Google Tag Manager",
-    "methodFallback": "TeamVelocity / dealer.com script manager",
+    "methodPreferred": "Apollo / TeamVelocity Tracking Pixel",
+    "methodFallback": "Google Tag Manager (mutually exclusive with Apollo)",
+    "apolloPixel": {
+      "name": "AMQUR Internal Employee Canary",
+      "website": "www.jeepofchicago.com",
+      "placement": "All Pages Body",
+      "vendor": "Other",
+      "includeOnIframes": false,
+      "excludeFromConversionPages": false,
+      "isEnabled": false,
+      "pixelId": null,
+      "loaderUrl": "https://widget-staging-staging.up.railway.app/amqur-canary-loader.js",
+      "widgetAssetUrl": "https://widget-staging-staging.up.railway.app/amqur-widget.1e34c88.iife.js",
+      "apiBaseUrl": "https://backend-staging-staging-b699.up.railway.app",
+      "note": "Manually saved 2026-07-14. Must remain Is Enabled=False until secure employee auth staging + handoff + signed approval. Do not dual-install GTM."
+    },
     "observedGtmContainers": [
       "GTM-MP5XGBXQ",
       "GTM-MV862RN",
@@ -45,9 +59,9 @@
     "existingChatWidgetRisk": true,
     "cspHeaderDetected": false,
     "installAuthorized": false,
-    "blocker": "GTM-MP5XGBXQ Edit not verified in controllable automation session (Playwright Sign-in; system-browser login not shared). Google tags G-VPK5NDXW9G/GT-KDDGB74T are not GTM. No AMQUR workspace created. PREPARED_NOT_INSTALLED; unpublished.",
+    "blocker": "Apollo pixel saved disabled. Remaining: staging canary auth env+origins, verified handoff/CRM_WEBHOOK_URL, signed business approval. GTM-MP5XGBXQ must not be modified while Apollo path is selected.",
     "googleAuthStatus": "SUCCEEDED_GOOGLE_TAGS_VISIBLE",
-    "gtmContainerAccess": "MISSING_OR_UNVERIFIED_IN_AUTOMATION",
+    "gtmContainerAccess": "NOT_USED_APOLLO_PATH_SELECTED",
     "observedGoogleTagsNotGtm": [
       "G-VPK5NDXW9G",
       "GT-KDDGB74T"
@@ -104,7 +118,7 @@
     "level1_employee": {
       "percent": 0,
       "active": false,
-      "gate": "hashed_query_or_cookie_allowlist"
+      "gate": "backend_signed_httponly_canary_cookie_eligibility"
     },
     "level2_one_percent": {
       "percent": 1,
