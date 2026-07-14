@@ -5,26 +5,44 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-14 (revalidated main+CI+local+staging; Path A automation still Sign-in in Playwright profile; GTM Edit for `GTM-MP5XGBXQ` unverified; handoff/`CRM_WEBHOOK` unset; stock Cloud SDK GTM OAuth unsupported)
+**Last discovery pass:** 2026-07-14 (Apollo/TeamVelocity Path C selected; pixel **AMQUR Internal Employee Canary** manually saved with **Is Enabled = False**; secure signed employee canary auth implemented in repo — see `docs/CANARY_EMPLOYEE_AUTH.md`; handoff/`CRM_WEBHOOK` unset; business approval unsigned; do not enable Apollo; do not dual-install GTM)
 
 ---
 
 ## Google Tag Manager / TeamVelocity deployment
 
-**Status:** BLOCKED BY ACCESS
+**Status:** PATH C SELECTED — APOLLO PIXEL SAVED DISABLED
 
 Required authorization:
 
-- Approved GTM account access **or** TeamVelocity / dealer.com deployment access
+- Approved GTM account access **or** TeamVelocity / dealer.com / **Apollo Tracking Pixel** deployment access
 - Permission scoped to **Jeep of Chicago** (`www.jeepofchicago.com` / `jeepofchicago.com`) only
-- Permission to create an **unpublished** preview workspace/version first
-- Permission to **publish** only after final explicit approval
+- Permission to create an **unpublished** preview workspace/version first (GTM) **or** keep Apollo **Is Enabled = False** until gates pass
+- Permission to **publish** / enable only after final explicit approval
 
 Publicly observed GTM containers (not proof of access):
 
 `GTM-MP5XGBXQ`, `GTM-MV862RN`, `GTM-NFTX3XB`, `GTM-PZR8D88Z`, `GTM-TPV8SZS7`, `GTM-WQP4BHQ4`
 
-Primary observed container commonly referenced: **GTM-MP5XGBXQ**
+Primary observed container commonly referenced: **GTM-MP5XGBXQ** — **do not modify** while Apollo is the selected path.
+
+### Apollo / TeamVelocity (Path C) — 2026-07-14
+
+| Field | Value |
+|---|---|
+| Path | **Selected** (do not also install via GTM) |
+| Website | `www.jeepofchicago.com` |
+| Tag name | AMQUR Internal Employee Canary |
+| Placement | All Pages Body |
+| Vendor | Other |
+| Include on Iframes | False |
+| Exclude from conversion pages | False |
+| **Is Enabled** | **False** (must remain disabled) |
+| Loader URL | `https://widget-staging-staging.up.railway.app/amqur-canary-loader.js` |
+| Widget asset | `https://widget-staging-staging.up.railway.app/amqur-widget.1e34c88.iife.js` |
+| API | `https://backend-staging-staging-b699.up.railway.app` |
+| Apollo pixel ID | _Not captured in automation — record from Apollo UI if visible; no secrets_ |
+| Dual-install with GTM | **Forbidden** |
 
 ### Discovery evidence (2026-07-11)
 
@@ -51,9 +69,13 @@ Primary observed container commonly referenced: **GTM-MP5XGBXQ**
 |---|---|---|
 | **A** | Confirm **GTM** container `GTM-MP5XGBXQ` on Accounts with Read+Edit; create unpublished workspace `AMQUR Internal Employee Canary`; Preview only | **BLOCKED FOR AUTOMATION** — system-browser login ≠ Playwright session (Sign-in still shown in automation). Prior check: Google tags visible, **`GTM-MP5XGBXQ` not accessible**. No workspace created. No publish. |
 | **B** | Org-owned OAuth client per `docs/integrations/GTM_ORG_OAUTH_CLIENT_REQUIREMENTS.md` | **BLOCKED** — awaiting org project owner |
-| **C** | Submit TeamVelocity request via verified support channel | **BLOCKED** — no portal/CSM channel on this machine |
+| **C** | Apollo / TeamVelocity Tracking Pixel | **IN PROGRESS** — pixel saved, **Is Enabled = False**. Do not enable until secure employee auth (staging) + handoff + signed approval. Do not dual-install GTM. |
 
 **Permanently unsupported:** stock Cloud SDK OAuth client + Tag Manager scopes.
+
+### Secure employee authorization (repo)
+
+Client-writable `amqur_emp=1` is **rejected** as sole gate. Design: backend-issued invite → HttpOnly signed cookie → eligibility API → optional strict widget-token gate for Jeep origins. See `docs/CANARY_EMPLOYEE_AUTH.md`.
 
 Operator packages (ready, not activated):
 
@@ -180,12 +202,13 @@ Silence is **not** approval.
 
 ## Acceptance for “READY FOR INTERNAL EMPLOYEE CANARY”
 
-All of the above that apply to Level 1, plus:
+All of the following:
 
-1. GTM/TV preview access verified  
-2. Handoff test destination verified  
-3. Production API/CDN set in loader config (fail-closed otherwise)  
-4. Unpublished / employee-only tag tested  
-5. Explicit stop before publish  
+1. Apollo pixel saved but still **disabled** (or GTM unpublished Preview only — never both)
+2. Secure signed employee authorization passes locally + on staging; public users denied
+3. Jeep origins narrowly allowlisted; forged/expired/wrong claims fail; unknown/missing Origin fail closed
+4. Handoff destination / `CRM_WEBHOOK_URL` verified
+5. Business approval signed (`docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md`)
+6. Rollback tested
 
 Customer publication requires a **later** explicit step — not covered by this document alone.

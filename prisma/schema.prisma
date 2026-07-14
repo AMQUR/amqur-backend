@@ -36,9 +36,38 @@ model Tenant {
   outboxEvents         OutboxEvent[]
   webhookInboxes       WebhookInbox[]
   followUpCampaigns    FollowUpCampaign[]
+  canaryInvites        CanaryInvite[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+/// One-time employee canary invite (redeem → HttpOnly signed session cookie).
+model CanaryInvite {
+  id String @id @default(cuid())
+
+  jti String @unique
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String
+  /// staging | production | test
+  environment String
+
+  /// Authorized tester label (email or staff id) — not a secret
+  testerLabel String?
+
+  expiresAt  DateTime
+  redeemedAt DateTime?
+  revokedAt  DateTime?
+
+  createdByUserId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, locationId])
+  @@index([expiresAt])
 }
 
 model Location {

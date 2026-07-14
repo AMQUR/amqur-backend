@@ -34,11 +34,13 @@ export class PublicController {
   async createWidgetToken(
     @Body() dto: WidgetTokenDto,
     @Headers('origin') origin?: string,
+    @Headers('cookie') cookie?: string,
   ) {
     return this.widgetAuthService.createWidgetToken(
       dto.tenantSlug,
       dto.locationSlug,
       origin,
+      cookie,
     );
   }
 

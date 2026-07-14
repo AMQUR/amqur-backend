@@ -14,7 +14,7 @@ No secrets are listed here.
 
 - Unpublished GTM **Preview** (or equivalent TeamVelocity non-public test) of the AMQUR Level 1 employee-gated loader
 - Hostname restriction to `www.jeepofchicago.com` / `jeepofchicago.com` only
-- Employee gate (authenticated cookie / approved internal mechanism — not a public password)
+- Employee gate: **backend-issued signed HttpOnly canary cookie** + eligibility API (not a client-writable boolean cookie)
 - Chat bootstrap against provisioned HTTPS API/CDN (or labeled staging hosts only when the page visibly states internal test)
 - Lead capture + service/parts request persistence to an **approved test destination**
 - Human handoff delivery to an **approved test recipient** (not live BDC queues unless explicitly approved for test)
@@ -40,8 +40,11 @@ Only GTM Preview / unpublished workspace / employee-gated internal access is in 
 
 ## Internal access method
 
-Preferred: GTM workspace `AMQUR Internal Employee Canary` + **Preview mode** + Level 1 employee gate.  
-Fallback: TeamVelocity unpublished / internal script entry limited to Jeep of Chicago hostnames.
+**Selected path (2026-07-14):** Apollo / TeamVelocity Tracking Pixel **AMQUR Internal Employee Canary** — saved with **Is Enabled = False**. Do not enable until this package is signed and handoff is verified. Do not also install via GTM.
+
+Fallback / alternate: GTM workspace `AMQUR Internal Employee Canary` + **Preview mode** + Level 1 employee gate (mutually exclusive with Apollo).
+
+Secure redeem: staging `/canary-redeem.html` + staff `POST /api/canary/invites` — see `docs/CANARY_EMPLOYEE_AUTH.md`.
 
 ## Approved test users
 

@@ -46,4 +46,32 @@ export const envValidationSchema = Joi.object({
 
   /** AES key material for IntegrationSecret encryption (32+ chars). Required to store live credentials. */
   INTEGRATION_ENCRYPTION_KEY: Joi.string().min(32).optional().allow(''),
+
+  /**
+   * Master switch for employee canary redeem/eligibility.
+   * When false, all canary employee sessions fail closed.
+   */
+  CANARY_EMPLOYEE_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+
+  /** Optional dedicated signing secret for canary cookies; falls back to JWT_SECRET. */
+  CANARY_EMPLOYEE_SECRET: Joi.string().min(32).optional().allow(''),
+
+  /** Cookie / invite TTL defaults */
+  CANARY_SESSION_EXPIRES_IN: Joi.string().optional().default('2h'),
+  CANARY_INVITE_EXPIRES_IN: Joi.string().optional().default('15m'),
+
+  /** Claimed deployment environment for canary tokens (staging|production|test) */
+  CANARY_ENVIRONMENT: Joi.string()
+    .valid('staging', 'production', 'test')
+    .optional()
+    .default('staging'),
+
+  /**
+   * Origins that must present a valid employee canary session to mint widget tokens
+   * when CANARY_EMPLOYEE_ENABLED=true. Exact match only; empty = none (staging widget host stays usable).
+   */
+  CANARY_STRICT_ORIGINS: Joi.string().optional().allow('').default(''),
 });
