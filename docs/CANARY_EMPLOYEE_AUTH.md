@@ -28,6 +28,11 @@ A client-writable cookie such as `amqur_emp=1` must **never** be the sole author
 
 Tenant `allowedOrigins` may include Jeep **only after** this gate is deployed and tested. Staging widget origin remains for labeled host tests.
 
+## Auditing
+
+Invite **issue**, **redeem**, and **revoke** write `AuditLog` rows (`canary.invite.*`) with tenant/location/environment metadata only.  
+Never store invite JWTs, session cookies, or signing secrets in audit metadata or application logs.
+
 ## Explicit non-goals
 
 - No token in Apollo / static JS / query strings
@@ -39,4 +44,4 @@ Tenant `allowedOrigins` may include Jeep **only after** this gate is deployed an
 ## Regression coverage
 
 See `src/public/canary-auth.service.spec.ts` and `widget-auth.service.spec.ts`:
-authorized+Jeep OK; missing credential fail; forged fail; expired fail; wrong tenant/rooftop/env fail; unknown/missing Origin fail; kill switch fail; Jeep strict origin without session fail.
+authorized+Jeep OK; missing credential fail; forged fail; expired fail; wrong tenant/rooftop/env fail; unknown/missing Origin fail; kill switch fail; Jeep strict origin without session fail; redeemed invite reuse fail; audit without secrets.

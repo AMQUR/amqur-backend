@@ -81,13 +81,30 @@ Release rule: tested SHA must equal PR head or state is **CI OUTDATED — NOT ME
 | GTM access | BLOCKED BY ACCESS — Playwright automation still on Sign-in (isolated profile). Google tags ≠ GTM. `GTM-MP5XGBXQ` Edit not verified. Stock Cloud SDK GTM OAuth permanently unsupported. |
 | TeamVelocity / Apollo | Pixel **saved**, **Is Enabled = False** — do not enable until gates complete |
 | Org OAuth client (Path B) | BLOCKED BY ACCESS — requirements documented |
-| Human handoff | BLOCKED BY ACCESS — no approved test destination / `CRM_WEBHOOK_URL` |
-| Business approval | BLOCKED BY BUSINESS APPROVAL — package unsigned |
+| Human handoff | BLOCKED BY ACCESS — `CRM_WEBHOOK_URL` **ABSENT** on staging; authorization request prepared |
+| Business approval | BLOCKED BY BUSINESS APPROVAL — package ready for signature; unsigned |
 | Tekion | BLOCKED BY VENDOR — disabled |
 | vAuto | BLOCKED BY VENDOR — disabled; public inventory off |
 | Production API/CDN for jeepofchicago.com | Staging hosts used in Apollo payload only; production canary config hosts still BLOCKED |
-| Secure employee canary auth | IMPLEMENTED IN REPO — staging migrate/env + Jeep allowlist deploy pending merge |
+| Secure employee canary auth | **LIVE ON STAGING** — invite audited; public denied; Jeep strict origins |
 | Customer traffic | **NOT AUTHORIZED** |
+
+### 2026-07-14 gate revalidation
+
+| Check | Result |
+|---|---|
+| Backend/widget `HEAD == origin/main` | PASSED at revalidation |
+| Main CI | PASSED |
+| Staging API health | 200 |
+| Canary loader `application/javascript` | PASSED |
+| Jeep widget-token without session | 403 |
+| `amqur_emp=1` eligibility | denied |
+| `CRM_WEBHOOK_URL` | ABSENT |
+| Business approval | UNSIGNED |
+| Apollo Is Enabled | False (must remain) |
+| Synthetic handoff | NOT RUN — blocked |
+| Website employee canary | NOT STARTED — blocked |
+| Limited public canary | NOT AUTHORIZED |
 
 ---
 
@@ -145,10 +162,10 @@ Release rule: tested SHA must equal PR head or state is **CI OUTDATED — NOT ME
 
 ## Exact remaining blockers
 
-1. Staging deploy: migrate `CanaryInvite`, set `CANARY_*` + narrow Jeep `allowedOrigins`/`CORS_ORIGINS`/`CANARY_STRICT_ORIGINS` — keep Apollo **disabled**
-2. Verified Jeep of Chicago handoff test destination — [backend#8](https://github.com/AMQUR/amqur-backend/issues/8)
-3. Signed business approval — `docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md`
-4. Record Apollo pixel ID from UI (optional ops); enable Apollo only after gates 2–3
+1. **Handoff:** Dial Auto Group / Jeep BDC or Digital Operations owner must authorize a test destination and set Railway `CRM_WEBHOOK_URL` securely (not in chat) — [backend#8](https://github.com/AMQUR/amqur-backend/issues/8) · request: `docs/dealership-knowledge/JEEP_OF_CHICAGO_HANDOFF_AUTHORIZATION_REQUEST.md`
+2. **Synthetic handoff** with fake data must pass before Apollo enablement
+3. **Signed business approval** — `docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md` (silence ≠ approval)
+4. Record Apollo pixel ID from UI (optional); enable Apollo only after gates 1–3
 5. Tekion sandbox (optional for non-CRM canary) — [backend#6](https://github.com/AMQUR/amqur-backend/issues/6)
 6. Authorized vAuto feed (required before public inventory) — [backend#7](https://github.com/AMQUR/amqur-backend/issues/7)
 

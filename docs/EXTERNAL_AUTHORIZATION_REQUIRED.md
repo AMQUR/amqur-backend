@@ -5,7 +5,7 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-14 (Apollo/TeamVelocity Path C selected; pixel **AMQUR Internal Employee Canary** manually saved with **Is Enabled = False**; secure signed employee canary auth implemented in repo — see `docs/CANARY_EMPLOYEE_AUTH.md`; handoff/`CRM_WEBHOOK` unset; business approval unsigned; do not enable Apollo; do not dual-install GTM)
+**Last discovery pass:** 2026-07-14 (secure employee canary live on staging; Apollo pixel saved **Is Enabled = False**; `CRM_WEBHOOK_URL` **ABSENT**; business approval unsigned; handoff authorization request prepared; do not enable Apollo; do not start customer canary)
 
 ---
 
@@ -104,14 +104,17 @@ Required verified details (do not invent):
 - SLA
 - Escalation channel
 
-### Discovery evidence (2026-07-11)
+### Discovery evidence (2026-07-14 revalidation)
 
-Railway `amqur-platform-staging` / `backend-staging`: `CRM_WEBHOOK_URL` **not set**. No handoff-specific vars. Escalation DB persistence code path remains ready; no approved test send performed.
+Railway `amqur-platform-staging` / `backend-staging`: `CRM_WEBHOOK_URL` **ABSENT**. No handoff recipient found in approved docs. No synthetic handoff run. Apollo remains disabled.
+
+Authorization request (for dealership ops — no secrets in Git/chat):  
+`docs/dealership-knowledge/JEEP_OF_CHICAGO_HANDOFF_AUTHORIZATION_REQUEST.md`
 
 Related: `docs/dealership-knowledge/jeep-of-chicago-handoff.md`  
 Tracking: https://github.com/AMQUR/amqur-backend/issues/8
 
-Until verified, customer traffic **and** Level 1 employee canary against production hostname remain NO-GO for handoff-dependent flows.
+Until verified, customer traffic **and** Apollo enablement for Level 1 employee canary remain NO-GO for handoff-dependent flows.
 
 ---
 

@@ -109,6 +109,22 @@ export class CanaryAuthService {
       },
     });
 
+    await this.auditSafe({
+      tenantId: tenant.id,
+      userId: input.createdByUserId,
+      action: 'canary.invite.issue',
+      resource: 'CanaryInvite',
+      resourceId: jti,
+      metadata: {
+        tenantSlug: tenant.slug,
+        locationSlug: location.slug,
+        environment: this.environment(),
+        expiresAt: expiresAt.toISOString(),
+        testerLabel: input.testerLabel?.slice(0, 120) ?? null,
+        // Never store inviteToken or signing material.
+      },
+    });
+
     const inviteToken = this.jwt.sign(
       {
         typ: 'canary_invite',
@@ -191,6 +207,21 @@ export class CanaryAuthService {
     await this.prisma.canaryInvite.update({
       where: { id: invite.id },
       data: { redeemedAt: new Date() },
+    });
+
+    await this.auditSafe({
+      tenantId: tenant.id,
+      userId: invite.createdByUserId ?? undefined,
+      action: 'canary.invite.redeem',
+      resource: 'CanaryInvite',
+      resourceId: invite.jti,
+      metadata: {
+        tenantSlug: tenant.slug,
+        locationSlug: location.slug,
+        environment: this.environment(),
+        origin: (requestOrigin ?? '').trim().toLowerCase() || null,
+        // Never store cookie value or invite token.
+      },
     });
 
     const sessionTtl = this.parseDurationSeconds(
@@ -281,14 +312,47 @@ export class CanaryAuthService {
     return { eligible: true };
   }
 
-  async revokeInvite(jti: string) {
+  async revokeInvite(jti: string, actorUserId?: string) {
     const invite = await this.prisma.canaryInvite.findUnique({ where: { jti } });
     if (!invite) throw new UnauthorizedException('Invite not found');
     await this.prisma.canaryInvite.update({
       where: { id: invite.id },
       data: { revokedAt: new Date() },
     });
+    await this.auditSafe({
+      tenantId: invite.tenantId,
+      userId: actorUserId,
+      action: 'canary.invite.revoke',
+      resource: 'CanaryInvite',
+      resourceId: jti,
+      metadata: { environment: invite.environment },
+    });
     return { revoked: true, jti };
+  }
+
+  /** Persist audit without secrets; never throw away the primary operation. */
+  private async auditSafe(data: {
+    tenantId?: string;
+    userId?: string;
+    action: string;
+    resource: string;
+    resourceId: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId: data.tenantId,
+          userId: data.userId,
+          action: data.action,
+          resource: data.resource,
+          resourceId: data.resourceId,
+          metadata: data.metadata as never,
+        },
+      });
+    } catch {
+      // Audit failure must not block canary control plane.
+    }
   }
 
   buildSetCookieHeader(value: string, maxAgeSec: number): string {

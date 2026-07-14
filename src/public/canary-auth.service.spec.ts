@@ -61,6 +61,9 @@ describe('CanaryAuthService secure employee gate', () => {
           return row;
         }),
       },
+      auditLog: {
+        create: jest.fn(async () => ({ id: 'audit-1' })),
+      },
     };
 
     const store: Record<string, { payload: any; expMs: number }> = {};
@@ -120,6 +123,22 @@ describe('CanaryAuthService secure employee gate', () => {
     });
     expect(result.eligible).toBe(true);
     expect(claims.env).toBe('staging');
+    expect(prisma.auditLog.create).toHaveBeenCalled();
+    const auditArgs = prisma.auditLog.create.mock.calls.map((c: any) => c[0].data);
+    for (const a of auditArgs) {
+      expect(JSON.stringify(a)).not.toMatch(/inviteToken|cookieValue|signed\./);
+    }
+  });
+
+  it('previously redeemed invitation cannot be reused', async () => {
+    const issued = await svc.issueInvite({
+      tenantSlug: 'dial-auto-group',
+      locationSlug: 'jeep-of-chicago',
+    });
+    await svc.redeemInvite(issued.inviteToken, JEEP_WWW);
+    await expect(
+      svc.redeemInvite(issued.inviteToken, JEEP_WWW),
+    ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
   it('no employee authorization + approved Jeep origin fails', async () => {
