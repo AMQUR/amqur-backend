@@ -106,6 +106,19 @@ Release rule: tested SHA must equal PR head or state is **CI OUTDATED — NOT ME
 | Website employee canary | NOT STARTED — blocked |
 | Limited public canary | NOT AUTHORIZED |
 
+### 2026-07-14 resume attempt (claimed completion)
+
+| Check | Result |
+|---|---|
+| Claim: CRM configured on staging | **NOT VERIFIED** — variable still ABSENT; no CRM/webhook keys on backend-staging |
+| Claim: approval signed | **NOT VERIFIED** — approval evidence table empty |
+| Synthetic handoff | **NOT RUN** — blocked by missing destination |
+| Apollo enablement | **NOT DONE** — gates incomplete |
+| Employee auth unit + staging denial | PASSED (still) |
+| Verdict | **READY FOR EXTERNAL AUTHORIZATION** |
+
+To unlock resume: set Railway staging `CRM_WEBHOOK_URL` (no value in chat), then confirm redacted department + test window + fill approval evidence table (or link evidence ID). Re-run this resume checklist.
+
 ---
 
 ## Internal canary
