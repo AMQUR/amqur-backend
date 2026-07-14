@@ -106,18 +106,24 @@ Release rule: tested SHA must equal PR head or state is **CI OUTDATED — NOT ME
 | Website employee canary | NOT STARTED — blocked |
 | Limited public canary | NOT AUTHORIZED |
 
-### 2026-07-14 resume attempt (claimed completion)
+### 2026-07-14 production completion revalidation
 
 | Check | Result |
 |---|---|
-| Claim: CRM configured on staging | **NOT VERIFIED** — variable still ABSENT; no CRM/webhook keys on backend-staging |
-| Claim: approval signed | **NOT VERIFIED** — approval evidence table empty |
-| Synthetic handoff | **NOT RUN** — blocked by missing destination |
-| Apollo enablement | **NOT DONE** — gates incomplete |
-| Employee auth unit + staging denial | PASSED (still) |
-| Verdict | **READY FOR EXTERNAL AUTHORIZATION** |
+| Backend `origin/main` | `fedd115` (pre-handoff-queue PR; advances after merge) |
+| Widget `origin/main` | `18ebd53` |
+| Main CI | Green |
+| Staging health / loader / IIFE | 200 |
+| Jeep widget-token without session | 403 |
+| `CRM_WEBHOOK_URL` (staging) | **ABSENT** |
+| Official Railway production project | **MISSING** — only `amqur-platform-staging` is labeled for AMQUR |
+| Unlabeled Railway `divine-integrity` | EXISTS with personal fork `saadimranhere/amqur-backend` — **DO NOT USE** as AMQUR production |
+| Unlabeled Railway `distinguished-laughter` | Empty / unused — **DO NOT USE** |
+| Business approval Stages 1–3 | **UNSIGNED** |
+| Apollo Is Enabled | False |
+| Staff handoff queue API | claim/ack/resolve/notes + dedupe (this PR) — still needs named owner before it counts as production handoff |
 
-To unlock resume: set Railway staging `CRM_WEBHOOK_URL` (no value in chat), then confirm redacted department + test window + fill approval evidence table (or link evidence ID). Re-run this resume checklist.
+**Verdict at this pass:** cannot enable Apollo or start employee/public canary until handoff destination **or** owned first-party queue + Stage 1 approval.
 
 ---
 
@@ -175,14 +181,14 @@ To unlock resume: set Railway staging `CRM_WEBHOOK_URL` (no value in chat), then
 
 ## Exact remaining blockers
 
-1. **Handoff:** Dial Auto Group / Jeep BDC or Digital Operations owner must authorize a test destination and set Railway `CRM_WEBHOOK_URL` securely (not in chat) — [backend#8](https://github.com/AMQUR/amqur-backend/issues/8) · request: `docs/dealership-knowledge/JEEP_OF_CHICAGO_HANDOFF_AUTHORIZATION_REQUEST.md`
-2. **Synthetic handoff** with fake data must pass before Apollo enablement
-3. **Signed business approval** — `docs/JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md` (silence ≠ approval)
-4. Record Apollo pixel ID from UI (optional); enable Apollo only after gates 1–3
-5. Tekion sandbox (optional for non-CRM canary) — [backend#6](https://github.com/AMQUR/amqur-backend/issues/6)
-6. Authorized vAuto feed (required before public inventory) — [backend#7](https://github.com/AMQUR/amqur-backend/issues/7)
+1. **Handoff:** Set Railway staging (then production) `CRM_WEBHOOK_URL` securely **or** accept ownership of first-party staff escalation queue — [backend#8](https://github.com/AMQUR/amqur-backend/issues/8)
+2. **Stage 1 approval** — `docs/JEEP_OF_CHICAGO_PRODUCTION_RELEASE_APPROVAL.md` + GitHub approval issue
+3. **Official AMQUR production Railway project** — create/label `amqur-platform-production` under AMQUR org ownership; do **not** use unlabeled `divine-integrity` / personal forks
+4. Synthetic handoff pass → enable Apollo employee canary only
+5. Stages 2–3 before limited/full public traffic
+6. Tekion / vAuto remain vendor-blocked ([#6](https://github.com/AMQUR/amqur-backend/issues/6), [#7](https://github.com/AMQUR/amqur-backend/issues/7))
 
-Do not enable customer traffic. Do not publish GTM-MP5XGBXQ for AMQUR while Apollo is selected.
+Do not enable customer traffic. Do not use staging URLs as final public production hosts.
 
 ---
 
