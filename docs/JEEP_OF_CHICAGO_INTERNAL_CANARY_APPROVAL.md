@@ -139,8 +139,8 @@ _TBD — Dial Auto Group digital / AMQUR on-call_
 
 - Secure employee canary auth deployed on staging; public sessions denied
 - Apollo pixel saved disabled; pixel ID not captured in automation (record from UI if visible)
-- Handoff test destination not verified (`CRM_WEBHOOK_URL` absent)
-- Business approval unsigned
+- Handoff test destination not verified (`CRM_WEBHOOK_URL` absent) — **resume re-check still ABSENT**
+- Business approval unsigned — **approval evidence table still blank on resume**
 - Existing third-party chat fingerprints on site — coordinate launcher placement
 
 ## Approval evidence (auditable)

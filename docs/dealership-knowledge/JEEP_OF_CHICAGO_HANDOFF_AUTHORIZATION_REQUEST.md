@@ -73,9 +73,23 @@ Close issue #8 only when the checklist passes.
 
 ---
 
-## Explicit non-actions until authorized
+## Status (2026-07-14 resume re-check)
 
-- Do not invent email/phone/webhook  
-- Do not enable Apollo pixel  
-- Do not start customer-facing canary  
-- Do not scrape private CRM APIs  
+| Field | Value |
+|---|---|
+| Railway staging `CRM_WEBHOOK_URL` | **Still ABSENT** (claimed set — not found) |
+| Approval package evidence table | **Still empty** |
+| Synthetic handoff | Not run |
+| Apollo enable | Blocked |
+
+Do not paste the webhook URL into chat. After setting the Railway variable, reply only with redacted confirmation fields below (no secret):
+
+| Field | Operator confirmation (fill) |
+|---|---|
+| `CRM_WEBHOOK_URL` set on `backend-staging` / `staging` | yes/no |
+| Department | |
+| Test window (America/Chicago) | |
+| Approver name + role | |
+| Approval evidence ID (ticket/email/doc ref) | |
+| Monitoring owner | |
+| Rollback owner | |

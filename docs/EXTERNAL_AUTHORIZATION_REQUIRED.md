@@ -5,7 +5,7 @@ Repository-controlled canary infrastructure is prepared; **do not enable custome
 
 No passwords or secrets belong in this file.
 
-**Last discovery pass:** 2026-07-14 (secure employee canary live on staging; Apollo pixel saved **Is Enabled = False**; `CRM_WEBHOOK_URL` **ABSENT**; business approval unsigned; handoff authorization request prepared; do not enable Apollo; do not start customer canary)
+**Last discovery pass:** 2026-07-14 resume attempt — claimed handoff/approval completion **not verified**. Railway staging `CRM_WEBHOOK_URL` still **ABSENT** (no CRM/webhook keys on backend-staging). Approval package signature fields still empty. Apollo remains **Is Enabled = False**. Employee auth regressions still pass. Do not enable Apollo; do not run website employee canary.
 
 ---
 
@@ -107,6 +107,8 @@ Required verified details (do not invent):
 ### Discovery evidence (2026-07-14 revalidation)
 
 Railway `amqur-platform-staging` / `backend-staging`: `CRM_WEBHOOK_URL` **ABSENT**. No handoff recipient found in approved docs. No synthetic handoff run. Apollo remains disabled.
+
+**Resume check (same day, later):** Operator prompt asserted handoff + approval complete. Re-check of Railway staging variables found **no** `CRM_*` / `*WEBHOOK*` / `*HANDOFF*` keys on `backend-staging`. Approval table in `JEEP_OF_CHICAGO_INTERNAL_CANARY_APPROVAL.md` still blank (no approver name/role/date/evidence). Per gate rules: **do not proceed**.
 
 Authorization request (for dealership ops — no secrets in Git/chat):  
 `docs/dealership-knowledge/JEEP_OF_CHICAGO_HANDOFF_AUTHORIZATION_REQUEST.md`
