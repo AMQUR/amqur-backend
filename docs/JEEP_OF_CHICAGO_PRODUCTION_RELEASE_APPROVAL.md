@@ -8,7 +8,7 @@
 Silence is **not** approval. Developer self-sign is **not** approval.  
 No secrets belong in this file.
 
-Tracking issue: https://github.com/AMQUR/amqur-backend/issues/
+Tracking issue: https://github.com/AMQUR/amqur-backend/issues/20
 
 ---
 
