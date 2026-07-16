@@ -7,12 +7,16 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { EscalationStatus, EscalationUrgency, Prisma } from '@prisma/client';
 import axios from 'axios';
+import { OutboxService } from '../integrations/core/outbox.service';
 
 @Injectable()
 export class EscalationsService {
   private readonly logger = new Logger(EscalationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly outbox: OutboxService,
+  ) {}
 
   list(tenantId: string, locationId?: string) {
     return this.prisma.escalation.findMany({
@@ -71,7 +75,12 @@ export class EscalationsService {
         orderBy: { createdAt: 'desc' },
       });
       if (existing) {
-        return { escalation: existing, notified: Boolean(existing.notifiedAt), deduped: true };
+        return {
+          escalation: existing,
+          notified: Boolean(existing.notifiedAt),
+          queued: false,
+          deduped: true,
+        };
       }
     }
 
@@ -88,31 +97,29 @@ export class EscalationsService {
     });
 
     let notified = false;
+    let queued = false;
     const webhook = process.env.CRM_WEBHOOK_URL?.trim();
+    const notifyPayload = {
+      event: 'HUMAN_HANDOFF',
+      tenantId: params.tenantId,
+      locationId: params.locationId,
+      conversationId: params.externalKey,
+      escalationId: escalation.id,
+      reason: params.reason,
+      urgency: escalation.urgency,
+      summary: params.summary,
+      timestamp: new Date().toISOString(),
+    };
+
     if (webhook) {
       try {
-        await axios.post(
-          webhook,
-          {
-            event: 'HUMAN_HANDOFF',
-            tenantId: params.tenantId,
-            locationId: params.locationId,
-            conversationId: params.externalKey,
-            escalationId: escalation.id,
-            reason: params.reason,
-            urgency: escalation.urgency,
-            summary: params.summary,
-            timestamp: new Date().toISOString(),
-          },
-          { timeout: 8_000 },
-        );
+        await axios.post(webhook, notifyPayload, { timeout: 8_000 });
         notified = true;
         await this.prisma.escalation.update({
           where: { id: escalation.id },
           data: { notifiedAt: new Date() },
         });
       } catch (err: unknown) {
-        // Never log webhook URL or response bodies that may contain secrets.
         const code =
           err && typeof err === 'object' && 'code' in err
             ? String((err as { code?: string }).code)
@@ -125,9 +132,27 @@ export class EscalationsService {
               )
             : '';
         this.logger.warn(
-          `Escalation CRM notify failed code=${code} http=${status || 'n/a'}`,
+          `Escalation CRM notify failed code=${code} http=${status || 'n/a'} — enqueueing outbox`,
         );
+        try {
+          await this.outbox.enqueue({
+            tenantId: params.tenantId,
+            topic: 'escalation.notify',
+            idempotencyKey: `escalation-notify:${escalation.id}`,
+            payload: notifyPayload,
+          });
+          queued = true;
+        } catch (enqueueErr: unknown) {
+          this.logger.error(
+            `Escalation outbox enqueue failed: ${enqueueErr instanceof Error ? enqueueErr.message : 'unknown'}`,
+          );
+        }
       }
+    } else {
+      // No webhook configured — durable record only; do not claim notification.
+      this.logger.warn(
+        'CRM_WEBHOOK_URL unset — escalation persisted without outbound notify',
+      );
     }
 
     await this.auditSafe({
@@ -138,11 +163,11 @@ export class EscalationsService {
         locationId: params.locationId ?? null,
         reason: params.reason,
         notified,
-        // Never store webhook URL.
+        queued,
       },
     });
 
-    return { escalation, notified, deduped: false };
+    return { escalation, notified, queued, deduped: false };
   }
 
   async acknowledge(params: {

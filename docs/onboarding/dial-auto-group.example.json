@@ -1,0 +1,29 @@
+{
+  "dealerGroupName": "Dial Auto Group",
+  "dealerGroupSlug": "dial-auto-group",
+  "tenantName": "Jeep of Chicago",
+  "tenantSlug": "jeep-of-chicago",
+  "locationName": "Main",
+  "locationSlug": "main",
+  "allowedOrigins": ["https://www.jeepofchicago.com", "https://jeepofchicago.com"],
+  "timezone": "America/Chicago",
+  "phone": "REPLACE_WITH_VERIFIED_PHONE",
+  "address": "REPLACE_WITH_VERIFIED_ADDRESS",
+  "branding": {
+    "assistantDisplayName": "Jeep of Chicago Assistant",
+    "welcomeMessage": "How can I help you today?",
+    "primaryColor": "#111111",
+    "accentColor": "#f5f5f5",
+    "disclaimerText": "Availability and pricing come only from verified dealership records."
+  },
+  "featureFlags": {
+    "chat": true,
+    "inventory": false,
+    "payments": false,
+    "handoff": true,
+    "leadCapture": true
+  },
+  "dataRetentionDays": 365,
+  "consentText": "By continuing you agree to be contacted about your inquiry per our privacy policy.",
+  "idempotent": true
+}

@@ -41,6 +41,7 @@ import { LeadsService } from '../leads/leads.service';
 import { EscalationUrgency } from '@prisma/client';
 import { MetricsService } from '../observability/metrics.service';
 import { inventoryFreshnessDisclaimer } from './engines/inventory-freshness';
+import { CapabilityService } from '../capability/capability.service';
 
 /** Machine-readable truth metadata for clients and audits */
 export type ChatProvenance = {
@@ -104,6 +105,7 @@ export class ChatOrchestrator {
         private readonly escalations: EscalationsService,
         private readonly leadsService: LeadsService,
         private readonly metrics: MetricsService,
+        private readonly capabilities: CapabilityService,
     ) { }
 
     private inventoryProvenance(
@@ -320,6 +322,58 @@ export class ChatOrchestrator {
         };
     }
 
+    private async enforceCapabilityGate(params: {
+        tenantId: string;
+        locationId?: string | null;
+        userId: string;
+        intent: ChatIntent;
+    }): Promise<ChatResponse | null> {
+        const { tenantId, locationId, userId, intent } = params;
+        type Cap =
+            | 'inventory'
+            | 'payments'
+            | 'service'
+            | 'parts'
+            | 'vehicleCompare';
+        let needed: Cap | null = null;
+        if (
+            intent === ChatIntent.INVENTORY_SEARCH ||
+            intent === ChatIntent.INVENTORY_AVAILABILITY ||
+            intent === ChatIntent.HOLD_VEHICLE ||
+            intent === ChatIntent.PRICING_REQUEST
+        ) {
+            needed = 'inventory';
+        } else if (intent === ChatIntent.PAYMENT_ESTIMATE) {
+            needed = 'payments';
+        } else if (intent === ChatIntent.SERVICE_APPOINTMENT) {
+            needed = 'service';
+        } else if (intent === ChatIntent.PARTS_INQUIRY) {
+            needed = 'parts';
+        }
+
+        if (!needed) return null;
+        const result = await this.capabilities.check(
+            tenantId,
+            locationId,
+            needed,
+        );
+        if (result.allowed) return null;
+        const reply =
+            result.customerMessage ??
+            'That information is unavailable from verified dealership sources right now. I can connect you with a team member instead.';
+        await this.memory.appendMessage({
+            userId,
+            role: 'ASSISTANT',
+            content: reply,
+            metadata: {
+                type: 'capability_blocked',
+                capability: needed,
+                reason: result.reason,
+            },
+        });
+        return { reply };
+    }
+
     private async handleHumanHandoff(params: {
         tenantId: string;
         locationId?: string | null;
@@ -339,7 +393,24 @@ export class ChatOrchestrator {
             lead?.email ? `Email: ${lead.email}` : null,
         ].filter(Boolean);
 
-        const { escalation, notified } = await this.escalations.create({
+        const handoffCap = await this.capabilities.check(
+            tenantId,
+            locationId,
+            'handoff',
+        );
+        if (!handoffCap.allowed) {
+            const reply =
+                handoffCap.customerMessage ??
+                'I cannot complete a staff handoff right now. Please call the dealership directly.';
+            await this.memory.appendMessage({
+                userId,
+                role: 'ASSISTANT',
+                content: reply,
+            });
+            return { reply };
+        }
+
+        const { escalation, notified, queued } = await this.escalations.create({
             tenantId,
             locationId,
             externalKey: userId,
@@ -354,12 +425,14 @@ export class ChatOrchestrator {
         });
         this.metrics.increment('escalations.created');
         if (notified) this.metrics.increment('escalations.notified');
+        if (queued) this.metrics.increment('escalations.queued');
 
         this.memory.setInventoryState(userId, {
             handoffRequested: true,
             handoffEscalationId: escalation.id,
         });
 
+        // Best-effort secondary CRM event; durable delivery is via escalation outbox.
         await this.crmWebhook.send(
             this.buildCrmPayload({
                 tenantId,
@@ -372,9 +445,12 @@ export class ChatOrchestrator {
             }),
         );
 
+        // Only claim notified/queued when delivery was accepted or durably enqueued.
         const draft = notified
-            ? 'I’ve notified our team and shared this conversation. Someone will follow up with you shortly. Meanwhile I can still help with inventory or questions.'
-            : 'I’ve logged your request for a team member. Our staff will follow up as soon as possible. Meanwhile I can still help with inventory or questions.';
+            ? 'I’ve notified our team and shared this conversation. Someone will follow up with you shortly. Meanwhile I can still help with questions.'
+            : queued
+              ? 'I’ve recorded your request and queued a notification for our team. A staff member will follow up. Meanwhile I can still help with questions.'
+              : 'I’ve saved your request for a team member in our system, but live staff notification could not be confirmed yet. Please call the dealership if your need is urgent — I will not claim someone was notified until delivery is confirmed.';
 
         const reply = await this.polishGuarded(userId, draft, 'general', {
             userMessage: message,
@@ -817,6 +893,32 @@ export class ChatOrchestrator {
         this.applyIntentBucketChange(userId, intent, message);
         const inventoryState =
             this.memory.getInventoryState(userId);
+
+        const chatCap = await this.capabilities.check(
+            tenantId,
+            locationId,
+            'chat',
+        );
+        if (!chatCap.allowed) {
+            const reply =
+                chatCap.customerMessage ??
+                'Chat is unavailable for this dealership right now.';
+            await this.memory.appendMessage({
+                userId,
+                role: 'ASSISTANT',
+                content: reply,
+            });
+            return { reply };
+        }
+
+        // Fail-closed capability gates before dealership-specific work
+        const gated = await this.enforceCapabilityGate({
+            tenantId,
+            locationId,
+            userId,
+            intent,
+        });
+        if (gated) return gated;
 
         if (intent === ChatIntent.HUMAN_HANDOFF) {
             return this.handleHumanHandoff({

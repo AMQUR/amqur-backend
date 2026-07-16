@@ -8,16 +8,72 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/// Parent dealer group for authorized group-level reporting only.
+/// Does NOT grant cross-tenant access to normal tenant admins.
+model DealerGroup {
+  id   String @id @default(cuid())
+  slug String @unique
+  name String
+
+  tenants      Tenant[]
+  memberships  DealerGroupMembership[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+enum DealerGroupRole {
+  GROUP_VIEWER
+  GROUP_ADMIN
+}
+
+/// Explicit membership required for any cross-tenant group reporting.
+model DealerGroupMembership {
+  id String @id @default(cuid())
+
+  dealerGroupId String
+  dealerGroup   DealerGroup @relation(fields: [dealerGroupId], references: [id], onDelete: Cascade)
+
+  /// Platform user id (must also pass auth); membership alone is insufficient without JWT.
+  userId String
+  role   DealerGroupRole @default(GROUP_VIEWER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([dealerGroupId, userId])
+  @@index([userId])
+  @@index([dealerGroupId])
+}
+
 model Tenant {
   id   String @id @default(cuid())
   slug String @unique
   name String
+
+  dealerGroupId String?
+  dealerGroup   DealerGroup? @relation(fields: [dealerGroupId], references: [id], onDelete: SetNull)
 
   /// Optional comma-separated allowlist of widget origins (e.g. https://dealer.com)
   allowedOrigins String?
 
   /// JSON map of feature flag overrides for this tenant
   featureFlags Json?
+
+  /// Public-safe branding + copy for widget (never secrets).
+  /// Shape: assistantDisplayName, welcomeMessage, primaryColor, accentColor, logoUrl,
+  /// launcherIconUrl, phone, websiteUrl, privacyUrl, termsUrl, escalationMessage,
+  /// disclaimerText, supportedLocales, salesEnabled, serviceEnabled, partsEnabled
+  publicConfig Json?
+
+  /// Bumped on branding/config changes for cache invalidation
+  configVersion Int @default(1)
+
+  /// Data retention days for conversations/leads (ops policy; enforced by retention job)
+  dataRetentionDays Int @default(365)
+
+  /// Customer-facing consent text (public-safe)
+  consentText String?
 
   locations            Location[]
   users                User[]
@@ -40,6 +96,8 @@ model Tenant {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([dealerGroupId])
 }
 
 /// One-time employee canary invite (redeem → HttpOnly signed session cookie).
@@ -83,6 +141,7 @@ model Location {
   timezone String @default("America/Chicago")
 
   /// Store hours as JSON: { mon: { open: "09:00", close: "19:00" }, ... }
+  /// Only expose to customers when verified/current for this location.
   storeHours Json?
 
   inventoryFeedUrl  String?
@@ -94,11 +153,17 @@ model Location {
   /// Location-level feature flag overrides (merged over tenant)
   featureFlags Json?
 
+  /// Location public branding overrides (merged over tenant.publicConfig)
+  publicConfig Json?
+
   /// Inventory freshness SLA hours (default 24)
   inventoryFreshnessHours Int @default(24)
 
   /// Minimum records expected from a snapshot feed (anomaly guard)
   inventoryMinRecords Int @default(1)
+
+  /// Escalation recipient emails (comma-separated) — staff-only, never in widget-config
+  escalationRecipients String?
 
   users         User[]
   vehicles      Vehicle[]         @relation("LocationVehicles")

@@ -9,6 +9,8 @@ on:
       - 'audit/**'
       - 'feature/**'
       - 'ops/**'
+      - 'production-readiness/**'
+      - 'docs/**'
   workflow_dispatch:
 
 concurrency:

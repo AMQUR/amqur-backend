@@ -32,6 +32,10 @@ import { SavedVehiclesModule } from './saved-vehicles/saved-vehicles.module';
 import { PartsModule } from './parts/parts.module';
 import { FollowUpModule } from './follow-up/follow-up.module';
 import { CopilotModule } from './copilot/copilot.module';
+import { CapabilityModule } from './capability/capability.module';
+import { CacheModule } from './cache/cache.module';
+import { OnboardingModule } from './onboarding/onboarding.module';
+import { DealerGroupsModule } from './dealer-groups/dealer-groups.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -64,7 +68,9 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
     ScheduleModule.forRoot(),
     PrismaModule,
+    CacheModule,
     FeatureFlagsModule,
+    CapabilityModule,
     SourceAuthorityModule,
     AiModule,
     IntegrationsModule,
@@ -73,6 +79,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     UsersModule,
     AuthModule,
     PublicModule,
+    OnboardingModule,
+    DealerGroupsModule,
     HealthModule,
     LeadsModule,
     EscalationsModule,

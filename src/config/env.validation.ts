@@ -74,4 +74,19 @@ export const envValidationSchema = Joi.object({
    * when CANARY_EMPLOYEE_ENABLED=true. Exact match only; empty = none (staging widget host stays usable).
    */
   CANARY_STRICT_ORIGINS: Joi.string().optional().allow('').default(''),
+
+  /** Optional Redis for widget-config cache / multi-instance coordination */
+  REDIS_URL: Joi.string().optional().allow(''),
+
+  /** Outbox processor (default on). Set false on pure API replicas if a worker handles it. */
+  OUTBOX_PROCESSOR_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('true'),
+
+  /** Process role: api | worker | all */
+  PROCESS_ROLE: Joi.string()
+    .valid('api', 'worker', 'all')
+    .optional()
+    .default('all'),
 });

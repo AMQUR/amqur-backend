@@ -13,12 +13,16 @@ describe('EscalationsService handoff queue', () => {
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
 
+  const outbox = {
+    enqueue: jest.fn().mockResolvedValue({ id: 'outbox-1' }),
+  };
+
   let svc: EscalationsService;
 
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.CRM_WEBHOOK_URL;
-    svc = new EscalationsService(prisma);
+    svc = new EscalationsService(prisma, outbox as never);
   });
 
   it('dedupes open handoff for same conversation', async () => {

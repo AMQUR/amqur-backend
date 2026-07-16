@@ -18,6 +18,14 @@ describe('staging pilot policy gates', () => {
     expect(PLATFORM_FEATURE_DEFAULTS.automatedFollowup).toBe(false);
   });
 
+  it('fail-closes inventory/payments/service/parts by default', () => {
+    expect(PLATFORM_FEATURE_DEFAULTS.inventory).toBe(false);
+    expect(PLATFORM_FEATURE_DEFAULTS.payments).toBe(false);
+    expect(PLATFORM_FEATURE_DEFAULTS.financeCalculator).toBe(false);
+    expect(PLATFORM_FEATURE_DEFAULTS.serviceAi).toBe(false);
+    expect(PLATFORM_FEATURE_DEFAULTS.partsAi).toBe(false);
+  });
+
   it('staging flag file enables pilot UX and disables live integrations', () => {
     expect(stagingFlags.featureFlags.inventory).toBe(true);
     expect(stagingFlags.featureFlags.vehicleCompare).toBe(true);

@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.env
+.env.*
+!.env.example
+!.env.staging.example
+.git
+.github
+.playwright-cli
+*.log
+.DS_Store
+docs/**/*.pdf
+npm-debug.log*

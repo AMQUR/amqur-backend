@@ -18,5 +18,6 @@ import { AuthModule } from '../auth/auth.module';
         WidgetAuthService,
         CanaryAuthService,
     ],
+    exports: [PublicService],
 })
 export class PublicModule { }
