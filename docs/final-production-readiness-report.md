@@ -95,7 +95,7 @@ npm run build
 # npm run test:staging
 
 # Local load smoke (API must be running locally — not production)
-# BASE_URL=http://127.0.0.1:3000/api DURATION_SEC=10 CONCURRENCY=10 node scripts/load-smoke.js
+# BASE_URL=http://127.0.0.1:3000/api DURATION_SEC=10 CONCURRENCY=10 node scripts/load-smoke.mjs
 ```
 
 ---
@@ -118,7 +118,7 @@ npm run build
 
 ## 8. Load/soak results
 
-Load script added: `backend/scripts/load-smoke.js`.  
+Load script added: `backend/scripts/load-smoke.mjs`.  
 **Not executed against a live server in this session** (no local API process assumed). Run before pilot against staging only; never against production CRM/inventory vendors.
 
 ---
