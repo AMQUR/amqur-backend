@@ -2,8 +2,12 @@
  * Dedicated worker process entry (outbox + future queue consumers).
  * Run: node dist/worker.js
  * Set PROCESS_ROLE=worker and OUTBOX_PROCESSOR_ENABLED=true.
+ *
+ * Exposes a minimal liveness HTTP server so Railway healthchecks can pass
+ * without mounting the full API surface.
  */
 import 'reflect-metadata';
+import * as http from 'http';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
@@ -18,7 +22,18 @@ async function bootstrap() {
   const processor = app.get(OutboxProcessorService);
 
   const intervalMs = Number(process.env.OUTBOX_POLL_MS || 15_000);
-  logger.log(`Worker started; polling outbox every ${intervalMs}ms`);
+  const port = Number(process.env.PORT || 3000);
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api/health/live' || req.url === '/api/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, role: 'worker' }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((resolve) => server.listen(port, resolve));
+  logger.log(`Worker started; liveness on :${port}; outbox poll ${intervalMs}ms`);
 
   const tick = async () => {
     try {
@@ -37,6 +52,7 @@ async function bootstrap() {
   const shutdown = async (signal: string) => {
     logger.log(`Received ${signal}; shutting down`);
     clearInterval(handle);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();
     process.exit(0);
   };
