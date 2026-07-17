@@ -6,7 +6,9 @@
   "locationName": "Main",
   "locationSlug": "main",
   "timezone": "America/Chicago",
-  "allowedOrigins": [],
+  "allowedOrigins": [
+    "https://staging-widget.dialusnow.com"
+  ],
   "phone": null,
   "address": null,
   "storeHours": null,
