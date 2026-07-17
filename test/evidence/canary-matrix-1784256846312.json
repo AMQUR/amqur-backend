@@ -1,0 +1,344 @@
+{
+  "ranAt": "2026-07-17T02:54:06.310Z",
+  "api": "https://staging-api.dialusnow.com/api",
+  "widget": "https://staging-widget.dialusnow.com",
+  "apiCommit": "27da4b53357312325e3a9c1cc35ab781d8930057",
+  "widgetCommit": "91db0d9ec986b0fbd74aaba62bf2a9a9566a0e66",
+  "total": 65,
+  "passed": 65,
+  "failed": 0,
+  "results": [
+    {
+      "name": "api /version reachable with commit identity",
+      "pass": true,
+      "detail": "commit=27da4b53357312325e3a9c1cc35ab781d8930057"
+    },
+    {
+      "name": "widget /version.json reachable with commit identity",
+      "pass": true,
+      "detail": "commit=91db0d9ec986b0fbd74aaba62bf2a9a9566a0e66"
+    },
+    {
+      "name": "widget loader served and namespaced",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "api health: database up",
+      "pass": true,
+      "detail": "redis=up"
+    },
+    {
+      "name": "[jeep-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] no internal ids or private keys in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] staging consent text exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] verified-only disclaimer exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] durable-handoff escalation wording (never claims staff notified)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": "{\"inventory\":false,\"payments\":false}"
+    },
+    {
+      "name": "[jeep-of-chicago] pilot capabilities enabled (chat, leadCapture, handoff)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] isolated tenant identity",
+      "pass": true,
+      "detail": "Jeep of Chicago"
+    },
+    {
+      "name": "[jeep-of-chicago] token 201 from approved origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] token 403 from unauthorized origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] token 403 with missing origin (fail closed)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] forged tenantId in body rejected (400)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] no internal ids or private keys in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] staging consent text exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] verified-only disclaimer exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] durable-handoff escalation wording (never claims staff notified)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": "{\"inventory\":false,\"payments\":false}"
+    },
+    {
+      "name": "[dial-nissan-of-chicago] pilot capabilities enabled (chat, leadCapture, handoff)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] isolated tenant identity",
+      "pass": true,
+      "detail": "Dial Nissan of Chicago"
+    },
+    {
+      "name": "[dial-nissan-of-chicago] token 201 from approved origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] token 403 from unauthorized origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] token 403 with missing origin (fail closed)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] forged tenantId in body rejected (400)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] no internal ids or private keys in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] staging consent text exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] verified-only disclaimer exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] durable-handoff escalation wording (never claims staff notified)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": "{\"inventory\":false,\"payments\":false}"
+    },
+    {
+      "name": "[dial-chevy-of-chicago] pilot capabilities enabled (chat, leadCapture, handoff)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] isolated tenant identity",
+      "pass": true,
+      "detail": "Dial Chevy of Chicago"
+    },
+    {
+      "name": "[dial-chevy-of-chicago] token 201 from approved origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] token 403 from unauthorized origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] token 403 with missing origin (fail closed)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] forged tenantId in body rejected (400)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] no internal ids or private keys in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] staging consent text exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] verified-only disclaimer exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] durable-handoff escalation wording (never claims staff notified)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": "{\"inventory\":false,\"payments\":false}"
+    },
+    {
+      "name": "[infiniti-of-chicago] pilot capabilities enabled (chat, leadCapture, handoff)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] isolated tenant identity",
+      "pass": true,
+      "detail": "INFINITI of Chicago"
+    },
+    {
+      "name": "[infiniti-of-chicago] token 201 from approved origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] token 403 from unauthorized origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] token 403 with missing origin (fail closed)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] forged tenantId in body rejected (400)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] no internal ids or private keys in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] staging consent text exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] verified-only disclaimer exact",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] durable-handoff escalation wording (never claims staff notified)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": "{\"inventory\":false,\"payments\":false}"
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] pilot capabilities enabled (chat, leadCapture, handoff)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] isolated tenant identity",
+      "pass": true,
+      "detail": "Dial CDJR of Chicago"
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] token 201 from approved origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] token 403 from unauthorized origin",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] token 403 with missing origin (fail closed)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] forged tenantId in body rejected (400)",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "garbage bearer token rejected (401)",
+      "pass": true,
+      "detail": null
+    }
+  ],
+  "notHumanVerified": [
+    "employee conversations (100-conversation target)",
+    "prompt-injection resistance in live chat",
+    "duplicate lead handling through the full UI",
+    "provider-outage fallback wording in live chat",
+    "slow-network behavior on real devices"
+  ]
+}
