@@ -1,0 +1,43 @@
+{
+  "profile": "BURST_10X",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-16T23:27:37.236Z",
+  "ended": "2026-07-16T23:27:57.322Z",
+  "durationSec": 20,
+  "targetRps": 200,
+  "workers": 40,
+  "total": 12000,
+  "ok": 3300,
+  "fail": 8700,
+  "errorRate": 0.725,
+  "avgMs": 4,
+  "p95Ms": 10,
+  "p99Ms": 14,
+  "achievedRps": 600,
+  "byName": {
+    "health": {
+      "ok": 1650,
+      "fail": 2350,
+      "sumMs": 14444,
+      "n": 4000
+    },
+    "widget-config": {
+      "ok": 1650,
+      "fail": 2350,
+      "sumMs": 23547,
+      "n": 4000
+    },
+    "widget-token": {
+      "ok": 0,
+      "fail": 4000,
+      "sumMs": 11964,
+      "n": 4000
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false,
+    "note": "Burst profiles may intentionally exceed rate limits; pass criteria apply to SMOKE/EXPECTED_PILOT primarily."
+  }
+}

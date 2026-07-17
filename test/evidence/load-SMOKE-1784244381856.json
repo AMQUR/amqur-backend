@@ -1,0 +1,55 @@
+{
+  "profile": "SMOKE",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-16T23:26:01.638Z",
+  "ended": "2026-07-16T23:26:21.856Z",
+  "durationSec": 20,
+  "targetRps": 15,
+  "workers": 5,
+  "total": 945,
+  "ok": 655,
+  "fail": 290,
+  "errorRate": 0.30687830687830686,
+  "avgMs": 3,
+  "p95Ms": 5,
+  "p99Ms": 18,
+  "achievedRps": 47,
+  "byName": {
+    "health": {
+      "ok": 305,
+      "fail": 0,
+      "sumMs": 492,
+      "n": 305
+    },
+    "widget-config": {
+      "ok": 305,
+      "fail": 0,
+      "sumMs": 1222,
+      "n": 305
+    },
+    "widget-token": {
+      "ok": 15,
+      "fail": 290,
+      "sumMs": 335,
+      "n": 305
+    },
+    "chat": {
+      "ok": 15,
+      "fail": 0,
+      "sumMs": 148,
+      "n": 15
+    },
+    "handoff": {
+      "ok": 15,
+      "fail": 0,
+      "sumMs": 263,
+      "n": 15
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false,
+    "note": "Paced load under test throttle ceiling."
+  }
+}

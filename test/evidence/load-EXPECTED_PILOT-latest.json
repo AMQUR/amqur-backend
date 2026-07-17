@@ -1,0 +1,55 @@
+{
+  "profile": "EXPECTED_PILOT",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-17T00:11:39.529Z",
+  "ended": "2026-07-17T00:12:24.620Z",
+  "durationSec": 45,
+  "targetRps": 40,
+  "workers": 10,
+  "total": 9000,
+  "ok": 9000,
+  "fail": 0,
+  "errorRate": 0,
+  "avgMs": 9,
+  "p95Ms": 21,
+  "p99Ms": 23,
+  "achievedRps": 200,
+  "byName": {
+    "health": {
+      "ok": 1800,
+      "fail": 0,
+      "sumMs": 3478,
+      "n": 1800
+    },
+    "widget-config": {
+      "ok": 1800,
+      "fail": 0,
+      "sumMs": 11532,
+      "n": 1800
+    },
+    "widget-token": {
+      "ok": 1800,
+      "fail": 0,
+      "sumMs": 7894,
+      "n": 1800
+    },
+    "chat": {
+      "ok": 1800,
+      "fail": 0,
+      "sumMs": 18073,
+      "n": 1800
+    },
+    "handoff": {
+      "ok": 1800,
+      "fail": 0,
+      "sumMs": 36280,
+      "n": 1800
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": true,
+    "note": "Paced load under test throttle ceiling."
+  }
+}

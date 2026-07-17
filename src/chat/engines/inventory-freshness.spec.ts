@@ -1,22 +1,29 @@
 import { inventoryFreshnessDisclaimer } from './inventory-freshness';
 
 describe('inventoryFreshnessDisclaimer', () => {
-  it('warns when lastSeenAt is missing', () => {
-    const d = inventoryFreshnessDisclaimer([{ lastSeenAt: null }]);
-    expect(d).toMatch(/behind|re-check|feed/i);
+  it('UNAVAILABLE refuses availability claims', () => {
+    const t = inventoryFreshnessDisclaimer([{ freshnessState: 'UNAVAILABLE' }]);
+    expect(t.toLowerCase()).toMatch(/will not claim|could not be confirmed/);
   });
 
-  it('is calm when fresh', () => {
-    const d = inventoryFreshnessDisclaimer([
-      { lastSeenAt: new Date().toISOString(), freshnessState: 'FRESH' },
-    ]);
-    expect(d).toMatch(/inventory records/i);
+  it('STALE warns without confirming stock', () => {
+    const t = inventoryFreshnessDisclaimer([{ freshnessState: 'STALE' }]);
+    expect(t.toLowerCase()).toMatch(/stale/);
+    expect(t.toLowerCase()).not.toMatch(/confirmed available/);
   });
 
-  it('refuses availability claims when UNAVAILABLE', () => {
-    const d = inventoryFreshnessDisclaimer([
-      { freshnessState: 'UNAVAILABLE' },
+  it('DEGRADED / missing lastSeenAt warn', () => {
+    const t = inventoryFreshnessDisclaimer([{ freshnessState: 'DEGRADED' }]);
+    expect(t.toLowerCase()).toMatch(/re-check|behind/);
+  });
+
+  it('fresh with recent lastSeenAt affirms verified records', () => {
+    const t = inventoryFreshnessDisclaimer([
+      {
+        freshnessState: 'FRESH',
+        lastSeenAt: new Date().toISOString(),
+      },
     ]);
-    expect(d).toMatch(/could not be confirmed|will not claim/i);
+    expect(t.toLowerCase()).toMatch(/inventory records|not ai guesses/);
   });
 });

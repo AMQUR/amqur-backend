@@ -34,4 +34,20 @@ describe('mergePublicBranding', () => {
     const b = mergePublicBranding({}, {}, '555-0100');
     expect(b.phone).toBe('555-0100');
   });
+
+  it('supports locales array and feature booleans', () => {
+    const b = mergePublicBranding(
+      { supportedLocales: ['en', 'es', '', 1], serviceEnabled: true },
+      { partsEnabled: true },
+      null,
+    );
+    expect(b.supportedLocales).toEqual(['en', 'es']);
+    expect(b.serviceEnabled).toBe(true);
+    expect(b.partsEnabled).toBe(true);
+  });
+
+  it('ignores non-string colors and keeps defaults', () => {
+    const b = mergePublicBranding({ primaryColor: 123 }, null, null);
+    expect(b.primaryColor).toBe(DEFAULT_PUBLIC_BRANDING.primaryColor);
+  });
 });

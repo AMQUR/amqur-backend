@@ -1,8 +1,4 @@
-import {
-  MiddlewareConsumer,
-  Module,
-  NestModule,
-} from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 
 import { ConfigModule } from '@nestjs/config';
 import { envValidationSchema } from './config/env.validation';
@@ -57,12 +53,13 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
       {
         name: 'default',
         ttl: 60_000,
-        limit: 120,
+        // Higher ceiling in test/load labs; production stays 120/min.
+        limit: process.env.NODE_ENV === 'test' ? 10_000 : 120,
       },
       {
         name: 'auth',
         ttl: 60_000,
-        limit: 20,
+        limit: process.env.NODE_ENV === 'test' ? 5_000 : 20,
       },
     ]),
 

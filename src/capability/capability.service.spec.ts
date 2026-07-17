@@ -53,4 +53,54 @@ describe('CapabilityService fail-closed gates', () => {
     const r = await svc.check('t1', 'l1', 'payments');
     expect(r.allowed).toBe(false);
   });
+
+  it('allows chat when flag true', async () => {
+    flags.resolve.mockResolvedValue({ chat: true });
+    expect((await svc.check('t1', 'l1', 'chat')).allowed).toBe(true);
+  });
+
+  it('blocks service and parts when flags off', async () => {
+    flags.resolve.mockResolvedValue({ serviceAi: false, partsAi: false });
+    expect((await svc.check('t1', 'l1', 'service')).allowed).toBe(false);
+    expect((await svc.check('t1', 'l1', 'parts')).allowed).toBe(false);
+  });
+
+  it('allows handoff when chat on', async () => {
+    flags.resolve.mockResolvedValue({ chat: true });
+    expect((await svc.check('t1', 'l1', 'handoff')).allowed).toBe(true);
+  });
+
+  it('blocks vehicleCompare when flag off', async () => {
+    flags.resolve.mockResolvedValue({ vehicleCompare: false });
+    expect((await svc.check('t1', 'l1', 'vehicleCompare')).allowed).toBe(false);
+  });
+
+  it('blocks savedVehicles when flag off', async () => {
+    flags.resolve.mockResolvedValue({ savedVehicles: false });
+    expect((await svc.check('t1', 'l1', 'savedVehicles')).allowed).toBe(false);
+  });
+
+  it('blocks inventory when vehicles stale only', async () => {
+    flags.resolve.mockResolvedValue({ inventory: true });
+    prisma.location.findFirst.mockResolvedValue({
+      inventoryFeedUrl: 'https://feeds.example.com/x.xml',
+    });
+    prisma.vehicle.count.mockResolvedValueOnce(3).mockResolvedValueOnce(0);
+    const r = await svc.check('t1', 'l1', 'inventory');
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('inventory_stale');
+  });
+
+  it('payments blocked when inventory chain not ready', async () => {
+    flags.resolve.mockResolvedValue({
+      payments: true,
+      financeCalculator: true,
+      inventory: true,
+    });
+    prisma.location.findFirst.mockResolvedValue({ inventoryFeedUrl: null });
+    prisma.vehicle.count.mockResolvedValue(0);
+    prisma.integrationConnection.findFirst.mockResolvedValue(null);
+    const r = await svc.check('t1', 'l1', 'payments');
+    expect(r.allowed).toBe(false);
+  });
 });

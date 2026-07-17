@@ -14,3 +14,11 @@ scripts/**/*.d.ts
 .railway-staging/
 .env.local.unlabeled.bak
 .env.staging
+
+.playwright-cli/
+coverage/
+
+
+test/evidence/*.log
+test/evidence/api.pid
+test/evidence/soak.pid

@@ -1,0 +1,53 @@
+{
+  "profile": "BURST_10X",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-16T23:25:03.913Z",
+  "ended": "2026-07-16T23:25:23.957Z",
+  "durationSec": 20,
+  "concurrency": 100,
+  "total": 550887,
+  "ok": 10090,
+  "fail": 540797,
+  "errorRate": 0.9816840840317524,
+  "avgMs": 2,
+  "p95Ms": 7,
+  "p99Ms": 10,
+  "rps": 27544,
+  "byName": {
+    "health": {
+      "ok": 5000,
+      "fail": 178609,
+      "sumMs": 656380,
+      "n": 183609
+    },
+    "widget-config": {
+      "ok": 5000,
+      "fail": 178609,
+      "sumMs": 684103,
+      "n": 183609
+    },
+    "widget-token": {
+      "ok": 30,
+      "fail": 183579,
+      "sumMs": 0,
+      "n": 183609
+    },
+    "chat": {
+      "ok": 30,
+      "fail": 0,
+      "sumMs": 1293,
+      "n": 30
+    },
+    "handoff": {
+      "ok": 30,
+      "fail": 0,
+      "sumMs": 3828,
+      "n": 30
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false
+  }
+}

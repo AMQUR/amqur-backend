@@ -1,0 +1,53 @@
+{
+  "profile": "SMOKE",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-16T23:20:46.654Z",
+  "ended": "2026-07-16T23:21:01.673Z",
+  "durationSec": 15,
+  "concurrency": 5,
+  "total": 412657,
+  "ok": 79,
+  "fail": 412578,
+  "errorRate": 0.9998085577125797,
+  "avgMs": 0,
+  "p95Ms": 1,
+  "p99Ms": 1,
+  "rps": 27510,
+  "byName": {
+    "health": {
+      "ok": 19,
+      "fail": 137520,
+      "sumMs": 23594,
+      "n": 137539
+    },
+    "widget-config": {
+      "ok": 20,
+      "fail": 137519,
+      "sumMs": 24619,
+      "n": 137539
+    },
+    "widget-token": {
+      "ok": 20,
+      "fail": 137519,
+      "sumMs": 0,
+      "n": 137539
+    },
+    "chat": {
+      "ok": 10,
+      "fail": 10,
+      "sumMs": 172,
+      "n": 20
+    },
+    "handoff": {
+      "ok": 10,
+      "fail": 10,
+      "sumMs": 201,
+      "n": 20
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false
+  }
+}
