@@ -3,7 +3,7 @@ import { ChatIntent } from '../intents/intent.types';
 
 @Injectable()
 export class IntelligentRouter {
-    shouldRoute(intent: ChatIntent): boolean {
-        return intent === ChatIntent.INTELLIGENT_QUERY;
-    }
+  shouldRoute(intent: ChatIntent): boolean {
+    return intent === ChatIntent.INTELLIGENT_QUERY;
+  }
 }

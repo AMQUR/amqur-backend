@@ -89,4 +89,8 @@ export const envValidationSchema = Joi.object({
     .valid('api', 'worker', 'all')
     .optional()
     .default('all'),
+
+  /** Public HTTPS URLs for this deployment (tenant/env config — not hardcoded branding). */
+  PUBLIC_API_URL: Joi.string().uri().optional().allow(''),
+  PUBLIC_WIDGET_URL: Joi.string().uri().optional().allow(''),
 });

@@ -25,10 +25,7 @@ export class LocationsController {
 
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
   @Get()
-  findAll(
-    @CurrentUser() user: AuthUser,
-    @Query('tenantId') tenantId?: string,
-  ) {
+  findAll(@CurrentUser() user: AuthUser, @Query('tenantId') tenantId?: string) {
     assertStaffRole(user);
     const scoped = resolveTenantId(user, tenantId);
     return this.locationsService.findAll(scoped);

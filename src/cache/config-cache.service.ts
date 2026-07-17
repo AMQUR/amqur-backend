@@ -25,10 +25,14 @@ export class ConfigCacheService implements OnModuleDestroy {
     if (!url) return;
     // Lazy dynamic require keeps Redis optional at install time for unit tests.
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const Redis = require('ioredis') as new (u: string) => {
         get: (k: string) => Promise<string | null>;
-        set: (k: string, v: string, mode: string, ttl: number) => Promise<unknown>;
+        set: (
+          k: string,
+          v: string,
+          mode: string,
+          ttl: number,
+        ) => Promise<unknown>;
         del: (...keys: string[]) => Promise<unknown>;
         quit: () => Promise<unknown>;
         status: string;

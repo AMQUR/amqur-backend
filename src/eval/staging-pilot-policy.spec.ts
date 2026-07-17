@@ -53,11 +53,15 @@ describe('staging pilot policy gates', () => {
 
   it('never invents repair-order status', async () => {
     const tekion = new TekionProvider();
-    expect(await tekion.getRepairOrderStatus({ tenantId: 'staging' })).toBeNull();
+    expect(
+      await tekion.getRepairOrderStatus({ tenantId: 'staging' }),
+    ).toBeNull();
   });
 
   it('refuses availability claims when inventory UNAVAILABLE', () => {
-    const text = inventoryFreshnessDisclaimer([{ freshnessState: 'UNAVAILABLE' }]);
+    const text = inventoryFreshnessDisclaimer([
+      { freshnessState: 'UNAVAILABLE' },
+    ]);
     expect(text.toLowerCase()).toMatch(/could not be confirmed|will not claim/);
     expect(text.toLowerCase()).not.toMatch(/confirmed available|in stock now/);
   });

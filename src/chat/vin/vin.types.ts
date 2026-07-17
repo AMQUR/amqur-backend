@@ -1,23 +1,23 @@
 export type VinProfile = {
-    vin: string;
+  vin: string;
 
-    year?: number;
-    make?: string;
-    model?: string;
-    trim?: string;
+  year?: number;
+  make?: string;
+  model?: string;
+  trim?: string;
 
-    engine?: string;
-    transmission?: string;
-    drivetrain?: string;
-    fuelType?: string;
+  engine?: string;
+  transmission?: string;
+  drivetrain?: string;
+  fuelType?: string;
 
-    bodyType?: string;
-    doors?: number;
+  bodyType?: string;
+  doors?: number;
 
-    packages?: string[];
-    options?: string[];
+  packages?: string[];
+  options?: string[];
 
-    msrp?: number;
+  msrp?: number;
 
-    photos?: string[];
+  photos?: string[];
 };

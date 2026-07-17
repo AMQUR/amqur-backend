@@ -32,7 +32,8 @@ describe('CanaryAuthService secure employee gate', () => {
     prisma = {
       tenant: {
         findUnique: jest.fn(async ({ where }: any) => {
-          if (where.slug === tenant.slug || where.id === tenant.id) return tenant;
+          if (where.slug === tenant.slug || where.id === tenant.id)
+            return tenant;
           return null;
         }),
       },
@@ -52,7 +53,9 @@ describe('CanaryAuthService secure employee gate', () => {
           invites[data.jti] = { id: `id-${data.jti}`, ...data };
           return invites[data.jti];
         }),
-        findUnique: jest.fn(async ({ where }: any) => invites[where.jti] ?? null),
+        findUnique: jest.fn(
+          async ({ where }: any) => invites[where.jti] ?? null,
+        ),
         update: jest.fn(async ({ where, data }: any) => {
           const row = Object.values(invites).find(
             (i: any) => i.id === where.id || i.jti === where.jti,
@@ -68,14 +71,16 @@ describe('CanaryAuthService secure employee gate', () => {
 
     const store: Record<string, { payload: any; expMs: number }> = {};
     jwt = {
-      sign: jest.fn((payload: any, opts: { secret: string; expiresIn: number }) => {
-        const token = `signed.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${opts.expiresIn}`;
-        store[token] = {
-          payload,
-          expMs: Date.now() + opts.expiresIn * 1000,
-        };
-        return token;
-      }),
+      sign: jest.fn(
+        (payload: any, opts: { secret: string; expiresIn: number }) => {
+          const token = `signed.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${opts.expiresIn}`;
+          store[token] = {
+            payload,
+            expMs: Date.now() + opts.expiresIn * 1000,
+          };
+          return token;
+        },
+      ),
       verify: jest.fn((token: string, opts: { secret: string }) => {
         if (opts.secret !== SECRET) throw new Error('bad secret');
         const row = store[token];
@@ -124,7 +129,9 @@ describe('CanaryAuthService secure employee gate', () => {
     expect(result.eligible).toBe(true);
     expect(claims.env).toBe('staging');
     expect(prisma.auditLog.create).toHaveBeenCalled();
-    const auditArgs = prisma.auditLog.create.mock.calls.map((c: any) => c[0].data);
+    const auditArgs = prisma.auditLog.create.mock.calls.map(
+      (c: any) => c[0].data,
+    );
     for (const a of auditArgs) {
       expect(JSON.stringify(a)).not.toMatch(/inviteToken|cookieValue|signed\./);
     }

@@ -20,8 +20,7 @@ export class InventoryFeedService {
 
       headers: {
         'User-Agent': 'amqur-inventory-feed/1.0',
-        Accept:
-          'application/xml, text/xml, application/json, text/plain, */*',
+        Accept: 'application/xml, text/xml, application/json, text/plain, */*',
       },
     });
 

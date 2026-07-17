@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "npx prisma migrate deploy && node dist/main.js",
+    "startCommand": "if [ \"$PROCESS_ROLE\" = \"worker\" ]; then exec node dist/worker.js; else npx prisma migrate deploy && exec node dist/main.js; fi",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 30,
     "restartPolicyType": "ON_FAILURE",

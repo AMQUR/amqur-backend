@@ -51,7 +51,9 @@ jobs:
       - run: npx prisma generate
       - run: npx prisma validate
       - run: npx tsc --noEmit -p tsconfig.build.json
+      - run: npm run lint
       - run: npm test
+      - run: npm run test:cov
       - run: npm run build
 
       - name: Migration destructive scan

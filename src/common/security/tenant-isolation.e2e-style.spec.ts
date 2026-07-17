@@ -19,7 +19,9 @@ describe('tenant isolation query contracts', () => {
 
   it('group reporting must not return lead payloads', () => {
     const summary = {
-      tenants: [{ slug: 'jeep-of-chicago', counts: { leads: 12, vehicles: 40 } }],
+      tenants: [
+        { slug: 'jeep-of-chicago', counts: { leads: 12, vehicles: 40 } },
+      ],
       note: 'aggregate counts only',
     };
     expect(summary.tenants[0]).not.toHaveProperty('leads');

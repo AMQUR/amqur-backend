@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -61,7 +65,11 @@ export class AuthService {
       },
       {
         // Nest JWT typings expect ms.StringValue; env strings like "15m" are valid at runtime
-        expiresIn: expiresIn as `${number}m` | `${number}d` | `${number}h` | `${number}s`,
+        expiresIn: expiresIn as
+          | `${number}m`
+          | `${number}d`
+          | `${number}h`
+          | `${number}s`,
       },
     );
   }
@@ -74,9 +82,7 @@ export class AuthService {
     const raw = crypto.randomBytes(48).toString('hex');
     const tokenHash = this.hashToken(raw);
     const expiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
-    const days = expiresIn.endsWith('d')
-      ? parseInt(expiresIn, 10) || 7
-      : 7;
+    const days = expiresIn.endsWith('d') ? parseInt(expiresIn, 10) || 7 : 7;
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
     await this.prisma.refreshToken.create({
@@ -144,7 +150,7 @@ export class AuthService {
 
     const role =
       actor.role === 'SUPER_ADMIN'
-        ? (dto.role as Role | undefined) ?? Role.STAFF
+        ? ((dto.role as Role | undefined) ?? Role.STAFF)
         : Role.STAFF;
 
     // Non-super-admins cannot create SUPER_ADMIN

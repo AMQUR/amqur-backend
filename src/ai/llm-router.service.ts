@@ -20,9 +20,7 @@ export class LlmRouterService {
     return this.primary.isAvailable();
   }
 
-  async generate(
-    params: LlmGenerateParams,
-  ): Promise<LlmGenerateResult | null> {
+  async generate(params: LlmGenerateParams): Promise<LlmGenerateResult | null> {
     if (!this.primary.isAvailable()) {
       this.metrics.increment('ai.llm.unavailable');
       return null;

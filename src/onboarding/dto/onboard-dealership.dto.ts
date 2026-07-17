@@ -27,7 +27,10 @@ class BrandingDto {
   @IsOptional() @IsString() termsUrl?: string;
   @IsOptional() @IsString() escalationMessage?: string;
   @IsOptional() @IsString() disclaimerText?: string;
-  @IsOptional() @IsArray() @IsString({ each: true }) supportedLocales?: string[];
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  supportedLocales?: string[];
   @IsOptional() @IsBoolean() salesEnabled?: boolean;
   @IsOptional() @IsBoolean() serviceEnabled?: boolean;
   @IsOptional() @IsBoolean() partsEnabled?: boolean;
@@ -57,7 +60,9 @@ export class OnboardDealershipDto {
   @Matches(/^[a-z0-9-]+$/)
   locationSlug!: string;
 
-  @IsOptional() @IsArray() @IsString({ each: true })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   allowedOrigins?: string[];
 
   @IsOptional() @IsString() timezone?: string;
@@ -65,7 +70,9 @@ export class OnboardDealershipDto {
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsObject() storeHours?: Record<string, unknown>;
 
-  @IsOptional() @ValidateNested() @Type(() => BrandingDto)
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => BrandingDto)
   branding?: BrandingDto;
 
   @IsOptional() @IsObject() featureFlags?: Record<string, boolean>;
@@ -73,15 +80,22 @@ export class OnboardDealershipDto {
   @IsOptional() @IsString() inventoryFeedUrl?: string;
   @IsOptional() @IsString() inventoryFeedType?: 'XML' | 'JSON' | 'CSV';
 
-  @IsOptional() @IsArray() @IsEmail({}, { each: true })
+  @IsOptional()
+  @IsArray()
+  @IsEmail({}, { each: true })
   escalationRecipients?: string[];
 
-  @IsOptional() @IsInt() @Min(30) @Max(3650)
+  @IsOptional()
+  @IsInt()
+  @Min(30)
+  @Max(3650)
   dataRetentionDays?: number;
 
   @IsOptional() @IsString() consentText?: string;
 
-  @IsOptional() @ValidateNested() @Type(() => AdminUserDto)
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AdminUserDto)
   adminUser?: AdminUserDto;
 
   /** When true, re-run updates existing tenant/location without duplicating. */

@@ -15,11 +15,15 @@ export class InventorySyncService {
   @Cron('*/30 * * * *')
   async sync() {
     if (process.env.INVENTORY_SYNC_ENABLED !== 'true') {
-      this.logger.debug('Inventory sync disabled (INVENTORY_SYNC_ENABLED!=true)');
+      this.logger.debug(
+        'Inventory sync disabled (INVENTORY_SYNC_ENABLED!=true)',
+      );
       return;
     }
 
-    this.logger.log('Inventory auto-sync started (validated two-phase ingestion)');
+    this.logger.log(
+      'Inventory auto-sync started (validated two-phase ingestion)',
+    );
 
     const locations = await this.prisma.location.findMany({
       where: {

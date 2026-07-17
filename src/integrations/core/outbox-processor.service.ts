@@ -37,7 +37,10 @@ export class OutboxProcessorService {
           data: { status: OutboxStatus.PROCESSING },
         });
         try {
-          await this.dispatch(row.topic, row.payload as Record<string, unknown>);
+          await this.dispatch(
+            row.topic,
+            row.payload as Record<string, unknown>,
+          );
           await this.outbox.markPublished(row.id);
           processed += 1;
         } catch (err: unknown) {
@@ -82,7 +85,9 @@ export class OutboxProcessorService {
         return;
       }
       default:
-        this.logger.warn(`Unknown outbox topic=${topic} — marking published (no-op)`);
+        this.logger.warn(
+          `Unknown outbox topic=${topic} — marking published (no-op)`,
+        );
     }
   }
 }

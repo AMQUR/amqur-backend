@@ -1,0 +1,49 @@
+{
+  "dealerGroupName": "Dial Auto Group",
+  "dealerGroupSlug": "dial-auto-group",
+  "tenantName": "Dial Chevy of Chicago",
+  "tenantSlug": "dial-chevy-of-chicago",
+  "locationName": "Main",
+  "locationSlug": "main",
+  "timezone": "America/Chicago",
+  "allowedOrigins": [],
+  "phone": null,
+  "address": null,
+  "storeHours": null,
+  "branding": {
+    "assistantDisplayName": "Dial Chevy of Chicago Assistant",
+    "welcomeMessage": "How can I help you today?",
+    "disclaimerText": "Availability and pricing come only from verified dealership records. Fields marked UNVERIFIED must be supplied by the dealership before go-live.",
+    "note": "primaryColor/accentColor/logoUrl intentionally omitted until verified brand assets are provided."
+  },
+  "featureFlags": {
+    "chat": true,
+    "inventory": false,
+    "payments": false,
+    "handoff": true,
+    "leadCapture": true,
+    "service": false,
+    "parts": false,
+    "appointments": false
+  },
+  "dataRetentionDays": 365,
+  "consentText": "By continuing you agree to be contacted about your inquiry per the dealership privacy policy (URL pending verification).",
+  "escalationRecipients": [],
+  "inventoryFeedUrl": null,
+  "verificationRequired": [
+    "websiteDomains/allowedOrigins",
+    "address",
+    "phone",
+    "storeHours",
+    "logoUrl",
+    "brandColors",
+    "inventorySource",
+    "crmRouting",
+    "staffContacts/escalationRecipients",
+    "servicePricingSource",
+    "partsSource",
+    "appointmentAvailabilitySource",
+    "privacyPolicyUrl"
+  ],
+  "idempotent": true
+}

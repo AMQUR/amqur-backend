@@ -91,7 +91,10 @@ export function mergePublicBranding(
       m.welcomeMessage,
       DEFAULT_PUBLIC_BRANDING.welcomeMessage,
     ),
-    primaryColor: asString(m.primaryColor, DEFAULT_PUBLIC_BRANDING.primaryColor),
+    primaryColor: asString(
+      m.primaryColor,
+      DEFAULT_PUBLIC_BRANDING.primaryColor,
+    ),
     accentColor: asString(m.accentColor, DEFAULT_PUBLIC_BRANDING.accentColor),
     logoUrl: asNullableString(m.logoUrl),
     launcherIconUrl: asNullableString(m.launcherIconUrl),

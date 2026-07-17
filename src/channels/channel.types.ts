@@ -48,5 +48,7 @@ export interface MessagingProvider {
   readonly providerId: string;
   readonly channel: InboundChannelMessage['channel'];
   isLiveConfigured(): boolean;
-  send(message: OutboundChannelMessage): Promise<{ ok: boolean; externalId?: string }>;
+  send(
+    message: OutboundChannelMessage,
+  ): Promise<{ ok: boolean; externalId?: string }>;
 }

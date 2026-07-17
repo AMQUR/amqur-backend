@@ -3,8 +3,5 @@
  * without changing chat orchestration contracts.
  */
 export abstract class TwilioMessagingPort {
-    abstract sendTransactionalSms(_: {
-        to: string;
-        body: string;
-    }): Promise<void>;
+  abstract sendTransactionalSms(_: { to: string; body: string }): Promise<void>;
 }

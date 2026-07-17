@@ -16,15 +16,19 @@ describe('WidgetAuthService origin fail-closed', () => {
     checkEligibility: jest.fn(),
   };
 
-  function service(tenant: { id: string; allowedOrigins: string | null } | null) {
+  function service(
+    tenant: { id: string; allowedOrigins: string | null } | null,
+  ) {
     const prisma = {
       tenant: {
         findUnique: jest.fn().mockResolvedValue(tenant),
       },
       location: {
-        findFirst: jest.fn().mockResolvedValue(
-          tenant ? { id: 'loc1', slug: 'pilot-rooftop' } : null,
-        ),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue(
+            tenant ? { id: 'loc1', slug: 'pilot-rooftop' } : null,
+          ),
       },
     };
     return new WidgetAuthService(
@@ -48,7 +52,11 @@ describe('WidgetAuthService origin fail-closed', () => {
   it('rejects when allowedOrigins is empty (fail closed)', async () => {
     const svc = service({ id: 't1', allowedOrigins: null });
     await expect(
-      svc.createWidgetToken('dial-auto-group-staging', 'pilot-rooftop', 'https://a.com'),
+      svc.createWidgetToken(
+        'dial-auto-group-staging',
+        'pilot-rooftop',
+        'https://a.com',
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 

@@ -26,9 +26,9 @@ describe('RolesGuard', () => {
       getAllAndOverride: () => ['ADMIN', 'SUPER_ADMIN'],
     } as unknown as Reflector;
     const guard = new RolesGuard(reflector);
-    expect(() =>
-      guard.canActivate(mockContext({ role: 'widget' })),
-    ).toThrow(ForbiddenException);
+    expect(() => guard.canActivate(mockContext({ role: 'widget' }))).toThrow(
+      ForbiddenException,
+    );
   });
 
   it('allows matching role', () => {

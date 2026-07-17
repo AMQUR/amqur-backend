@@ -52,6 +52,8 @@ describe('truthfulness golden suite', () => {
   it('payment estimates must be labeled non-approved when shown', () => {
     const educational =
       'This is an educational estimate only — not an approved financing offer from the dealership or a lender.';
-    expect(educational.toLowerCase()).toMatch(/estimate|educational|not an approved/);
+    expect(educational.toLowerCase()).toMatch(
+      /estimate|educational|not an approved/,
+    );
   });
 });

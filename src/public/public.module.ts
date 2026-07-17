@@ -8,16 +8,12 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-    imports: [
-        PrismaModule,
-        AuthModule, // provides JwtService
-    ],
-    controllers: [PublicController, CanaryAuthController],
-    providers: [
-        PublicService,
-        WidgetAuthService,
-        CanaryAuthService,
-    ],
-    exports: [PublicService],
+  imports: [
+    PrismaModule,
+    AuthModule, // provides JwtService
+  ],
+  controllers: [PublicController, CanaryAuthController],
+  providers: [PublicService, WidgetAuthService, CanaryAuthService],
+  exports: [PublicService],
 })
-export class PublicModule { }
+export class PublicModule {}

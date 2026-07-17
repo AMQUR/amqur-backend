@@ -5,16 +5,16 @@ import { ImaginAdapter } from './imagin.adapter';
 
 @Injectable()
 export class MediaEngine {
-    private adapters: MediaAdapter[] = [
-        new StellantisAdapter(),
-        new ImaginAdapter(),
-    ];
+  private adapters: MediaAdapter[] = [
+    new StellantisAdapter(),
+    new ImaginAdapter(),
+  ];
 
-    async enrich(make: string, vin: string) {
-        const adapter =
-            this.adapters.find(a => a.supports(make)) ??
-            this.adapters[this.adapters.length - 1];
+  async enrich(make: string, vin: string) {
+    const adapter =
+      this.adapters.find((a) => a.supports(make)) ??
+      this.adapters[this.adapters.length - 1];
 
-        return adapter.fetch(vin);
-    }
+    return adapter.fetch(vin);
+  }
 }

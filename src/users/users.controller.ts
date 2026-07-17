@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -24,10 +17,7 @@ export class UsersController {
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Get()
-  findAll(
-    @CurrentUser() user: AuthUser,
-    @Query('tenantId') tenantId?: string,
-  ) {
+  findAll(@CurrentUser() user: AuthUser, @Query('tenantId') tenantId?: string) {
     assertStaffRole(user);
     const scoped = resolveTenantId(user, tenantId);
     return this.usersService.findAll(scoped);

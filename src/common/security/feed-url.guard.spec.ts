@@ -17,9 +17,9 @@ describe('assertFeedUrlAllowed', () => {
   it('rejects non-https in production', () => {
     process.env.NODE_ENV = 'production';
     process.env.INVENTORY_FEED_ALLOWED_HOSTS = '';
-    expect(() => assertFeedUrlAllowed('http://feeds.example.com/x.xml')).toThrow(
-      /HTTPS/i,
-    );
+    expect(() =>
+      assertFeedUrlAllowed('http://feeds.example.com/x.xml'),
+    ).toThrow(/HTTPS/i);
   });
 
   it('enforces host allowlist when configured', () => {

@@ -46,5 +46,7 @@ export interface DmsProvider {
   getCustomerVehicles?(params: {
     tenantId: string;
     externalCustomerId: string;
-  }): Promise<Array<{ vin: string; year?: number; make?: string; model?: string }>>;
+  }): Promise<
+    Array<{ vin: string; year?: number; make?: string; model?: string }>
+  >;
 }

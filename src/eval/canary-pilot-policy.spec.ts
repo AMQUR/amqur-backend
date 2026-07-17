@@ -19,7 +19,10 @@ describe('Jeep of Chicago canary release gates', () => {
       hardDisabled: string[];
     };
     humanHandoff: { destinationVerified: boolean };
-    origins: { api: { status: string; value: string | null }; widgetAsset: { value: string | null } };
+    origins: {
+      api: { status: string; value: string | null };
+      widgetAsset: { value: string | null };
+    };
   };
 
   const loaderPath = path.join(
@@ -37,7 +40,9 @@ describe('Jeep of Chicago canary release gates', () => {
     expect(cfg.featureFlags.publicCustomerMode.inventory).toBe(false);
     expect(cfg.featureFlags.publicCustomerMode.vehicleCompare).toBe(false);
     expect(cfg.featureFlags.publicCustomerMode.vAutoFeed).toBe(false);
-    expect(cfg.featureFlags.hardDisabled).toContain('fixtureInventoryInPublicMode');
+    expect(cfg.featureFlags.hardDisabled).toContain(
+      'fixtureInventoryInPublicMode',
+    );
   });
 
   it('keeps Tekion and outbound messaging disabled', () => {

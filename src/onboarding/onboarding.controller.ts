@@ -15,10 +15,7 @@ export class OnboardingController {
 
   @Post('dealership')
   @Roles('SUPER_ADMIN')
-  onboard(
-    @Body() dto: OnboardDealershipDto,
-    @CurrentUser() user: AuthUser,
-  ) {
+  onboard(@Body() dto: OnboardDealershipDto, @CurrentUser() user: AuthUser) {
     return this.onboarding.onboard(dto, user.sub);
   }
 }

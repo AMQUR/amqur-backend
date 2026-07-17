@@ -1,14 +1,14 @@
 import { XMLParser } from 'fast-xml-parser';
 
 export class XmlInventoryParser {
-    static parse(xml: string) {
-        const parser = new XMLParser({
-            ignoreAttributes: false,
-            attributeNamePrefix: '',
-        });
+  static parse(xml: string) {
+    const parser = new XMLParser({
+      ignoreAttributes: false,
+      attributeNamePrefix: '',
+    });
 
-        const json = parser.parse(xml);
+    const json = parser.parse(xml);
 
-        return json?.inventory?.vehicle || [];
-    }
+    return json?.inventory?.vehicle || [];
+  }
 }

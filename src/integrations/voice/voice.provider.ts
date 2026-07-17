@@ -26,7 +26,10 @@ export interface VoiceProvider {
   readonly providerId: string;
   isLiveConfigured(): boolean;
   answer(session: VoiceSession): Promise<{ ok: boolean }>;
-  transferToStaff(session: VoiceSession, reason: string): Promise<{ ok: boolean }>;
+  transferToStaff(
+    session: VoiceSession,
+    reason: string,
+  ): Promise<{ ok: boolean }>;
   hangup(session: VoiceSession): Promise<{ ok: boolean }>;
 }
 

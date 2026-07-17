@@ -1,39 +1,39 @@
 export type InventoryVehicle = {
-    id?: string;
-    vin: string;
-    stock?: string | null;
+  id?: string;
+  vin: string;
+  stock?: string | null;
 
-    year?: number;
-    make?: string;
-    model?: string;
-    trim?: string;
+  year?: number;
+  make?: string;
+  model?: string;
+  trim?: string;
 
-    engine?: string;
+  engine?: string;
 
-    price?: number;
-    msrp?: number;
-    mileage?: number;
+  price?: number;
+  msrp?: number;
+  mileage?: number;
 
-    color?: string;
-    drivetrain?: string;
-    bodyType?: string;
+  color?: string;
+  drivetrain?: string;
+  bodyType?: string;
 
-    transmission?: string;
-    fuelType?: string;
+  transmission?: string;
+  fuelType?: string;
 
-    doors?: number;
+  doors?: number;
 
-    photos?: string[];
+  photos?: string[];
 
-    estimatedPayment?: number;
-    paymentExplanation?: string;
-    windowStickerUrl?: string;
+  estimatedPayment?: number;
+  paymentExplanation?: string;
+  windowStickerUrl?: string;
 
-    status?: string;
-    locationId?: string | null;
+  status?: string;
+  locationId?: string | null;
 
-    /** Feed freshness — ISO timestamp when last seen in inventory sync */
-    lastSeenAt?: string | null;
-    source?: string | null;
-    freshnessState?: 'FRESH' | 'DEGRADED' | 'STALE' | 'UNAVAILABLE' | null;
+  /** Feed freshness — ISO timestamp when last seen in inventory sync */
+  lastSeenAt?: string | null;
+  source?: string | null;
+  freshnessState?: 'FRESH' | 'DEGRADED' | 'STALE' | 'UNAVAILABLE' | null;
 };

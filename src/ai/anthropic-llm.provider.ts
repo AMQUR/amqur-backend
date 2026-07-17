@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Anthropic from '@anthropic-ai/sdk';
-import type { LlmGenerateParams, LlmGenerateResult, LlmProvider } from './llm.provider';
+import type {
+  LlmGenerateParams,
+  LlmGenerateResult,
+  LlmProvider,
+} from './llm.provider';
 
 @Injectable()
 export class AnthropicLlmProvider implements LlmProvider {

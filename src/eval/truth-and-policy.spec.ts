@@ -4,7 +4,9 @@ import { scoreLeadWithReasons } from '../chat/lead-intelligence';
 
 describe('source authority defaults', () => {
   it('keeps advertised_price on vauto', () => {
-    const rule = DEFAULT_SOURCE_AUTHORITY.find((r) => r.field === 'advertised_price');
+    const rule = DEFAULT_SOURCE_AUTHORITY.find(
+      (r) => r.field === 'advertised_price',
+    );
     expect(rule?.primarySource).toBe('vauto');
   });
 
@@ -34,7 +36,11 @@ describe('nextBestAction', () => {
 
 describe('lead scoring reasons', () => {
   it('records observable reason codes', () => {
-    const r = scoreLeadWithReasons(0, ['vehicle_view', 'payment', 'appointment']);
+    const r = scoreLeadWithReasons(0, [
+      'vehicle_view',
+      'payment',
+      'appointment',
+    ]);
     expect(r.score).toBeGreaterThan(0);
     expect(r.reasons).toContain('payment');
     expect(r.version).toBe('rules-v2');

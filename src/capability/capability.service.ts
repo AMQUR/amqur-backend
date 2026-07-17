@@ -35,7 +35,10 @@ export class CapabilityService {
     capability: CapabilityName,
   ): Promise<CapabilityResult> {
     const f = await this.flags.resolve(tenantId, locationId);
-    const unavailable = (reason: string, customerMessage: string): CapabilityResult => ({
+    const unavailable = (
+      reason: string,
+      customerMessage: string,
+    ): CapabilityResult => ({
       allowed: false,
       reason,
       customerMessage,

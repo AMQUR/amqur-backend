@@ -15,7 +15,10 @@ export class LocationsService {
     });
   }
 
-  async create(data: CreateLocationDto & { tenantId: string }, actor: AuthUser) {
+  async create(
+    data: CreateLocationDto & { tenantId: string },
+    actor: AuthUser,
+  ) {
     if (data.inventoryFeedUrl) {
       try {
         assertFeedUrlAllowed(data.inventoryFeedUrl);

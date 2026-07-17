@@ -28,9 +28,7 @@ describe('SecretVaultService', () => {
 
 describe('webhook signature helper', () => {
   it('uses sha256 of secret.payload', () => {
-    const sig = createHash('sha256')
-      .update('secret.{"a":1}')
-      .digest('hex');
+    const sig = createHash('sha256').update('secret.{"a":1}').digest('hex');
     expect(sig).toHaveLength(64);
   });
 });
