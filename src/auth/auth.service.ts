@@ -266,7 +266,7 @@ export class AuthService {
           tenant: { slug: dto.tenantSlug },
         },
       });
-      if (!user) {
+      if (!user || !user.isActive) {
         throw new UnauthorizedException('Invalid credentials');
       }
       const passwordValid = await bcrypt.compare(dto.password, user.password);
@@ -301,6 +301,9 @@ export class AuthService {
     }
 
     const user = matches[0];
+    if (!user.isActive) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
     const passwordValid = await bcrypt.compare(dto.password, user.password);
     if (!passwordValid) {
       throw new UnauthorizedException('Invalid credentials');
@@ -327,6 +330,10 @@ export class AuthService {
     });
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (!stored.user.isActive) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 

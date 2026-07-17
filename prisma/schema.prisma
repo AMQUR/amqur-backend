@@ -200,6 +200,9 @@ model User {
 
   role Role @default(STAFF)
 
+  /// Disabled users cannot log in or refresh; access tokens age out (<=15m).
+  isActive Boolean @default(true)
+
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
