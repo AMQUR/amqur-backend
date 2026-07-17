@@ -1,59 +1,60 @@
 # dialusnow.com DNS records (Railway)
 
 **Project:** `dial-us-now-platform` (`3bca40b6-01c6-4f02-9464-8682e6ffcb75`)  
-**Captured:** 2026-07-17T00:16:37Z  
-**Owner confirmed Squarespace add:** 2026-07-16 (local)  
-**Verified (dig + Railway):** 2026-07-17T00:28:43Z  
+**DNS host:** Squarespace  
+**TTL during validation:** 300
 
 ## Staging — VERIFIED
 
 ### Traffic CNAME
 
-| Host | Type | Required value | dig / Railway current | Status |
-|------|------|----------------|----------------------|--------|
-| `staging-api` | CNAME | `w3t2i0xt.up.railway.app` | `w3t2i0xt.up.railway.app` | **PROPAGATED** |
-| `staging-widget` | CNAME | `db5sfivo.up.railway.app` | `db5sfivo.up.railway.app` | **PROPAGATED** |
+| Environment | Service | Type | Name | Value | Status |
+|-------------|---------|------|------|-------|--------|
+| staging | api | CNAME | `staging-api` | `w3t2i0xt.up.railway.app` | VERIFIED |
+| staging | widget | CNAME | `staging-widget` | `db5sfivo.up.railway.app` | VERIFIED |
 
-### Ownership verification TXT
+### Ownership TXT
 
-| Host | Type | Required value | dig result | Railway verified |
-|------|------|----------------|------------|------------------|
-| `_railway-verify.staging-api` | TXT | `railway-verify=cd88e61ca89cc8f1e032d273eb175eabdde562da19d25f379381450e866f0a44` | match | **true** |
-| `_railway-verify.staging-widget` | TXT | `railway-verify=3c104874eb66c89dd22ea60cadaa93f74f11e374d60dd6ba1d8c85773d9c935e` | match | **true** |
+| Environment | Service | Type | Name | Value | Status |
+|-------------|---------|------|------|-------|--------|
+| staging | api | TXT | `_railway-verify.staging-api` | `railway-verify=cd88e61ca89cc8f1e032d273eb175eabdde562da19d25f379381450e866f0a44` | VERIFIED |
+| staging | widget | TXT | `_railway-verify.staging-widget` | `railway-verify=3c104874eb66c89dd22ea60cadaa93f74f11e374d60dd6ba1d8c85773d9c935e` | VERIFIED |
 
-### Certificates / HTTPS
+## Production — ATTACHED IN RAILWAY (awaiting Squarespace DNS)
 
-| Domain | Certificate (Railway) | HTTPS smoke |
-|--------|----------------------|-------------|
-| `staging-api.dialusnow.com` | `CERTIFICATE_STATUS_TYPE_VALID` | `GET /api/health` **200 ready** (db+redis) |
-| `staging-widget.dialusnow.com` | `CERTIFICATE_STATUS_TYPE_VALID` | `GET /assistant-widget.iife.js` **200** (~614KB, `AmqurWidgetBundle`) |
+Captured 2026-07-17T16:48:17Z from Railway `customDomainCreate` — **do not invent or alter values**.
 
-### Temporary Railway domains (still valid fallback)
+### Traffic CNAME
 
-| Service | URL | Status |
-|---------|-----|--------|
-| api | `https://api-staging-0be0.up.railway.app` | healthy |
-| widget | `https://widget-staging-55e0.up.railway.app` | healthy |
+| Environment | Service | Type | Name | Value | Status |
+|-------------|---------|------|------|-------|--------|
+| production | prod-api | CNAME | `api` | `0wcjhs75.up.railway.app` | REQUIRES_UPDATE |
+| production | prod-widget | CNAME | `widget` | `t05fw9mw.up.railway.app` | REQUIRES_UPDATE |
 
-## Production — NOT ATTACHED (second checkpoint)
+### Ownership TXT
 
-Do not add production DNS until owner approves production gate after staging validation sign-off.
+| Environment | Service | Type | Name | Value | Status |
+|-------------|---------|------|------|-------|--------|
+| production | prod-api | TXT | `_railway-verify.api` | `railway-verify=d7f632a8312171eab4502509ea44c2f690f2da148d9cb41ab5812f16517cda8f` | unverified |
+| production | prod-widget | TXT | `_railway-verify.widget` | `railway-verify=1789685fc6fb3d723b9481205485beb0762aa96f9fbd7ba9ded7bdcaee137ff5` | unverified |
 
-| Host | Type | Value | Status |
-|------|------|-------|--------|
-| `api` | CNAME | *(capture after `railway domain api.dialusnow.com`)* | **PENDING — not attached** |
-| `widget` | CNAME | *(capture after `railway domain widget.dialusnow.com`)* | **PENDING — not attached** |
-| `_railway-verify.api` | TXT | *(capture from Railway)* | **PENDING** |
-| `_railway-verify.widget` | TXT | *(capture from Railway)* | **PENDING** |
+### Temporary Railway domains (smoke before DNS)
 
-## Later (document only)
+| Service | URL | Evidence |
+|---------|-----|----------|
+| prod-api | `https://prod-api-production-62be.up.railway.app` | `/api/health` 200 ready (db+redis) 2026-07-17T16:48Z |
+| prod-widget | `https://prod-widget-production.up.railway.app` | `/assistant-widget.iife.js` 200 |
+
+## MANUAL DNS CHECKPOINT (Squarespace → dialusnow.com)
+
+1. Open Domains → dialusnow.com → DNS → Custom Records.
+2. Add the four production rows above exactly (CNAME + TXT).
+3. Do not delete staging or email records.
+4. Save.
+5. Reply: **DNS production records added**
+
+## Later (document only — not deployed)
 
 - `app.dialusnow.com`
 - `docs.dialusnow.com`
 - `status.dialusnow.com`
-
-## Checkpoint history
-
-1. ~~Owner adds staging Squarespace records~~ **done**
-2. ~~dig + Railway cert + HTTPS verify~~ **done 2026-07-17T00:28Z**
-3. Production domain attach + Squarespace prod records — **not started**
