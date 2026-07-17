@@ -19,7 +19,8 @@ const server = http.createServer((req, res) => {
       availabilityVerified: false,
       priceVerified: false,
       fitmentVerified: false,
-      message: 'Parts/service data unavailable from verified source in test mock',
+      message:
+        'Parts/service data unavailable from verified source in test mock',
     }),
   );
 });

@@ -50,7 +50,9 @@ const server = http.createServer(async (req, res) => {
     }
     events.push({ at: new Date().toISOString(), body });
     res.writeHead(202, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, accepted: true, id: `mock-${events.length}` }));
+    res.end(
+      JSON.stringify({ ok: true, accepted: true, id: `mock-${events.length}` }),
+    );
     return;
   }
   res.writeHead(404);

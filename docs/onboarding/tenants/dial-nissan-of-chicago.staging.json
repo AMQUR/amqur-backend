@@ -15,8 +15,9 @@
   "branding": {
     "assistantDisplayName": "Dial Nissan of Chicago Assistant",
     "welcomeMessage": "How can I help you today?",
-    "disclaimerText": "Availability and pricing come only from verified dealership records. Fields marked UNVERIFIED must be supplied by the dealership before go-live.",
-    "note": "primaryColor/accentColor/logoUrl intentionally omitted until verified brand assets are provided."
+    "disclaimerText": "Vehicle availability, pricing, incentives, and dealership information are provided only when verified.",
+    "note": "primaryColor/accentColor/logoUrl intentionally omitted until verified brand assets are provided.",
+    "escalationMessage": "I can save your request for dealership staff to review."
   },
   "featureFlags": {
     "chat": true,
@@ -29,7 +30,7 @@
     "appointments": false
   },
   "dataRetentionDays": 365,
-  "consentText": "By continuing you agree to be contacted about your inquiry per the dealership privacy policy (URL pending verification).",
+  "consentText": "Internal staging environment for authorized testing only. Do not enter real customer information.",
   "escalationRecipients": [],
   "inventoryFeedUrl": null,
   "verificationRequired": [

@@ -96,15 +96,15 @@ describe('internal canary gate contracts', () => {
 
   describe('cross-tenant forged values', () => {
     it('token payload tenantId must match resource tenantId', () => {
-      const tokenTenant = 'tenant-a';
-      const resourceTenant = 'tenant-b';
+      const tokenTenant: string = 'tenant-a';
+      const resourceTenant: string = 'tenant-b';
       const allowed = tokenTenant === resourceTenant;
       expect(allowed).toBe(false);
     });
 
     it('forged locationId from another tenant is rejected by equality check', () => {
-      const tokenLocation = 'loc-a';
-      const requestedLocation = 'loc-b';
+      const tokenLocation: string = 'loc-a';
+      const requestedLocation: string = 'loc-b';
       expect(tokenLocation === requestedLocation).toBe(false);
     });
   });

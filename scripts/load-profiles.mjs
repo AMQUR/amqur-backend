@@ -38,9 +38,7 @@ async function requestNamed(name, fn, acceptStatuses = null) {
   const t0 = Date.now();
   try {
     const res = await fn();
-    const ok = acceptStatuses
-      ? acceptStatuses.includes(res.status)
-      : res.ok;
+    const ok = acceptStatuses ? acceptStatuses.includes(res.status) : res.ok;
     return { name, ok, status: res.status, ms: Date.now() - t0 };
   } catch {
     return { name, ok: false, status: 0, ms: Date.now() - t0 };
@@ -161,9 +159,7 @@ async function main() {
     }
   }
 
-  await Promise.all(
-    Array.from({ length: cfg.workers }, (_, i) => worker(i)),
-  );
+  await Promise.all(Array.from({ length: cfg.workers }, (_, i) => worker(i)));
 
   samples.sort((a, b) => a - b);
   const p95 = samples[Math.floor(samples.length * 0.95)] || 0;
@@ -194,12 +190,11 @@ async function main() {
       errorRateMax: 0.01,
       p95MaxMs: 2000,
       passed,
-      note:
-        PROFILE.startsWith('BURST')
-          ? 'Burst profiles may intentionally exceed rate limits; pass criteria apply to SMOKE/EXPECTED_PILOT primarily.'
-          : EXPECT_TOKEN_FORBIDDEN
-            ? 'Staging canary: widget-token 403 counted OK (fail-closed origins).'
-            : 'Paced load under test throttle ceiling.',
+      note: PROFILE.startsWith('BURST')
+        ? 'Burst profiles may intentionally exceed rate limits; pass criteria apply to SMOKE/EXPECTED_PILOT primarily.'
+        : EXPECT_TOKEN_FORBIDDEN
+          ? 'Staging canary: widget-token 403 counted OK (fail-closed origins).'
+          : 'Paced load under test throttle ceiling.',
     },
   };
 

@@ -63,18 +63,17 @@ export class PublicService {
       location.phone,
     );
 
-    // Never expose internal ids beyond tenant/location public ids needed by widget session.
-    // Never expose allowedOrigins, escalation recipients, feed URLs, or secrets.
+    // Public contract: names, slugs, timezone, branding, flags, consent, version ONLY.
+    // Never expose internal database ids, allowedOrigins, escalation recipients,
+    // integration ids, feed URLs, or secrets. Widget sessions key off slugs.
     const payload = {
       ok: true,
       configVersion: tenant.configVersion,
       tenant: {
-        id: tenant.id,
         name: tenant.name,
         slug: tenant.slug,
       },
       location: {
-        id: location.id,
         name: location.name,
         slug: location.slug,
         timezone: location.timezone,

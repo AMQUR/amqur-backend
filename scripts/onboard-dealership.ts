@@ -6,7 +6,7 @@
  *
  * Config JSON matches OnboardDealershipDto fields.
  */
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as bcrypt from 'bcryptjs';
@@ -66,8 +66,8 @@ async function main() {
         name: cfg.tenantName,
         dealerGroupId,
         allowedOrigins: cfg.allowedOrigins?.join(',') ?? null,
-        publicConfig: cfg.branding ?? {},
-        featureFlags: cfg.featureFlags ?? {},
+        publicConfig: (cfg.branding ?? {}) as Prisma.InputJsonValue,
+        featureFlags: (cfg.featureFlags ?? {}) as Prisma.InputJsonValue,
         dataRetentionDays: cfg.dataRetentionDays ?? 365,
         consentText: cfg.consentText ?? null,
       },
@@ -75,8 +75,8 @@ async function main() {
         name: cfg.tenantName,
         dealerGroupId,
         allowedOrigins: cfg.allowedOrigins?.join(',') ?? undefined,
-        publicConfig: cfg.branding ?? undefined,
-        featureFlags: cfg.featureFlags ?? undefined,
+        publicConfig: cfg.branding as Prisma.InputJsonValue | undefined,
+        featureFlags: cfg.featureFlags as Prisma.InputJsonValue | undefined,
         dataRetentionDays: cfg.dataRetentionDays,
         consentText: cfg.consentText,
         configVersion: { increment: 1 },
@@ -94,8 +94,8 @@ async function main() {
         timezone: cfg.timezone ?? 'America/Chicago',
         address: cfg.address,
         phone: cfg.phone,
-        storeHours: cfg.storeHours,
-        publicConfig: cfg.branding ?? {},
+        storeHours: cfg.storeHours as Prisma.InputJsonValue | undefined,
+        publicConfig: (cfg.branding ?? {}) as Prisma.InputJsonValue,
         inventoryFeedUrl: cfg.inventoryFeedUrl,
         inventoryFeedType: cfg.inventoryFeedType as never,
         escalationRecipients: cfg.escalationRecipients?.join(',') ?? null,
@@ -105,8 +105,8 @@ async function main() {
         timezone: cfg.timezone,
         address: cfg.address,
         phone: cfg.phone,
-        storeHours: cfg.storeHours,
-        publicConfig: cfg.branding,
+        storeHours: cfg.storeHours as Prisma.InputJsonValue | undefined,
+        publicConfig: cfg.branding as Prisma.InputJsonValue | undefined,
         inventoryFeedUrl: cfg.inventoryFeedUrl,
         inventoryFeedType: cfg.inventoryFeedType as never,
         escalationRecipients: cfg.escalationRecipients?.join(','),

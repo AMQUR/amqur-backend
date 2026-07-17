@@ -83,7 +83,13 @@ async function main() {
   fs.mkdirSync(outDir, { recursive: true });
   const outFile = path.join(outDir, `soak-${Date.now()}.json`);
   fs.writeFileSync(outFile, JSON.stringify(report, null, 2));
-  console.log(JSON.stringify({ ...report, points: `[${points.length} samples]` }, null, 2));
+  console.log(
+    JSON.stringify(
+      { ...report, points: `[${points.length} samples]` },
+      null,
+      2,
+    ),
+  );
   console.log(`Wrote ${outFile}`);
   if (report.errorRate > 0.02) process.exit(2);
 }

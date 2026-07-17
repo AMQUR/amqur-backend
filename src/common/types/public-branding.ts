@@ -32,10 +32,12 @@ export const DEFAULT_PUBLIC_BRANDING: PublicBrandingConfig = {
   websiteUrl: null,
   privacyUrl: null,
   termsUrl: null,
-  escalationMessage:
-    'I can connect you with a team member. Availability of live notification depends on dealership systems.',
+  // Durable-local-only handoff default: never claims staff were notified —
+  // only that the request is saved for review. Tenants with verified CRM
+  // delivery may override per-tenant.
+  escalationMessage: 'I can save your request for dealership staff to review.',
   disclaimerText:
-    'Vehicle availability, pricing, and offers come only from verified dealership records. When information is unavailable, I will say so.',
+    'Vehicle availability, pricing, incentives, and dealership information are provided only when verified.',
   supportedLocales: ['en'],
   salesEnabled: true,
   serviceEnabled: false,
