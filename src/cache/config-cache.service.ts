@@ -16,6 +16,7 @@ export class ConfigCacheService implements OnModuleDestroy {
     set: (k: string, v: string, mode: string, ttl: number) => Promise<unknown>;
     del: (...keys: string[]) => Promise<unknown>;
     quit: () => Promise<unknown>;
+    disconnect: () => void;
     status: string;
   } | null = null;
   private redisEnabled = false;
@@ -25,7 +26,10 @@ export class ConfigCacheService implements OnModuleDestroy {
     if (!url) return;
     // Lazy dynamic require keeps Redis optional at install time for unit tests.
     try {
-      const Redis = require('ioredis') as new (u: string) => {
+      const Redis = require('ioredis') as new (
+        u: string,
+        opts?: Record<string, unknown>,
+      ) => {
         get: (k: string) => Promise<string | null>;
         set: (
           k: string,
@@ -35,10 +39,16 @@ export class ConfigCacheService implements OnModuleDestroy {
         ) => Promise<unknown>;
         del: (...keys: string[]) => Promise<unknown>;
         quit: () => Promise<unknown>;
+        disconnect: () => void;
         status: string;
         on: (ev: string, cb: (...a: unknown[]) => void) => void;
       };
-      const client = new Redis(url);
+      const client = new Redis(url, {
+        connectTimeout: 1_500,
+        maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+        lazyConnect: false,
+      });
       client.on('error', (err: unknown) => {
         this.logger.warn(
           `Redis error (degrading to memory): ${err instanceof Error ? err.message : 'unknown'}`,
@@ -58,10 +68,19 @@ export class ConfigCacheService implements OnModuleDestroy {
   async onModuleDestroy() {
     if (this.redis) {
       try {
-        await this.redis.quit();
+        await Promise.race([
+          this.redis.quit(),
+          new Promise((resolve) => setTimeout(resolve, 500)),
+        ]);
       } catch {
         /* ignore */
       }
+      try {
+        this.redis.disconnect();
+      } catch {
+        /* ignore */
+      }
+      this.redis = null;
     }
   }
 

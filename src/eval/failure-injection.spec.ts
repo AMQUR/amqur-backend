@@ -33,17 +33,29 @@ describe('failure injection', () => {
   });
 
   describe('config cache redis outage', () => {
-    it('degrades to memory without throwing', async () => {
+    it('uses memory when REDIS_URL unset', async () => {
       const prev = process.env.REDIS_URL;
-      process.env.REDIS_URL = 'redis://127.0.0.1:1'; // closed port
+      delete process.env.REDIS_URL;
       const cache = new ConfigCacheService();
       await cache.setJson('k', { a: 1 }, 5);
       const v = await cache.getJson<{ a: number }>('k');
       expect(v?.a).toBe(1);
+      await cache.onModuleDestroy();
       if (prev === undefined) delete process.env.REDIS_URL;
       else process.env.REDIS_URL = prev;
-      await cache.onModuleDestroy();
     });
+
+    it('degrades when Redis port is closed', async () => {
+      const prev = process.env.REDIS_URL;
+      process.env.REDIS_URL = 'redis://127.0.0.1:1'; // closed port
+      const cache = new ConfigCacheService();
+      await cache.setJson('k', { a: 2 }, 5);
+      const v = await cache.getJson<{ a: number }>('k');
+      expect(v?.a).toBe(2);
+      await cache.onModuleDestroy();
+      if (prev === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = prev;
+    }, 15_000);
   });
 
   describe('outbox DLQ', () => {

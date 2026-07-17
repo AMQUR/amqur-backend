@@ -1409,7 +1409,7 @@ export class ChatOrchestrator {
         this.markServiceFlowCompleted(userId);
         const reply = await this.polishGuarded(
           userId,
-          'Perfect — I’ve got everything. I’ve logged your appointment request; our team will reach out to confirm availability. This is not a final booking until confirmed.',
+          'Perfect — I’ve got everything. I’ve recorded your appointment request in our system. This is not a confirmed booking, and I will not claim staff was notified until delivery is confirmed or safely queued.',
           'service',
           { userMessage: message },
         );

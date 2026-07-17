@@ -58,4 +58,11 @@ export class HealthController {
   live() {
     return { ok: true, status: 'live' };
   }
+
+  /** Alias for orchestrators that probe /ready separately from /live. */
+  @Public()
+  @Get('ready')
+  ready() {
+    return this.check();
+  }
 }

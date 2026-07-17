@@ -35,8 +35,12 @@
 | JWT_EXPIRES_IN | SET | `15m` |
 | JWT_REFRESH_EXPIRES_IN | SET | `7d` |
 | WIDGET_TOKEN_EXPIRES_IN | SET | `4h` |
-| CRM_WEBHOOK_URL | UNSET | Fail-closed; set when authorized CRM destination exists |
-| ANTHROPIC_API_KEY | UNSET / OWNER | Required for live LLM; omit keeps non-LLM paths |
+| CRM_WEBHOOK_URL | UNSET | Fail-closed; durable escalation only until authorized staging sink |
+| ANTHROPIC_API_KEY | UNSET / OWNER | See `docs/canary/staging-ai-provider.md` |
+| AI_PROVIDER / AI_MODEL | UNSET / OWNER | Set with staging-scoped key only |
+| ERROR_MONITORING_DSN | UNSET / OWNER | Required before claiming alert delivery |
+| WIDGET_TOKEN_SECRET | N/A in code | Widget JWTs signed with `JWT_SECRET` today |
+| DATA_ENCRYPTION_KEY | N/A alias | Use `INTEGRATION_ENCRYPTION_KEY` (SET) |
 | TEKION_* | UNSET | Disabled until vendor access |
 | VAUTO_* / inventory feed | UNSET | Inventory remains disabled |
 

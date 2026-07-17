@@ -1,105 +1,138 @@
 # AMQUR / Dial Us Now — Final Production Readiness Report
 
-**Date:** 2026-07-16/17  
+**Updated:** 2026-07-17 (internal canary gate)  
 **Branches:** `production-readiness/pilot-prep`  
-**Backend HEAD:** see `origin/production-readiness/pilot-prep` (includes DNS verification docs)  
-**Widget HEAD:** `9ee7b4d`  
 **PRs (do not merge without owner approval):**  
 - https://github.com/AMQUR/amqur-backend/pull/22  
 - https://github.com/AMQUR/amqur-widget/pull/13  
 
 **Verdict:** **READY FOR INTERNAL CANARY**
 
-Staging custom domains are **DNS + TLS + smoke green**. Limited dealership pilot on live rooftop sites remains blocked until verified `allowedOrigins`, contacts/CRM, and store/TV approval. Production is **not** deployed.
+Production DNS (`api` / `widget`) is **not** attached. Public Team Velocity install is **not** authorized.
 
 ---
 
-## Layer distinction
+## 1. Deployed SHA vs PR verification
 
-| Layer | Status |
-|-------|--------|
-| Local disposable | Exercised — `docs/evidence/LOCAL_VALIDATION_2026-07-16.md` |
-| CI | PR checks on #22 / #13 |
-| Railway staging **temp** domains | Green |
-| Railway staging **custom** domains | **Green** (dig match, cert VALID, HTTPS 200) |
-| Production Railway | Env exists — **not deployed / domains not attached** |
+| Artifact | PR head (GitHub) | Staging deploy evidence | Match notes |
+|----------|------------------|-------------------------|-------------|
+| Backend API | PR #22 head advances with branch pushes | Railway SUCCESS deploy `c14e0b79…` (2026-07-17T00:23Z) uses `sh -c` startCommand from `5566f2b` era | Docs-only commits after deploy until canary follow-up redeploy; **redeploy required** for bootstrap lockout + `/api/health/ready` |
+| Widget | PR #13 head `9ee7b4d` (+ canary e2e) | Railway SUCCESS `153b2c2f…` (2026-07-17T00:16Z) serves `assistant-widget.iife.js` 200 | Aligns with IIFE publish commit; push canary e2e after |
+
+Railway CLI deploys do not expose git SHA in `deployment list --json` meta — match by startCommand fingerprint + deploy time.
+
+### CI checks
+
+| PR | Check | Result |
+|----|-------|--------|
+| Backend #22 | `build-test` | **FAIL** prior to canary fix — prettier error in `src/worker.ts` (fixed locally; push re-runs CI) |
+| Widget #13 | `build` | **PASS** |
+
+Missing required suites in CI (still local/manual): full Playwright matrix, staging e2e, load/soak, empty-DB migrate job.
 
 ---
 
-## 1. DNS / TLS evidence (post-checkpoint)
-
-Verified 2026-07-17T00:28Z against `docs/deployment/dialusnow-dns-records.md`:
+## 2. Security / secrets / migrations
 
 | Check | Result |
 |-------|--------|
-| `staging-api` CNAME → `w3t2i0xt.up.railway.app` | PASS (dig + Railway PROPAGATED) |
-| `staging-widget` CNAME → `db5sfivo.up.railway.app` | PASS |
-| TXT `_railway-verify.staging-api` | PASS (exact token match; Railway verified=true) |
-| TXT `_railway-verify.staging-widget` | PASS (exact token match; Railway verified=true) |
-| Certificates | both `CERTIFICATE_STATUS_TYPE_VALID` |
-| `https://staging-api.dialusnow.com/api/health` | **200** `ready` (database up, redis up) |
-| `https://staging-widget.dialusnow.com/assistant-widget.iife.js` | **200**, ssl_verify=0, AmqurWidgetBundle, secret scan clean |
+| Tracked `.env` / PEM / live keys | No production secrets tracked (examples only) |
+| Widget IIFE secret scan | CLEAN (no JWT/DB/bootstrap/sk-ant) |
+| Migrations | Additive; 7 applied on staging; local `amqur_test` migrate status clean |
+| Destructive migration patterns | CI scan forbids DROP TABLE / migrate reset |
+| Bootstrap | `BOOTSTRAP_SECRET` SET on staging; code now **disables after any SUPER_ADMIN**; redeploy to activate |
 
 ---
 
-## 2. Staging smoke (custom domains)
+## 3. Five tenants (staging)
 
-| Check | Result |
+All return public `widget-config` 200 with inventory/payments **false**, handoff **true**:
+
+| tenantSlug | locationSlug | Origins | Token |
+|------------|--------------|---------|-------|
+| jeep-of-chicago | main | empty | 403 |
+| dial-nissan-of-chicago | main | empty | 403 |
+| dial-chevy-of-chicago | main | empty | 403 |
+| infiniti-of-chicago | main | empty | 403 |
+| dial-cdjr-of-chicago | main | empty | 403 |
+
+Owner origin table: `docs/canary/owner-website-origins.md` (do not invent domains).
+
+---
+
+## 4. Handoff / truthfulness
+
+- Escalation create persists durable row; `notified`/`queued` only when CRM accept or outbox enqueue.
+- Customer copy refuses “I notified the team” unless `notified`/`queued`.
+- Appointment reply updated to avoid false “logged + team will reach out” without delivery proof.
+- Unit gates: `auth.bootstrap`, `canary-gate`, truthfulness golden (+ expanded), failure-injection, isolation contracts — **32+ focused tests green**; expanded truthfulness suite green.
+
+AI live suite: **NOT RUN against staging LLM** — `ANTHROPIC_API_KEY` MISSING. Instructions: `docs/canary/staging-ai-provider.md`.
+
+---
+
+## 5. Staging browser + load evidence (this gate)
+
+| Suite | Result |
 |-------|--------|
-| `/api/health/live` | 200 live |
-| `/api/health` | 200 ready |
-| Migrate status (via Postgres public proxy) | **7 migrations, schema up to date** |
-| Five tenants `widget-config` | all **200**; inventory/payments **false**; chat **true** |
-| Widget-token without origins | **403** `Widget origins not configured` (fail-closed) |
-| Public cross-tenant body isolation | **PASS** (no other tenantSlug leaked in responses) |
-| Authenticated chat/isolation on staging | **NOT RUN** — needs SUPER_ADMIN session or widget-token after origins configured |
+| Playwright Dial Us Now canary (Chromium, Firefox, WebKit, Pixel7, iPhone14) | **60 passed** against custom staging domains (after throttle cooldown) |
+| Staging load `EXPECTED_PILOT` @ 40 rps | **FAIL** — Nest global throttle ~120/min correctly returns 429 (rate limit working; not capacity proof) |
+| Staging load `STAGING_CANARY` @ 1.5 rps / 60s | Health 90/90 ok; residual public 429s → errorRate 0.1 — **not** ≤1% acceptance; document throttle interaction |
+| Local disposable EXPECTED_PILOT (prior) | PASS — see `docs/evidence/LOCAL_VALIDATION_2026-07-16.md` |
+| Monitoring / ERROR_MONITORING_DSN | **UNSET** — alert delivery **not** verified |
 
-Tenants: `jeep-of-chicago`, `dial-nissan-of-chicago`, `dial-chevy-of-chicago`, `infiniti-of-chicago`, `dial-cdjr-of-chicago` (`main`).
+Evidence JSON: `backend/test/evidence/load-STAGING_CANARY-*.json`, Playwright traces on failure only.
 
 ---
 
-## 3. What still needs credentials / owner input
+## 6. Canary documentation
 
-| Item | Why |
-|------|-----|
-| Verified website origins per tenant | Widget-token currently 403 for all Origins |
-| SUPER_ADMIN / bootstrap path | Authenticated isolation + onboarding API |
-| `ANTHROPIC_API_KEY` | Live LLM on staging |
-| CRM webhook | Outbound handoff notify |
-| Escalation recipients / phone / address / hours | Dealership truth — must not invent |
-| Team Velocity CSP/GTM approval | Production site install |
-| Completed soak JSON | Local soak completion not confirmed on disk |
-| Production attach | Explicit second DNS checkpoint after pilot criteria |
+| Doc | Path |
+|-----|------|
+| Plan | `docs/canary/internal-canary-plan.md` |
+| Employee script | `docs/canary/employee-test-script.md` |
+| Results template | `docs/canary/results-template.md` |
+| Go/no-go | `docs/canary/go-no-go-checklist.md` |
+| Origins input | `docs/canary/owner-website-origins.md` |
+| AI vars | `docs/canary/staging-ai-provider.md` |
 
 ---
 
-## 4. Production stance (this session)
+## 7. Monitoring
+
+| Signal | Status |
+|--------|--------|
+| `/api/health` db+redis | Observed ready when not rate-limited |
+| ERROR_MONITORING_DSN / Sentry | MISSING — do not claim alerts |
+| Railway metrics | Available in Railway UI — not wired to paging |
+
+---
+
+## 8. Blockers (exact)
+
+1. Owner HTTPS origins for five rooftops (`docs/canary/owner-website-origins.md`)
+2. First SUPER_ADMIN bootstrap (then secret rotation / lockout) + redeploy of bootstrap lockout commit
+3. Backend CI green after prettier/bootstrap push
+4. `ANTHROPIC_API_KEY` for generative canary (optional if fallbacks accepted)
+5. Staging CRM webhook **or** explicit accept durable-local-only handoff
+6. `ERROR_MONITORING_DSN` + proven alert delivery
+7. Staging expected-pilot load acceptance under 120/min throttle (use local stack for capacity; or raise staging throttle for scheduled load window)
+8. Team Velocity / store approval before public snippets
+9. Production DNS — **do not attach** until limited-pilot gate
+
+---
+
+## 9. Production stance
 
 - **Not** attaching `api.dialusnow.com` / `widget.dialusnow.com`
-- **Not** deploying production services
-- Second DNS checkpoint remains documented as PENDING in `dialusnow-dns-records.md`
+- **Not** auto-merging PRs
+- Second DNS checkpoint remains PENDING in `docs/deployment/dialusnow-dns-records.md`
 
 ---
 
-## 5. Local evidence (unchanged baseline)
+## 10. Final verdict
 
-142 unit / 33 e2e platform / 35 Playwright / paced load SMOKE+EXPECTED_PILOT pass. Coverage ~24.5% global with gated critical modules. npm audit 14 Nest transitive. See prior evidence paths under `backend/test/evidence/`.
+# READY FOR INTERNAL CANARY
 
----
-
-## 6. Rollback
-
-Redeploy prior Railway deployment for api/widget/worker. Do not `migrate reset`. Keep production widget bundle untouched (not deployed).
-
----
-
-## 7. Verdict rationale
-
-| Candidate | Decision |
-|-----------|----------|
-| NOT READY | No — staging custom domains + fail-closed tenants work |
-| **READY FOR INTERNAL CANARY** | **Yes** — use staging custom domains for internal validation |
-| READY FOR LIMITED DEALERSHIP PILOT | **No yet** — no verified origins/CRM/store approval; authenticated staging isolation not executed |
-| READY FOR PUBLIC PRODUCTION | No |
-
-**Final:** **READY FOR INTERNAL CANARY**
+**Not** READY FOR LIMITED DEALERSHIP PILOT — origins, employee canary results, monitoring, and store/TV approval remain open.  
+**Not** READY FOR PUBLIC PRODUCTION.

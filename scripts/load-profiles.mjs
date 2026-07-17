@@ -16,22 +16,32 @@ const PROFILE = process.env.PROFILE || 'SMOKE';
 const ORIGIN = process.env.LOAD_ORIGIN || 'http://127.0.0.1:18084';
 const TENANT = process.env.LOAD_TENANT || 'pilot-alpha';
 const LOCATION = process.env.LOAD_LOCATION || 'main';
+/** When true, empty allowedOrigins → widget-token 403 is success (fail-closed canary). */
+const EXPECT_TOKEN_FORBIDDEN = process.env.EXPECT_TOKEN_FORBIDDEN === '1';
 
 /** durationSec, targetRps, workers */
 const PROFILES = {
   SMOKE: { durationSec: 20, rps: 15, workers: 5 },
   EXPECTED_PILOT: { durationSec: 45, rps: 40, workers: 10 },
+  /**
+   * Staging canary: global Nest throttle is ~120/min in production NODE_ENV.
+   * Stay well under that so 429s are not counted as platform faults.
+   */
+  STAGING_CANARY: { durationSec: 60, rps: 1.5, workers: 2 },
   BURST_2X: { durationSec: 30, rps: 80, workers: 20 },
   BURST_10X: { durationSec: 20, rps: 200, workers: 40 },
 };
 
 const cfg = PROFILES[PROFILE] || PROFILES.SMOKE;
 
-async function requestNamed(name, fn) {
+async function requestNamed(name, fn, acceptStatuses = null) {
   const t0 = Date.now();
   try {
     const res = await fn();
-    return { name, ok: res.ok, status: res.status, ms: Date.now() - t0 };
+    const ok = acceptStatuses
+      ? acceptStatuses.includes(res.status)
+      : res.ok;
+    return { name, ok, status: res.status, ms: Date.now() - t0 };
   } catch {
     return { name, ok: false, status: 0, ms: Date.now() - t0 };
   }
@@ -47,19 +57,22 @@ async function oneCycle() {
       ),
     ),
   );
-  const tok = await requestNamed('widget-token', () =>
-    fetch(`${BASE}/public/widget-token`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Origin: ORIGIN,
-      },
-      body: JSON.stringify({ tenantSlug: TENANT, locationSlug: LOCATION }),
-    }),
+  const tok = await requestNamed(
+    'widget-token',
+    () =>
+      fetch(`${BASE}/public/widget-token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: ORIGIN,
+        },
+        body: JSON.stringify({ tenantSlug: TENANT, locationSlug: LOCATION }),
+      }),
+    EXPECT_TOKEN_FORBIDDEN ? [200, 201, 403] : [200, 201],
   );
   out.push(tok);
   let token = null;
-  if (tok.ok) {
+  if (tok.ok && tok.status !== 403) {
     try {
       const res = await fetch(`${BASE}/public/widget-token`, {
         method: 'POST',
@@ -157,10 +170,12 @@ async function main() {
   const p99 = samples[Math.floor(samples.length * 0.99)] || 0;
   const errorRate = total ? fail / total : 1;
   // Acceptance: under paced pilot load, error rate ≤1% and p95 ≤2s
+  const gateProfiles = new Set(['SMOKE', 'EXPECTED_PILOT', 'STAGING_CANARY']);
   const passed = errorRate <= 0.01 && p95 <= 2000 && total > 0;
   const report = {
     profile: PROFILE,
     base: BASE,
+    expectTokenForbidden: EXPECT_TOKEN_FORBIDDEN,
     started,
     ended: new Date().toISOString(),
     durationSec: cfg.durationSec,
@@ -182,7 +197,9 @@ async function main() {
       note:
         PROFILE.startsWith('BURST')
           ? 'Burst profiles may intentionally exceed rate limits; pass criteria apply to SMOKE/EXPECTED_PILOT primarily.'
-          : 'Paced load under test throttle ceiling.',
+          : EXPECT_TOKEN_FORBIDDEN
+            ? 'Staging canary: widget-token 403 counted OK (fail-closed origins).'
+            : 'Paced load under test throttle ceiling.',
     },
   };
 
@@ -196,7 +213,7 @@ async function main() {
   );
   console.log(JSON.stringify(report, null, 2));
   console.log(`Wrote ${outFile}`);
-  if (!passed && (PROFILE === 'SMOKE' || PROFILE === 'EXPECTED_PILOT')) {
+  if (!passed && gateProfiles.has(PROFILE)) {
     process.exit(2);
   }
 }

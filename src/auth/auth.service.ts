@@ -187,8 +187,9 @@ export class AuthService {
   }
 
   /**
-   * One-time / ops bootstrap: create tenant + first SUPER_ADMIN.
-   * Protected by BOOTSTRAP_SECRET header, not JWT.
+   * One-time ops bootstrap: create platform SUPER_ADMIN (+ optional seed tenant).
+   * Protected by BOOTSTRAP_SECRET in the request body (not JWT).
+   * Becomes unavailable after any SUPER_ADMIN exists, or when BOOTSTRAP_SECRET is unset.
    */
   async bootstrap(input: {
     secret: string;
@@ -205,6 +206,15 @@ export class AuthService {
     }
     if (input.secret !== expected) {
       throw new ForbiddenException('Invalid bootstrap secret');
+    }
+
+    const existingSuperAdmin = await this.prisma.user.count({
+      where: { role: Role.SUPER_ADMIN },
+    });
+    if (existingSuperAdmin > 0) {
+      throw new ForbiddenException(
+        'Bootstrap is unavailable after platform initialization',
+      );
     }
 
     const existingTenant = await this.prisma.tenant.findUnique({

@@ -33,7 +33,9 @@ async function bootstrap() {
     res.end();
   });
   await new Promise<void>((resolve) => server.listen(port, resolve));
-  logger.log(`Worker started; liveness on :${port}; outbox poll ${intervalMs}ms`);
+  logger.log(
+    `Worker started; liveness on :${port}; outbox poll ${intervalMs}ms`,
+  );
 
   const tick = async () => {
     try {
