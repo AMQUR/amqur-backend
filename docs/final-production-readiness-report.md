@@ -1,266 +1,135 @@
-# AMQUR Final Production Readiness Report
+# AMQUR / Dial Us Now — Final Production Readiness Report
 
-**Date:** 2026-07-16  
-**Branches:** `production-readiness/pilot-prep` (backend + widget)  
-**Verdict:** **READY FOR LIMITED DEALERSHIP PILOT**
+**Date:** 2026-07-16 (America/Chicago) / 2026-07-17 UTC  
+**Branches:** `production-readiness/pilot-prep`  
+**Backend HEAD (pushed):** `5566f2b`  
+**Widget HEAD (pushed):** `9ee7b4d`  
+**PRs (do not merge without owner approval):**  
+- https://github.com/AMQUR/amqur-backend/pull/22  
+- https://github.com/AMQUR/amqur-widget/pull/13  
 
-Scope of that verdict: chat + lead capture + durable handoff recording, with inventory/payments/service/parts **fail-closed** until each rooftop’s verified dependency chain is enabled. Not ready for public unattended production or inventing Tekion/vAuto endpoints.
+**Verdict:** **READY FOR INTERNAL CANARY**
+
+Not `READY FOR LIMITED DEALERSHIP PILOT` until staging custom domains have owner-confirmed DNS + valid HTTPS, dealership origins/contacts are verified, and a staging smoke on those domains passes. Not `READY FOR PUBLIC PRODUCTION`.
+
+---
+
+## Layer distinction (do not conflate)
+
+| Layer | Status |
+|-------|--------|
+| Local disposable (`amqur-test`) | Exercised — see `docs/evidence/LOCAL_VALIDATION_2026-07-16.md` |
+| CI (GitHub Actions on PRs) | Triggered by push; treat PR checks as source of truth |
+| Railway staging (temp domains) | **API + worker + widget SUCCESS**; DB migrate up to date; five tenants onboarded fail-closed |
+| Staging custom domains | **Attached in Railway; DNS NOT confirmed** — MANUAL CHECKPOINT |
+| Production Railway env | Exists empty — **not deployed** |
+| Production custom domains | **Not attached** |
 
 ---
 
 ## 1. Executive summary
 
-Phase 1 audit found a solid NestJS multi-tenant chat core with critical gaps: no DealerGroup, hardcoded branding, optimistic feature flags, chat not enforcing capabilities, stalled outbox, and widget canary envelope bugs.
-
-This branch implements dealer-group tenancy (isolation-preserving), DB-driven public branding + cache invalidation, fail-closed capability gating in API and widget, outbox processor + worker entry, authenticated idempotent onboarding, provider contracts, ops/onboarding/integration docs, isolation/truthfulness tests, and CI branch coverage.
-
-**111** backend unit tests and **18** widget tests pass locally; typecheck/lint/build green. External systems (Railway secrets, authorized feeds, CRM webhook, Team Velocity CSP, Tekion docs) remain blockers for full inventory/CRM live mode.
+Dial Us Now staging infrastructure is live on Railway project `dial-us-now-platform` with isolated `staging` / `production` environments. Temporary domains smoke green (API ready with Postgres+Redis; widget serves `assistant-widget.iife.js`; worker healthy). Five rooftop tenants exist fail-closed (inventory/payments/service/parts off). Custom DNS at Squarespace is the next owner gate. Production must not proceed until staging custom domains validate.
 
 ---
 
-## 2. Architecture implemented
+## 2. Architecture (implemented)
 
-- Shared platform; **one Tenant per rooftop**; optional **DealerGroup** + **DealerGroupMembership** for aggregate reporting only
-- Authority order unchanged: verified inventory → KB → CRM/DMS/service/parts → policies → website → general AI (never overrides verified data)
-- Public widget-config returns branding/features only; secrets never exposed
-- CapabilityService fail-closed gates chat intents; FeatureFlags defaults fail-closed
-- Escalations: webhook success → `notified`; failure → outbox queue → truthful copy (no false “notified”)
-- Optional Redis config cache; readiness requires DB, not Redis
-- Railway Dockerfile path + migrate-on-start; worker process for outbox
+- Multi-tenant NestJS API; optional DealerGroup for reporting only
+- Fail-closed capabilities; truthful handoff (notified / queued / durable-only)
+- Widget public filename `assistant-widget.iife.js`; API `window.AMQUR.init` unchanged
+- Branding/origins via tenant config — not hardcoded Dial Us Now into core logic
+- Worker process with liveness HTTP for Railway healthchecks
 
 ---
 
-## 3. Files changed (summary)
+## 3. Railway staging (verified this session)
 
-### Backend
-- Prisma: `DealerGroup`, memberships, `Tenant.publicConfig/configVersion/dataRetentionDays/consentText`, `Location.publicConfig/escalationRecipients`
-- Modules: `onboarding`, `dealer-groups`, `capability`, `cache`, outbox processor, worker entry
-- Chat/escalations/feature-flags/public/health/env validation updates
-- Docs under `backend/docs/{deployment,operations,onboarding,integrations,vendor-handoff}`
-- Tests: branding, capability, isolation contracts, truthfulness golden, policy defaults
+| Item | Value |
+|------|-------|
+| Project | `dial-us-now-platform` / `3bca40b6-01c6-4f02-9464-8682e6ffcb75` |
+| Environment | `staging` / `e89573c2-55bd-409b-aa03-9c858feefe77` |
+| Services | api, worker, widget, Postgres, Redis |
+| Temp API | `https://api-staging-0be0.up.railway.app` — `/api/health` **ready** (db up, redis up) |
+| Temp widget | `https://widget-staging-55e0.up.railway.app/assistant-widget.iife.js` — **200** (~614KB, `AmqurWidgetBundle`) |
+| Migrate | `prisma migrate status` via public proxy — **7 migrations, schema up to date** |
+| Worker | Deploy **SUCCESS** (`2a48ac9b…`) |
 
-### Widget
-- Fail-closed feature UI; bootstrap keeps `proactive`/`locales`/consent/configVersion
-- Canary loader + redeem unwrap Nest `{ data }`
-- CDN stub warns if published; vendor test host page
-- Docs vendor-handoff copy
+### Five tenants (staging DB)
 
-### Workspace
-- `docs/production-readiness-audit.md`, `docs/final-production-readiness-report.md`, deployment/ops/onboarding/integration docs, `.env.production.example`
+| tenantSlug | locationSlug | widget-config | Features |
+|------------|--------------|---------------|----------|
+| jeep-of-chicago | main | 200 | chat/handoff/leadCapture on; inventory/payments off |
+| dial-nissan-of-chicago | main | 200 | same |
+| dial-chevy-of-chicago | main | 200 | same |
+| infiniti-of-chicago | main | 200 | same |
+| dial-cdjr-of-chicago | main | 200 | same |
 
----
-
-## 4. Database migrations created
-
-| Migration | Purpose |
-|-----------|---------|
-| `20260716200000_dealer_group_branding_config` | DealerGroup + memberships; tenant/location public config; retention/consent; escalation recipients |
-
-Non-destructive (additive). Rollback: drop new columns/tables after code rollback (expand/contract preferred).
+`allowedOrigins` empty until owner supplies verified websites — widget-token from arbitrary origins should remain reject/fail-closed until origins are set.
 
 ---
 
-## 5. Tests added
+## 4. Local test evidence (re-run baseline)
 
-- `public-branding.spec.ts`
-- `capability.service.spec.ts`
-- `tenant-isolation.e2e-style.spec.ts`
-- `truthfulness-golden.spec.ts`
-- Staging policy: fail-closed defaults assertion
-- Escalations unit tests updated for outbox dependency
+See `docs/evidence/LOCAL_VALIDATION_2026-07-16.md` and `backend/test/evidence/`.
 
----
-
-## 6. Exact test commands
-
-```bash
-# Backend
-cd /Users/saad/Downloads/amqur-platform/backend
-npm ci
-npx prisma generate
-npm run typecheck
-npm test
-npm run test:cov   # optional
-npm run build
-# optional with disposable Postgres:
-# npm run test:e2e
-
-# Widget
-cd /Users/saad/Downloads/amqur-platform/amqur-widget
-npm ci
-npm run lint
-npm test
-npm run build
-# optional staging Playwright when env set:
-# npm run test:staging
-
-# Local load smoke (API must be running locally — not production)
-# BASE_URL=http://127.0.0.1:3000/api DURATION_SEC=10 CONCURRENCY=10 node scripts/load-smoke.mjs
-```
-
----
-
-## 7. Test results and coverage
-
-| Suite | Result |
+| Check | Result |
 |-------|--------|
-| Backend `npm run typecheck` | PASS |
-| Backend `npm test` | **36 suites / 111 tests PASS** |
-| Backend `npm run build` | PASS |
-| Widget `npm run lint` | PASS |
-| Widget `npm test` | **4 files / 18 tests PASS** |
-| Widget `npm run build` | PASS (IIFE ~614KB) |
-| Backend e2e | Not run this session (requires disposable DB) |
-| Playwright staging | Not run (requires staging URLs) |
-| `test:cov` | Not collected this session — run `npm run test:cov` for HTML report |
+| Unit | **39 suites / 142 tests** PASS |
+| Coverage | thresholds PASS — ~**24.5%** global lines; critical modules gated |
+| E2E platform | **33 tests** PASS |
+| Widget unit | **18 tests** PASS |
+| Playwright matrix | **35 tests** PASS (Chromium/Firefox/WebKit + mobile) |
+| Load SMOKE / EXPECTED_PILOT | PASS 0% errors (paced) |
+| BURST | Expected rate-limit degradation |
+| Soak ≥30 min | Started multiple times; **JSON completion artifact not confirmed on disk this session** — do not claim staging soak green |
+| Secret scans | CLEAN |
+| npm audit (prod) | **14** transitive highs/moderates via Nest — no destructive `audit fix` |
 
 ---
 
-## 8. Load/soak results
+## 5. Security / audit notes
 
-Load script added: `backend/scripts/load-smoke.mjs`.  
-**Not executed against a live server in this session** (no local API process assumed). Run before pilot against staging only; never against production CRM/inventory vendors.
-
----
-
-## 9. Security findings
-
-| Severity | Finding | Status |
-|----------|---------|--------|
-| Critical | Chat ignored feature flags | **Fixed** (CapabilityService) |
-| Critical | No DealerGroup / group auth | **Fixed** (membership required) |
-| Critical | Canary eligibility envelope | **Fixed** (unwrap data) |
-| High | Optimistic feature defaults | **Fixed** (fail-closed) |
-| High | Hardcoded branding | **Fixed** (DB publicConfig) |
-| High | Outbox without processor | **Fixed** (cron + worker) |
-| Medium | Bootstrap body secret | Residual — clear `BOOTSTRAP_SECRET` after use |
-| Medium | Secret vault unused for live Tekion | Residual until partner enablement |
-| Medium | Circuit breaker underused | Residual — wire on live adapters |
-| Info | Local `.env.production` on disk | Untracked; rotate if shared machine |
+- Prior Critical/High code gaps (fail-closed flags, branding, outbox, isolation) addressed on this branch
+- Staging secrets generated and set in Railway (names only in `docs/deployment/staging-environment-values.md`)
+- Do not commit secret values; `DATABASE_PUBLIC_URL` used only for one-shot migrate status / onboard from laptop — prefer private URL in-app
+- Postgres/Redis remain private-network primary; public DB URL is for ops break-glass only
 
 ---
 
-## 10. Remaining external blockers
+## 6. Remaining blockers
 
-1. Authorized vAuto/inventory feed URLs per rooftop  
-2. CRM webhook or Tekion sandbox credentials + official docs  
-3. Railway project + Postgres/Redis + domains  
-4. Team Velocity / CMS CSP + embed approval  
-5. Production Anthropic key (optional polish)  
-6. Legal verification before any fifth Dial rooftop  
-7. Employee canary GTM publish access (historical blocker)
-
----
-
-## 11. Required Railway setup
-
-- Service `api` (Dockerfile, migrate + `node dist/main.js`)
-- Service `worker` (`node dist/worker.js`)
-- Postgres plugin → `DATABASE_URL`
-- Redis plugin → `REDIS_URL` (optional)
-- Env from `.env.production.example`
-- Public domain for API; private networking for DB/Redis
+1. **MANUAL DNS** — Squarespace records in `docs/deployment/dialusnow-dns-records.md` (owner)
+2. Verified dealership websites/phones/hours/CRM/escalation recipients (see `docs/onboarding/verification-matrix.md`)
+3. `ANTHROPIC_API_KEY` for staging LLM (owner)
+4. CRM webhook when authorized
+5. Team Velocity CSP/GTM approval per rooftop
+6. Tekion / vAuto — disabled; readiness docs only
+7. Production deploy — **blocked** until staging custom domains + validation green
+8. Completed local soak JSON evidence (re-run if required for pilot gate)
+9. Nest transitive npm audit findings (multer / path-to-regexp / qs)
 
 ---
 
-## 12. Required DNS records
+## 7. DNS checkpoint (staging)
 
-| Record | Target |
-|--------|--------|
-| `api.<domain>` | Railway API |
-| CDN hostname for widget IIFE | Object storage / CDN |
-| Dealership site origins | Already dealer-owned; must match `allowedOrigins` |
-
-Exact hostnames: confirm with ops (not invented here).
+Exact records: `docs/deployment/dialusnow-dns-records.md`.  
+**Paused for owner Squarespace action.** Do not run dig/cert verify until owner confirms.
 
 ---
 
-## 13. Required secrets
+## 8. Rollback
 
-`DATABASE_URL`, `JWT_SECRET` (≥32), `INTEGRATION_ENCRYPTION_KEY` (≥32 before storing vendor secrets), `CORS_ORIGINS`, optional `REDIS_URL`, `CRM_WEBHOOK_URL`, `ANTHROPIC_API_KEY`, canary secrets if employee mode, feed allowlist hosts. Never commit values.
-
----
-
-## 14. Required Team Velocity information
-
-- Production script-src / connect-src CSP allowlists  
-- Approved embed snippet placement (GTM vs theme)  
-- Confirmation Shadow DOM + delayed load acceptable  
-- Staging vs production asset URLs  
-- Contact for emergency kill-switch publish
+- Railway: redeploy previous successful deployment for `api` / `widget` / `worker`
+- Widget: keep versioned IIFE; do not overwrite production bundle from this branch
+- DB: additive migrations only; rollback = code rollback + expand/contract column drop if needed
+- Do **not** `prisma migrate reset` on staging/production
 
 ---
 
-## 15. Required Tekion information
+## 9. Final readiness verdict
 
-See `docs/integrations/tekion-readiness.md` — official API docs, sandbox credentials, dealer IDs, webhook signing, DPA, written approval before `liveReady=true`. **No endpoints invented.**
+**READY FOR INTERNAL CANARY**
 
----
-
-## 16. Required vAuto information
-
-See `docs/integrations/vauto-readiness.md` — authorized feed URL/format per rooftop, min records, freshness SLA, host allowlist. **No public API invented.**
-
----
-
-## 17. Per-dealership onboarding steps
-
-1. Collect verified store data (see `docs/onboarding/data-collection.md`)  
-2. `POST /api/onboarding/dealership` as SUPER_ADMIN **or** `npm run onboard:dealership -- --config ...`  
-3. Set `allowedOrigins` to production HTTPS origins only  
-4. Keep inventory/payments flags false until feed + fresh vehicles verified  
-5. Configure `CRM_WEBHOOK_URL` or accept truthful “not notified” handoff copy  
-6. Staff UAT on staging → limited pilot  
-7. Use `docs/onboarding/checklist.md`
-
-Example: `docs/onboarding/dial-auto-group.example.json`
-
----
-
-## 18. Deployment steps
-
-1. Merge green CI on `production-readiness/pilot-prep`  
-2. Deploy API (migrate) + worker on Railway  
-3. Publish versioned `amqur-widget.iife.js` to CDN (never `cdn/amqur-widget.js` stub)  
-4. Onboard rooftops; set origins  
-5. Smoke: widget-config → token → chat → handoff escalation visible to staff  
-6. Enable inventory only after successful import run
-
----
-
-## 19. Rollback steps
-
-1. Redeploy previous Railway deployment for api/worker  
-2. Feature-flag disable (`chat`/`inventory`/etc.) immediately if needed  
-3. Canary kill query `amqur_canary_kill=1`  
-4. Do not auto-revert additive migrations in panic; leave columns unused  
-5. Restore prior CDN object version for widget
-
----
-
-## 20. Final readiness verdict
-
-# READY FOR LIMITED DEALERSHIP PILOT
-
-**Not** READY FOR PUBLIC PRODUCTION.  
-Internal canary is also supported once employee canary secrets/origins are configured.
-
-### Gate evidence (abbreviated)
-
-| # | Gate | Evidence |
-|---|------|----------|
-| 1 | No fabricated dealership data | Truth engine + fail-closed capabilities + golden tests |
-| 2 | Multi-tenant isolation | Schema indexes + group membership checks + isolation tests |
-| 3 | DealerGroup without weakening isolation | Aggregate reporting only |
-| 4 | Data-driven branding | `publicConfig` + public.service |
-| 5 | Fail-closed features | PLATFORM_FEATURE_DEFAULTS + CapabilityService + widget `=== true` |
-| 6 | Truthful handoff | notified/queued/durable-only copy |
-| 7 | Outbox/DLQ | Processor + DEAD after 8 attempts |
-| 8 | Health/readiness | DB required; Redis optional |
-| 9 | Secrets not tracked | gitignore + CI scan |
-| 10 | Docs | audit, deployment, ops, onboarding, integrations |
-| 11–20 | CI, worker, provider contracts, vendor handoff, tests green | this branch |
-
----
-
-*Report mirrors the parent-agent deliverable checklist.*
+Allowed use: internal validation against Railway temporary staging domains and fail-closed tenants.  
+Not approved: dealership website installs on production hosts, production Railway deploy, or public unattended traffic.
