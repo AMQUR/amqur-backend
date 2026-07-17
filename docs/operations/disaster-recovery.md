@@ -82,10 +82,21 @@ Redis stores short-TTL config cache + rate-limit state only. Full loss
 degrades to direct DB reads (health reports `redis: down`, readiness stays
 up). No recovery steps beyond restoring the service.
 
+## Staging-dump drill (2026-07-16, second drill)
+
+Executed against a REAL staging dump (pg18 client → disposable tmpfs
+container, dropped immediately after):
+
+| Step | Result |
+|---|---|
+| `pg_dump` (postgres:18-alpine) of staging via `DATABASE_PUBLIC_URL` | exit 0, 66 KB |
+| restore into fresh `staging_drill` database | exit 0 |
+| errors | 1 benign: `unrecognized configuration parameter "transaction_timeout"` (pg18 dump preamble vs pg16 drill target; harmless on same-version restore, no data impact) |
+| tables / `Tenant` / `Location` / `_prisma_migrations` | 25/25 · 5/5 · 5/5 · 8/8 source = restored |
+
+Dump file and drill database were destroyed after verification.
+
 ## Open owner items
 
 - Verify Railway volume snapshot schedule/retention in the dashboard.
 - Decide cadence + storage location for encrypted logical dumps.
-- Repeat the restore drill against a real staging dump once a pg18-capable
-  client image is available locally (server is 18.x; local drill used the
-  identical tooling on a 16.x source).
