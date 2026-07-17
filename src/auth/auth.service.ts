@@ -204,9 +204,6 @@ export class AuthService {
     if (!expected || expected.length < 16) {
       throw new ForbiddenException('Bootstrap is disabled');
     }
-    if (input.secret !== expected) {
-      throw new ForbiddenException('Invalid bootstrap secret');
-    }
 
     const existingSuperAdmin = await this.prisma.user.count({
       where: { role: Role.SUPER_ADMIN },
@@ -215,6 +212,10 @@ export class AuthService {
       throw new ForbiddenException(
         'Bootstrap is unavailable after platform initialization',
       );
+    }
+
+    if (input.secret !== expected) {
+      throw new ForbiddenException('Invalid bootstrap secret');
     }
 
     const existingTenant = await this.prisma.tenant.findUnique({

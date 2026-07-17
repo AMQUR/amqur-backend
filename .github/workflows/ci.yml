@@ -71,7 +71,7 @@ jobs:
           set -euo pipefail
           # Filter paths before rg — --glob is ignored when file paths are passed via xargs.
           hits=$(git ls-files -z \
-            | grep -z -v -E '^(\.github/workflows/|docs/|\.ci-receipts/|\.env[^/]*\.example$)' \
+            | grep -z -v -E '^(\.github/workflows/|docs/|\.ci-receipts/|test-infra/|\.env[^/]*\.example$)' \
             | xargs -0 -r rg -l --ignore-case \
               -e 'BEGIN (RSA |OPENSSH )?PRIVATE KEY' \
               -e 'TEKION_CLIENT_SECRET=[^[:space:]$#]+' \
