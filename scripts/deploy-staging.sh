@@ -21,8 +21,22 @@ fi
 
 node scripts/stamp-release.mjs
 
+# Provenance travels as Railway service variables (railway up excludes
+# gitignored files like release.json from the build context; GET
+# /api/version prefers APP_* env vars).
+COMMIT_SHA="$(git rev-parse HEAD)"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RELEASE_ID="$(node -e 'console.log(require("crypto").randomUUID())')"
+VERSION="$(node -e 'console.log(require("./package.json").version)')"
+
 deploy_service() {
   local svc="$1"
+  railway variables --service "${svc}" --environment "${ENV_NAME}" \
+    --set "APP_COMMIT_SHA=${COMMIT_SHA}" \
+    --set "APP_BUILD_TIME=${BUILD_TIME}" \
+    --set "APP_RELEASE_ID=${RELEASE_ID}" \
+    --set "APP_RELEASE_VERSION=${VERSION}" \
+    --skip-deploys >/dev/null
   echo "==> railway up --service ${svc} --environment ${ENV_NAME}"
   railway up --service "${svc}" --environment "${ENV_NAME}" --ci
 }
