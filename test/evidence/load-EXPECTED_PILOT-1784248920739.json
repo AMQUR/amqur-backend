@@ -1,0 +1,43 @@
+{
+  "profile": "EXPECTED_PILOT",
+  "base": "https://staging-api.dialusnow.com/api",
+  "started": "2026-07-17T00:41:14.840Z",
+  "ended": "2026-07-17T00:42:00.739Z",
+  "durationSec": 45,
+  "targetRps": 40,
+  "workers": 10,
+  "total": 4644,
+  "ok": 587,
+  "fail": 4057,
+  "errorRate": 0.8736003445305771,
+  "avgMs": 66,
+  "p95Ms": 207,
+  "p99Ms": 392,
+  "achievedRps": 103,
+  "byName": {
+    "health": {
+      "ok": 303,
+      "fail": 1245,
+      "sumMs": 102464,
+      "n": 1548
+    },
+    "widget-config": {
+      "ok": 284,
+      "fail": 1264,
+      "sumMs": 104072,
+      "n": 1548
+    },
+    "widget-token": {
+      "ok": 0,
+      "fail": 1548,
+      "sumMs": 100386,
+      "n": 1548
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false,
+    "note": "Paced load under test throttle ceiling."
+  }
+}

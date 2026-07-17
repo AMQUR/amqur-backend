@@ -136,3 +136,29 @@ Evidence JSON: `backend/test/evidence/load-STAGING_CANARY-*.json`, Playwright tr
 
 **Not** READY FOR LIMITED DEALERSHIP PILOT — origins, employee canary results, monitoring, and store/TV approval remain open.  
 **Not** READY FOR PUBLIC PRODUCTION.
+
+---
+
+## 11. Session re-verification (2026-07-16, local sandbox)
+
+**Verified branch HEADs (local working tree):**
+
+| Repo | Branch | HEAD SHA |
+|------|--------|----------|
+| backend (`AMQUR/amqur-backend`) | `production-readiness/pilot-prep` | `8c82ec0adc944f883d27c6aac90e3dd67065d4c1` |
+| widget (`AMQUR/amqur-widget`) | `production-readiness/pilot-prep` | `08a217c1d7351569b87e990d507bf9b69c99e05c` |
+
+**Local CI evidence (offline-safe suites):**
+
+| Check | Repo | Result |
+|-------|------|--------|
+| `tsc --noEmit` typecheck | backend | **PASS** (exit 0) |
+| `eslint` | backend | **PASS** — 0 errors, 6 unused-var warnings |
+| `jest` unit | backend | **PASS — 157/157 tests, 41/41 suites** |
+| `eslint` | widget | **PASS** (exit 0) |
+
+**Not runnable in this sandbox (environment, not code):** backend `npm test` prints a trailing Prisma engine-mismatch teardown error and the widget `npm run build` fails with a rollup native-module error — both because `node_modules` was installed on macOS (`darwin-arm64`) and this build sandbox is `linux-arm64`. Migration/e2e-against-DB, Playwright, and load/soak suites therefore did not run here. Run these on the Mac (matching native binaries) or in Railway/CI.
+
+**Uncommitted working-tree changes (backend):** the five `docs/onboarding/tenants/*.staging.json` files add `allowedOrigins: ["https://staging-widget.dialusnow.com"]` (matches the applied staging state) and are not yet committed; plus two untracked `test/evidence/load-*.json` artifacts. No secrets in the diff.
+
+**Sandbox limitation (historical, superseded):** the sandbox session above was network-isolated with no `gh`, no `railway`, and no git push credentials. A follow-up session on the owner's Mac (2026-07-16, `darwin-arm64`) has authenticated `gh` (AMQUR) and `railway` CLIs available; deploy/secret-rotation/live-HTTP phases proceed there. Local Mac re-verification at `8c82ec0`: `tsc --noEmit` PASS.
