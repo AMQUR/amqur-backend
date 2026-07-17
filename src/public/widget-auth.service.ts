@@ -73,6 +73,10 @@ export class WidgetAuthService {
     const expiresIn =
       this.config.get<string>('WIDGET_TOKEN_EXPIRES_IN') ?? '4h';
 
+    // Widget tokens use a dedicated secret when configured so they can be
+    // rotated independently of staff/admin JWTs (falls back to JWT_SECRET).
+    const widgetSecret = this.config.get<string>('WIDGET_TOKEN_SECRET')?.trim();
+
     const token = this.jwt.sign(
       {
         sub: 'widget',
@@ -82,6 +86,7 @@ export class WidgetAuthService {
         typ: 'widget',
       },
       {
+        ...(widgetSecret ? { secret: widgetSecret } : {}),
         expiresIn: expiresIn as
           | `${number}m`
           | `${number}d`

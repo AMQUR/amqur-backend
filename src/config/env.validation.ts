@@ -44,6 +44,13 @@ export const envValidationSchema = Joi.object({
 
   WIDGET_TOKEN_EXPIRES_IN: Joi.string().optional().default('4h'),
 
+  /**
+   * Dedicated signing secret for public widget tokens; falls back to
+   * JWT_SECRET when unset. Rotating it invalidates outstanding widget
+   * tokens without touching staff/admin sessions.
+   */
+  WIDGET_TOKEN_SECRET: Joi.string().min(32).optional().allow(''),
+
   /** AES key material for IntegrationSecret encryption (32+ chars). Required to store live credentials. */
   INTEGRATION_ENCRYPTION_KEY: Joi.string().min(32).optional().allow(''),
 

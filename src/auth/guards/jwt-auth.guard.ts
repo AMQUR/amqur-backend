@@ -5,6 +5,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
 
@@ -12,6 +13,7 @@ import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator';
 export class JwtAuthGuard implements CanActivate {
   constructor(
     private readonly jwtService: JwtService,
+    private readonly config: ConfigService,
     private readonly reflector: Reflector,
   ) {}
 
@@ -41,7 +43,21 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      const payload = await this.jwtService.verifyAsync(token);
+      // Widget tokens may be signed with a dedicated rotatable secret.
+      // The unverified typ claim only selects which secret to check —
+      // the signature must still verify against that secret, so a forged
+      // typ cannot bypass verification.
+      const widgetSecret = this.config
+        .get<string>('WIDGET_TOKEN_SECRET')
+        ?.trim();
+      const decoded = this.jwtService.decode<{ typ?: string } | null>(token);
+      const useWidgetSecret = Boolean(
+        widgetSecret && decoded && decoded.typ === 'widget',
+      );
+
+      const payload = useWidgetSecret
+        ? await this.jwtService.verifyAsync(token, { secret: widgetSecret })
+        : await this.jwtService.verifyAsync(token);
       request.user = payload;
       return true;
     } catch {
