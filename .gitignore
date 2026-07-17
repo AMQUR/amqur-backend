@@ -22,3 +22,4 @@ coverage/
 test/evidence/*.log
 test/evidence/api.pid
 test/evidence/soak.pid
+release.json

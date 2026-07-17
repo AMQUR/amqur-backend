@@ -22,6 +22,8 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/package.json ./package.json
+# Optional deploy-time provenance stamp (glob keeps COPY happy when absent).
+COPY --from=build /app/release.jso[n] ./
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "if(process.env.PROCESS_ROLE==='worker'){process.exit(0)}fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
