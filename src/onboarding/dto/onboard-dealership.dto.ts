@@ -100,4 +100,10 @@ export class OnboardDealershipDto {
 
   /** When true, re-run updates existing tenant/location without duplicating. */
   @IsOptional() @IsBoolean() idempotent?: boolean;
+
+  /**
+   * When true, runs the full validated onboarding inside a transaction and
+   * rolls it back — returns what WOULD change without persisting anything.
+   */
+  @IsOptional() @IsBoolean() dryRun?: boolean;
 }
