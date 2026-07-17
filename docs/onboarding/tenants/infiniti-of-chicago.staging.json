@@ -1,0 +1,52 @@
+{
+  "dealerGroupName": "Dial Auto Group",
+  "dealerGroupSlug": "dial-auto-group",
+  "tenantName": "INFINITI of Chicago",
+  "tenantSlug": "infiniti-of-chicago",
+  "locationName": "Main",
+  "locationSlug": "main",
+  "timezone": "America/Chicago",
+  "allowedOrigins": [
+    "https://staging-widget.dialusnow.com"
+  ],
+  "phone": null,
+  "address": null,
+  "storeHours": null,
+  "branding": {
+    "assistantDisplayName": "INFINITI of Chicago Assistant",
+    "welcomeMessage": "How can I help you today?",
+    "disclaimerText": "Vehicle availability, pricing, incentives, and dealership information are provided only when verified.",
+    "note": "primaryColor/accentColor/logoUrl intentionally omitted until verified brand assets are provided.",
+    "escalationMessage": "I can save your request for dealership staff to review."
+  },
+  "featureFlags": {
+    "chat": true,
+    "inventory": false,
+    "payments": false,
+    "handoff": true,
+    "leadCapture": true,
+    "service": false,
+    "parts": false,
+    "appointments": false
+  },
+  "dataRetentionDays": 365,
+  "consentText": "Internal staging environment for authorized testing only. Do not enter real customer information.",
+  "escalationRecipients": [],
+  "inventoryFeedUrl": null,
+  "verificationRequired": [
+    "websiteDomains/allowedOrigins",
+    "address",
+    "phone",
+    "storeHours",
+    "logoUrl",
+    "brandColors",
+    "inventorySource",
+    "crmRouting",
+    "staffContacts/escalationRecipients",
+    "servicePricingSource",
+    "partsSource",
+    "appointmentAvailabilitySource",
+    "privacyPolicyUrl"
+  ],
+  "idempotent": true
+}

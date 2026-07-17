@@ -1,5 +1,8 @@
 /** Model-provider abstraction — primary/fallback without locking business logic to one vendor. */
-export type LlmMessage = { role: 'user' | 'assistant' | 'system'; content: string };
+export type LlmMessage = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+};
 
 export type LlmGenerateParams = {
   messages: LlmMessage[];

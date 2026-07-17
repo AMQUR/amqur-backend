@@ -1,0 +1,53 @@
+{
+  "profile": "EXPECTED_PILOT",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-16T23:23:33.709Z",
+  "ended": "2026-07-16T23:24:33.796Z",
+  "durationSec": 60,
+  "concurrency": 20,
+  "total": 1637049,
+  "ok": 10090,
+  "fail": 1626959,
+  "errorRate": 0.9938364703805445,
+  "avgMs": 0,
+  "p95Ms": 1,
+  "p99Ms": 3,
+  "rps": 27284,
+  "byName": {
+    "health": {
+      "ok": 5000,
+      "fail": 540663,
+      "sumMs": 392022,
+      "n": 545663
+    },
+    "widget-config": {
+      "ok": 5000,
+      "fail": 540663,
+      "sumMs": 399368,
+      "n": 545663
+    },
+    "widget-token": {
+      "ok": 30,
+      "fail": 545633,
+      "sumMs": 0,
+      "n": 545663
+    },
+    "chat": {
+      "ok": 30,
+      "fail": 0,
+      "sumMs": 785,
+      "n": 30
+    },
+    "handoff": {
+      "ok": 30,
+      "fail": 0,
+      "sumMs": 1650,
+      "n": 30
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false
+  }
+}

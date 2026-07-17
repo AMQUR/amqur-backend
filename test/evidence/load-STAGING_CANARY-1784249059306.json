@@ -1,0 +1,44 @@
+{
+  "profile": "STAGING_CANARY",
+  "base": "https://staging-api.dialusnow.com/api",
+  "expectTokenForbidden": true,
+  "started": "2026-07-17T00:43:34.076Z",
+  "ended": "2026-07-17T00:44:19.306Z",
+  "durationSec": 45,
+  "targetRps": 8,
+  "workers": 4,
+  "total": 1080,
+  "ok": 656,
+  "fail": 424,
+  "errorRate": 0.3925925925925926,
+  "avgMs": 47,
+  "p95Ms": 77,
+  "p99Ms": 148,
+  "achievedRps": 24,
+  "byName": {
+    "health": {
+      "ok": 214,
+      "fail": 146,
+      "sumMs": 17321,
+      "n": 360
+    },
+    "widget-config": {
+      "ok": 221,
+      "fail": 139,
+      "sumMs": 17307,
+      "n": 360
+    },
+    "widget-token": {
+      "ok": 221,
+      "fail": 139,
+      "sumMs": 16104,
+      "n": 360
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false,
+    "note": "Staging canary: widget-token 403 counted OK (fail-closed origins)."
+  }
+}

@@ -9,6 +9,8 @@ on:
       - 'audit/**'
       - 'feature/**'
       - 'ops/**'
+      - 'production-readiness/**'
+      - 'docs/**'
   workflow_dispatch:
 
 concurrency:
@@ -19,6 +21,46 @@ permissions:
   contents: read
 
 jobs:
+  migrations-empty-db:
+    # Proves the full migration chain applies cleanly to an empty database.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx prisma migrate deploy
+      - run: npx prisma migrate status
+      - run: npx prisma generate
+      - name: Verify core tenant-isolation tables exist
+        run: node scripts/verify-core-tables.mjs
+
+  docker-build:
+    # The deployable artifact must always build.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image
+        run: docker build -t amqur-backend-ci:${{ github.sha }} .
+
   build-test:
     runs-on: ubuntu-latest
     env:
@@ -49,7 +91,11 @@ jobs:
       - run: npx prisma generate
       - run: npx prisma validate
       - run: npx tsc --noEmit -p tsconfig.build.json
+      # Full-repo typecheck (includes specs and scripts/)
+      - run: npx tsc --noEmit
+      - run: npm run lint
       - run: npm test
+      - run: npm run test:cov
       - run: npm run build
 
       - name: Migration destructive scan
@@ -67,7 +113,7 @@ jobs:
           set -euo pipefail
           # Filter paths before rg — --glob is ignored when file paths are passed via xargs.
           hits=$(git ls-files -z \
-            | grep -z -v -E '^(\.github/workflows/|docs/|\.ci-receipts/|\.env[^/]*\.example$)' \
+            | grep -z -v -E '^(\.github/workflows/|docs/|\.ci-receipts/|test-infra/|\.env[^/]*\.example$)' \
             | xargs -0 -r rg -l --ignore-case \
               -e 'BEGIN (RSA |OPENSSH )?PRIVATE KEY' \
               -e 'TEKION_CLIENT_SECRET=[^[:space:]$#]+' \

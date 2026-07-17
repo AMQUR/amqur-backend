@@ -1,5 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  randomBytes,
+  createHash,
+} from 'crypto';
 import { ConfigService } from '@nestjs/config';
 
 /**
@@ -22,7 +27,11 @@ export class SecretVaultService {
     return this.key() !== null;
   }
 
-  encrypt(plaintext: string): { ciphertext: string; iv: string; authTag: string } {
+  encrypt(plaintext: string): {
+    ciphertext: string;
+    iv: string;
+    authTag: string;
+  } {
     const key = this.key();
     if (!key) {
       throw new Error(
@@ -43,14 +52,12 @@ export class SecretVaultService {
     };
   }
 
-  decrypt(parts: {
-    ciphertext: string;
-    iv: string;
-    authTag: string;
-  }): string {
+  decrypt(parts: { ciphertext: string; iv: string; authTag: string }): string {
     const key = this.key();
     if (!key) {
-      throw new Error('INTEGRATION_ENCRYPTION_KEY missing — cannot decrypt secrets');
+      throw new Error(
+        'INTEGRATION_ENCRYPTION_KEY missing — cannot decrypt secrets',
+      );
     }
     const decipher = createDecipheriv(
       'aes-256-gcm',

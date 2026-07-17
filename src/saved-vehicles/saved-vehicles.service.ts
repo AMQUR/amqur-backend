@@ -5,10 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class SavedVehiclesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(params: {
-    tenantId: string;
-    conversationExternalKey: string;
-  }) {
+  async list(params: { tenantId: string; conversationExternalKey: string }) {
     return this.prisma.savedVehicle.findMany({
       where: {
         tenantId: params.tenantId,
@@ -52,8 +49,7 @@ export class SavedVehiclesService {
         consentOutbound: params.consentOutbound === true,
       },
       update: {
-        consentOutbound:
-          params.consentOutbound === true ? true : undefined,
+        consentOutbound: params.consentOutbound === true ? true : undefined,
       },
     });
     return { ok: true as const, saved: row };

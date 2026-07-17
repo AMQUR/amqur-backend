@@ -16,15 +16,19 @@ describe('WidgetAuthService origin fail-closed', () => {
     checkEligibility: jest.fn(),
   };
 
-  function service(tenant: { id: string; allowedOrigins: string | null } | null) {
+  function service(
+    tenant: { id: string; allowedOrigins: string | null } | null,
+  ) {
     const prisma = {
       tenant: {
         findUnique: jest.fn().mockResolvedValue(tenant),
       },
       location: {
-        findFirst: jest.fn().mockResolvedValue(
-          tenant ? { id: 'loc1', slug: 'pilot-rooftop' } : null,
-        ),
+        findFirst: jest
+          .fn()
+          .mockResolvedValue(
+            tenant ? { id: 'loc1', slug: 'pilot-rooftop' } : null,
+          ),
       },
     };
     return new WidgetAuthService(
@@ -48,7 +52,11 @@ describe('WidgetAuthService origin fail-closed', () => {
   it('rejects when allowedOrigins is empty (fail closed)', async () => {
     const svc = service({ id: 't1', allowedOrigins: null });
     await expect(
-      svc.createWidgetToken('dial-auto-group-staging', 'pilot-rooftop', 'https://a.com'),
+      svc.createWidgetToken(
+        'dial-auto-group-staging',
+        'pilot-rooftop',
+        'https://a.com',
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
@@ -87,6 +95,48 @@ describe('WidgetAuthService origin fail-closed', () => {
       'https://widget-staging-staging.up.railway.app',
     );
     expect(result.token).toBe('tok');
+  });
+
+  it('signs with dedicated WIDGET_TOKEN_SECRET when configured', async () => {
+    config.get.mockImplementation(((key: string) => {
+      if (key === 'WIDGET_TOKEN_EXPIRES_IN') return '4h';
+      if (key === 'WIDGET_TOKEN_SECRET')
+        return 'rotated-widget-secret-0123456789abcdef';
+      if (key === 'CANARY_STRICT_ORIGINS') return '';
+      return undefined;
+    }) as never);
+    const svc = service({
+      id: 't1',
+      allowedOrigins: 'https://widget-staging-staging.up.railway.app',
+    });
+    await svc.createWidgetToken(
+      'dial-auto-group-staging',
+      'pilot-rooftop',
+      'https://widget-staging-staging.up.railway.app',
+    );
+    expect(jwt.sign).toHaveBeenCalledWith(
+      expect.objectContaining({ typ: 'widget' }),
+      expect.objectContaining({
+        secret: 'rotated-widget-secret-0123456789abcdef',
+      }),
+    );
+  });
+
+  it('omits secret override (falls back to JWT_SECRET) when unset', async () => {
+    const svc = service({
+      id: 't1',
+      allowedOrigins: 'https://widget-staging-staging.up.railway.app',
+    });
+    await svc.createWidgetToken(
+      'dial-auto-group-staging',
+      'pilot-rooftop',
+      'https://widget-staging-staging.up.railway.app',
+    );
+    const opts = (jwt.sign as jest.Mock).mock.calls.at(-1)?.[1] as Record<
+      string,
+      unknown
+    >;
+    expect(opts).not.toHaveProperty('secret');
   });
 
   it('rejects unknown tenant', async () => {

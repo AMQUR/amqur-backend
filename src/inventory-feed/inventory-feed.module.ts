@@ -4,11 +4,9 @@ import { InventoryFeedService } from './inventory-feed.service';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [
-    AuthModule,
-  ],
+  imports: [AuthModule],
   controllers: [InventoryFeedController],
   providers: [InventoryFeedService],
   exports: [InventoryFeedService],
 })
-export class InventoryFeedModule { }
+export class InventoryFeedModule {}

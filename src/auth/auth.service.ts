@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -61,7 +65,11 @@ export class AuthService {
       },
       {
         // Nest JWT typings expect ms.StringValue; env strings like "15m" are valid at runtime
-        expiresIn: expiresIn as `${number}m` | `${number}d` | `${number}h` | `${number}s`,
+        expiresIn: expiresIn as
+          | `${number}m`
+          | `${number}d`
+          | `${number}h`
+          | `${number}s`,
       },
     );
   }
@@ -74,9 +82,7 @@ export class AuthService {
     const raw = crypto.randomBytes(48).toString('hex');
     const tokenHash = this.hashToken(raw);
     const expiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '7d';
-    const days = expiresIn.endsWith('d')
-      ? parseInt(expiresIn, 10) || 7
-      : 7;
+    const days = expiresIn.endsWith('d') ? parseInt(expiresIn, 10) || 7 : 7;
     const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 
     await this.prisma.refreshToken.create({
@@ -144,7 +150,7 @@ export class AuthService {
 
     const role =
       actor.role === 'SUPER_ADMIN'
-        ? (dto.role as Role | undefined) ?? Role.STAFF
+        ? ((dto.role as Role | undefined) ?? Role.STAFF)
         : Role.STAFF;
 
     // Non-super-admins cannot create SUPER_ADMIN
@@ -181,8 +187,9 @@ export class AuthService {
   }
 
   /**
-   * One-time / ops bootstrap: create tenant + first SUPER_ADMIN.
-   * Protected by BOOTSTRAP_SECRET header, not JWT.
+   * One-time ops bootstrap: create platform SUPER_ADMIN (+ optional seed tenant).
+   * Protected by BOOTSTRAP_SECRET in the request body (not JWT).
+   * Becomes unavailable after any SUPER_ADMIN exists, or when BOOTSTRAP_SECRET is unset.
    */
   async bootstrap(input: {
     secret: string;
@@ -197,6 +204,16 @@ export class AuthService {
     if (!expected || expected.length < 16) {
       throw new ForbiddenException('Bootstrap is disabled');
     }
+
+    const existingSuperAdmin = await this.prisma.user.count({
+      where: { role: Role.SUPER_ADMIN },
+    });
+    if (existingSuperAdmin > 0) {
+      throw new ForbiddenException(
+        'Bootstrap is unavailable after platform initialization',
+      );
+    }
+
     if (input.secret !== expected) {
       throw new ForbiddenException('Invalid bootstrap secret');
     }
@@ -249,7 +266,7 @@ export class AuthService {
           tenant: { slug: dto.tenantSlug },
         },
       });
-      if (!user) {
+      if (!user || !user.isActive) {
         throw new UnauthorizedException('Invalid credentials');
       }
       const passwordValid = await bcrypt.compare(dto.password, user.password);
@@ -284,6 +301,9 @@ export class AuthService {
     }
 
     const user = matches[0];
+    if (!user.isActive) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
     const passwordValid = await bcrypt.compare(dto.password, user.password);
     if (!passwordValid) {
       throw new UnauthorizedException('Invalid credentials');
@@ -310,6 +330,10 @@ export class AuthService {
     });
 
     if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (!stored.user.isActive) {
       throw new UnauthorizedException('Invalid refresh token');
     }
 

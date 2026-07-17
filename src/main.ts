@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import './observability/instrument'; // error monitoring — must load first
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
@@ -11,6 +12,11 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log'],
   });
   const logger = new Logger('Bootstrap');
+
+  // Behind Railway's edge proxy: without this, req.ip is the (varying)
+  // edge hop, which breaks rate-limit buckets (every request looks like a
+  // new client) and audit logging. First X-Forwarded-For hop = real client.
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   app.setGlobalPrefix('api');
 

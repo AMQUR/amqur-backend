@@ -32,49 +32,44 @@ import { EscalationsModule } from '../escalations/escalations.module';
 import { LeadsModule } from '../leads/leads.module';
 
 @Module({
-    imports: [
-        AuthModule,
-        PaymentModule,
-        EscalationsModule,
-        LeadsModule,
-    ],
-    controllers: [ChatController],
-    providers: [
-        // orchestrator
-        ChatOrchestrator,
-        ChatService,
-        FollowupEngine,
+  imports: [AuthModule, PaymentModule, EscalationsModule, LeadsModule],
+  controllers: [ChatController],
+  providers: [
+    // orchestrator
+    ChatOrchestrator,
+    ChatService,
+    FollowupEngine,
 
-        // engines
-        InventoryEngine,
-        PaymentEngine,
-        PaymentExplainer,
-        MediaEngine,
-        IntelligentRouter,
-        IntelligentService,
-        ClaudeConversationService,
+    // engines
+    InventoryEngine,
+    PaymentEngine,
+    PaymentExplainer,
+    MediaEngine,
+    IntelligentRouter,
+    IntelligentService,
+    ClaudeConversationService,
 
-        // memory
-        ConversationStore,
+    // memory
+    ConversationStore,
 
-        // extractors
-        FilterExtractor,
-        LeadExtractor,
-        AppointmentExtractor,
-        VinExtractor,
-        CompareExtractor,
+    // extractors
+    FilterExtractor,
+    LeadExtractor,
+    AppointmentExtractor,
+    VinExtractor,
+    CompareExtractor,
 
-        // integrations
-        CrmWebhookService,
-        PhotoEnrichmentService,
+    // integrations
+    CrmWebhookService,
+    PhotoEnrichmentService,
 
-        // VIN decoding
-        VinDecoderService,
-        VinExplainerService,
+    // VIN decoding
+    VinDecoderService,
+    VinExplainerService,
 
-        // calendar (E6.7)
-        GoogleCalendarService,
-    ],
-    exports: [ChatOrchestrator, CrmWebhookService],
+    // calendar (E6.7)
+    GoogleCalendarService,
+  ],
+  exports: [ChatOrchestrator, CrmWebhookService],
 })
-export class ChatModule { }
+export class ChatModule {}

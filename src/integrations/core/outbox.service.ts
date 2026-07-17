@@ -65,7 +65,9 @@ export class OutboxService {
         status: dead ? OutboxStatus.DEAD : OutboxStatus.PENDING,
         attempts,
         lastError: error.slice(0, 500),
-        nextAttemptAt: new Date(Date.now() + Math.min(3600_000, 2 ** attempts * 1000)),
+        nextAttemptAt: new Date(
+          Date.now() + Math.min(3600_000, 2 ** attempts * 1000),
+        ),
       },
     });
   }

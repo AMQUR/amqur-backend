@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { SecretVaultService } from './core/secret-vault.service';
 import { CircuitBreakerService } from './core/circuit-breaker.service';
 import { OutboxService } from './core/outbox.service';
+import { OutboxProcessorService } from './core/outbox-processor.service';
 import { TekionProvider } from './tekion/tekion.provider';
 import { VAutoFeedProvider } from './vauto/vauto-feed.provider';
 import { InventoryIngestionService } from './vauto/inventory-ingestion.service';
@@ -18,6 +19,7 @@ import { InventoryModule } from '../inventory/inventory.module';
     SecretVaultService,
     CircuitBreakerService,
     OutboxService,
+    OutboxProcessorService,
     WebhookInboxService,
     TekionProvider,
     VAutoFeedProvider,
@@ -28,6 +30,7 @@ import { InventoryModule } from '../inventory/inventory.module';
     SecretVaultService,
     CircuitBreakerService,
     OutboxService,
+    OutboxProcessorService,
     WebhookInboxService,
     TekionProvider,
     VAutoFeedProvider,

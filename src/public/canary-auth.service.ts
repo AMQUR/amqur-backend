@@ -155,17 +155,20 @@ export class CanaryAuthService {
   async redeemInvite(
     inviteToken: string,
     requestOrigin?: string | null,
-  ): Promise<{ cookieValue: string; maxAgeSec: number; claims: CanarySessionClaims }> {
+  ): Promise<{
+    cookieValue: string;
+    maxAgeSec: number;
+    claims: CanarySessionClaims;
+  }> {
     if (!this.isMasterEnabled()) {
       throw new ForbiddenException('Employee canary is disabled');
     }
 
     let payload: Record<string, unknown>;
     try {
-      payload = this.jwt.verify(inviteToken, { secret: this.secret() }) as Record<
-        string,
-        unknown
-      >;
+      payload = this.jwt.verify(inviteToken, {
+        secret: this.secret(),
+      }) as Record<string, unknown>;
     } catch {
       throw new UnauthorizedException('Invalid or expired invite');
     }
@@ -266,7 +269,9 @@ export class CanaryAuthService {
 
     let claims: CanarySessionClaims;
     try {
-      claims = this.jwt.verify(raw, { secret: this.secret() }) as CanarySessionClaims;
+      claims = this.jwt.verify(raw, {
+        secret: this.secret(),
+      }) as CanarySessionClaims;
     } catch {
       return { eligible: false, reason: 'invalid_or_expired' };
     }
@@ -313,7 +318,9 @@ export class CanaryAuthService {
   }
 
   async revokeInvite(jti: string, actorUserId?: string) {
-    const invite = await this.prisma.canaryInvite.findUnique({ where: { jti } });
+    const invite = await this.prisma.canaryInvite.findUnique({
+      where: { jti },
+    });
     if (!invite) throw new UnauthorizedException('Invite not found');
     await this.prisma.canaryInvite.update({
       where: { id: invite.id },

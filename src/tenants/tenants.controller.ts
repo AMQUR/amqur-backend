@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Body,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Post, Body, Query, UseGuards } from '@nestjs/common';
 import { TenantsService } from './tenants.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -31,10 +24,7 @@ export class TenantsController {
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Get()
-  findAll(
-    @CurrentUser() user: AuthUser,
-    @Query('tenantId') tenantId?: string,
-  ) {
+  findAll(@CurrentUser() user: AuthUser, @Query('tenantId') tenantId?: string) {
     assertStaffRole(user);
     if (user.role === 'SUPER_ADMIN' && !tenantId) {
       return this.tenantsService.findAll();

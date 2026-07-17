@@ -15,7 +15,10 @@ export function assertFeedUrlAllowed(rawUrl: string): URL {
   }
 
   const allowHttp = process.env.NODE_ENV !== 'production';
-  if (parsed.protocol !== 'https:' && !(allowHttp && parsed.protocol === 'http:')) {
+  if (
+    parsed.protocol !== 'https:' &&
+    !(allowHttp && parsed.protocol === 'http:')
+  ) {
     throw new BadRequestException('Feed URL must use HTTPS');
   }
 
@@ -42,7 +45,9 @@ export function assertFeedUrlAllowed(rawUrl: string): URL {
       host.startsWith('fd') ||
       host.startsWith('fe80')
     ) {
-      throw new BadRequestException('Feed URL must not target private networks');
+      throw new BadRequestException(
+        'Feed URL must not target private networks',
+      );
     }
   }
 

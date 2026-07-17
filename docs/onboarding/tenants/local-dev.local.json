@@ -1,0 +1,37 @@
+{
+  "tenantName": "Local Dev Motors",
+  "tenantSlug": "local-dev-motors",
+  "locationName": "Main",
+  "locationSlug": "main",
+  "timezone": "America/Chicago",
+  "allowedOrigins": [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080"
+  ],
+  "phone": null,
+  "address": null,
+  "storeHours": null,
+  "branding": {
+    "assistantDisplayName": "Local Dev Assistant",
+    "welcomeMessage": "Local development environment. How can I help?",
+    "disclaimerText": "Vehicle availability, pricing, incentives, and dealership information are provided only when verified.",
+    "escalationMessage": "I can save your request for dealership staff to review."
+  },
+  "featureFlags": {
+    "chat": true,
+    "inventory": false,
+    "payments": false,
+    "handoff": true,
+    "leadCapture": true,
+    "service": false,
+    "parts": false,
+    "appointments": false
+  },
+  "dataRetentionDays": 30,
+  "consentText": "Local development environment for engineering testing only. Do not enter real customer information.",
+  "escalationRecipients": [],
+  "inventoryFeedUrl": null,
+  "idempotent": true
+}

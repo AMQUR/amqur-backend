@@ -44,6 +44,16 @@ export const envValidationSchema = Joi.object({
 
   WIDGET_TOKEN_EXPIRES_IN: Joi.string().optional().default('4h'),
 
+  /**
+   * Dedicated signing secret for public widget tokens; falls back to
+   * JWT_SECRET when unset. Rotating it invalidates outstanding widget
+   * tokens without touching staff/admin sessions.
+   */
+  WIDGET_TOKEN_SECRET: Joi.string().min(32).optional().allow(''),
+
+  /** Error-monitoring DSN (Sentry-compatible). Empty = monitoring disabled. */
+  ERROR_MONITORING_DSN: Joi.string().uri().optional().allow(''),
+
   /** AES key material for IntegrationSecret encryption (32+ chars). Required to store live credentials. */
   INTEGRATION_ENCRYPTION_KEY: Joi.string().min(32).optional().allow(''),
 
@@ -74,4 +84,23 @@ export const envValidationSchema = Joi.object({
    * when CANARY_EMPLOYEE_ENABLED=true. Exact match only; empty = none (staging widget host stays usable).
    */
   CANARY_STRICT_ORIGINS: Joi.string().optional().allow('').default(''),
+
+  /** Optional Redis for widget-config cache / multi-instance coordination */
+  REDIS_URL: Joi.string().optional().allow(''),
+
+  /** Outbox processor (default on). Set false on pure API replicas if a worker handles it. */
+  OUTBOX_PROCESSOR_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('true'),
+
+  /** Process role: api | worker | all */
+  PROCESS_ROLE: Joi.string()
+    .valid('api', 'worker', 'all')
+    .optional()
+    .default('all'),
+
+  /** Public HTTPS URLs for this deployment (tenant/env config — not hardcoded branding). */
+  PUBLIC_API_URL: Joi.string().uri().optional().allow(''),
+  PUBLIC_WIDGET_URL: Joi.string().uri().optional().allow(''),
 });

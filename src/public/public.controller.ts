@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Query,
-  Post,
-  Body,
-  Headers,
-} from '@nestjs/common';
+import { Controller, Get, Query, Post, Body, Headers } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { PublicService } from './public.service';
 import { WidgetAuthService } from './widget-auth.service';
@@ -29,7 +22,13 @@ export class PublicController {
   }
 
   @Public()
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Throttle({
+    default: {
+      // Production: 30/min. Test/load lab: raised for paced profiles.
+      limit: process.env.NODE_ENV === 'test' ? 5_000 : 30,
+      ttl: 60_000,
+    },
+  })
   @Post('widget-token')
   async createWidgetToken(
     @Body() dto: WidgetTokenDto,

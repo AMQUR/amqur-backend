@@ -9,4 +9,4 @@ import { AuthModule } from '../auth/auth.module';
   controllers: [TenantsController],
   providers: [TenantsService],
 })
-export class TenantsModule { }
+export class TenantsModule {}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>AMQUR local test host</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <h1>AMQUR local widget host</h1>
+    <p>Disposable test page — not a dealership site.</p>
+    <script src="/dist/assistant-widget.iife.js" defer></script>
+    <script>
+      window.addEventListener('DOMContentLoaded', function () {
+        var api = window.__AMQUR_API__ || 'http://127.0.0.1:3001';
+        var tenant = window.__AMQUR_TENANT__ || 'pilot-alpha';
+        var location = window.__AMQUR_LOCATION__ || 'main';
+        if (window.AMQUR && window.AMQUR.init) {
+          window.AMQUR.init({
+            apiBaseUrl: api,
+            tenantSlug: tenant,
+            locationSlug: location,
+          });
+        }
+      });
+    </script>
+  </body>
+</html>

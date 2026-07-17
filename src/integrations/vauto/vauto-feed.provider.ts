@@ -59,7 +59,10 @@ export class VAutoFeedProvider implements InventoryFeedProvider {
     opts: { minRecords: number; previousCount?: number | null },
   ): Promise<InventoryFeedValidationResult> {
     const anomalies: string[] = [];
-    const records = this.feed.parseFeed(snapshot.format, snapshot.raw.toString());
+    const records = this.feed.parseFeed(
+      snapshot.format,
+      snapshot.raw.toString(),
+    );
     const vehicles = records
       .map((r) => VehicleNormalizer.normalize(r))
       .filter((v): v is NonNullable<typeof v> => v !== null)
@@ -87,8 +90,7 @@ export class VAutoFeedProvider implements InventoryFeedProvider {
 
     // Price anomaly: negative or absurdly high
     const badPrices = vehicles.filter(
-      (v) =>
-        v.price != null && (v.price < 0 || v.price > 2_000_000),
+      (v) => v.price != null && (v.price < 0 || v.price > 2_000_000),
     );
     if (badPrices.length > 0) {
       anomalies.push(`price_anomaly_count:${badPrices.length}`);

@@ -1,0 +1,56 @@
+{
+  "profile": "BURST_2X",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-16T23:29:33.077Z",
+  "ended": "2026-07-16T23:30:03.182Z",
+  "durationSec": 30,
+  "targetRps": 80,
+  "workers": 20,
+  "total": 8660,
+  "ok": 6750,
+  "fail": 1910,
+  "errorRate": 0.22055427251732102,
+  "avgMs": 7,
+  "p95Ms": 30,
+  "p99Ms": 34,
+  "achievedRps": 289,
+  "byName": {
+    "health": {
+      "ok": 2500,
+      "fail": 0,
+      "sumMs": 5900,
+      "n": 2500
+    },
+    "widget-config": {
+      "ok": 2500,
+      "fail": 0,
+      "sumMs": 18460,
+      "n": 2500
+    },
+    "widget-token": {
+      "ok": 590,
+      "fail": 1910,
+      "sumMs": 6652,
+      "n": 2500
+    },
+    "chat": {
+      "ok": 580,
+      "fail": 0,
+      "sumMs": 9308,
+      "n": 580
+    },
+    "handoff": {
+      "ok": 580,
+      "fail": 0,
+      "sumMs": 18576,
+      "n": 580
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false,
+    "note": "Burst profiles may intentionally exceed rate limits; pass criteria apply to SMOKE/EXPECTED_PILOT primarily."
+  }
+}
+Wrote /Users/saad/Downloads/amqur-platform/backend/test/evidence/load-BURST_2X-1784244603183.json

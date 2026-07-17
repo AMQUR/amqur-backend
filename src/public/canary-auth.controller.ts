@@ -67,7 +67,10 @@ export class CanaryAuthController {
     const result = await this.canaryAuth.redeemInvite(dto.inviteToken, origin);
     res.setHeader(
       'Set-Cookie',
-      this.canaryAuth.buildSetCookieHeader(result.cookieValue, result.maxAgeSec),
+      this.canaryAuth.buildSetCookieHeader(
+        result.cookieValue,
+        result.maxAgeSec,
+      ),
     );
     return {
       ok: true,

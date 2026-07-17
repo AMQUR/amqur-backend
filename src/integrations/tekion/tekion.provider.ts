@@ -36,10 +36,14 @@ export class TekionProvider implements CrmProvider, DmsProvider {
     if (!this.isLiveConfigured()) {
       return {
         ok: true,
-        detail: 'mock_mode — live Tekion disabled until credentials + contract verified',
+        detail:
+          'mock_mode — live Tekion disabled until credentials + contract verified',
       };
     }
-    return { ok: false, detail: 'live client not implemented without official specs' };
+    return {
+      ok: false,
+      detail: 'live client not implemented without official specs',
+    };
   }
 
   async findCustomer(params: {

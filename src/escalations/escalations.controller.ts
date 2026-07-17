@@ -50,7 +50,7 @@ export class EscalationsController {
     const loc =
       user.role === 'SUPER_ADMIN' || user.role === 'ADMIN'
         ? locationId
-        : user.locationId ?? locationId;
+        : (user.locationId ?? locationId);
     return this.escalationsService.list(scoped, loc ?? undefined);
   }
 
@@ -67,7 +67,10 @@ export class EscalationsController {
       tenantId: scoped,
       escalationId: id,
       actorUserId: user.sub,
-      locationId: user.role === 'SUPER_ADMIN' || user.role === 'ADMIN' ? null : user.locationId,
+      locationId:
+        user.role === 'SUPER_ADMIN' || user.role === 'ADMIN'
+          ? null
+          : user.locationId,
     });
   }
 
@@ -84,7 +87,10 @@ export class EscalationsController {
       tenantId: scoped,
       escalationId: id,
       actorUserId: user.sub,
-      locationId: user.role === 'SUPER_ADMIN' || user.role === 'ADMIN' ? null : user.locationId,
+      locationId:
+        user.role === 'SUPER_ADMIN' || user.role === 'ADMIN'
+          ? null
+          : user.locationId,
     });
   }
 
@@ -103,7 +109,10 @@ export class EscalationsController {
       escalationId: id,
       actorUserId: user.sub,
       note: body.note,
-      locationId: user.role === 'SUPER_ADMIN' || user.role === 'ADMIN' ? null : user.locationId,
+      locationId:
+        user.role === 'SUPER_ADMIN' || user.role === 'ADMIN'
+          ? null
+          : user.locationId,
     });
   }
 
@@ -122,7 +131,10 @@ export class EscalationsController {
       escalationId: id,
       actorUserId: user.sub,
       note: body.note,
-      locationId: user.role === 'SUPER_ADMIN' || user.role === 'ADMIN' ? null : user.locationId,
+      locationId:
+        user.role === 'SUPER_ADMIN' || user.role === 'ADMIN'
+          ? null
+          : user.locationId,
     });
   }
 }

@@ -1,0 +1,41 @@
+{
+  "profile": "BURST_2X",
+  "base": "http://127.0.0.1:3001/api",
+  "started": "2026-07-16T23:22:01.831Z",
+  "ended": "2026-07-16T23:22:31.884Z",
+  "durationSec": 30,
+  "concurrency": 40,
+  "total": 872301,
+  "ok": 0,
+  "fail": 872301,
+  "errorRate": 1,
+  "avgMs": 1,
+  "p95Ms": 2,
+  "p99Ms": 5,
+  "rps": 29077,
+  "byName": {
+    "health": {
+      "ok": 0,
+      "fail": 290767,
+      "sumMs": 397710,
+      "n": 290767
+    },
+    "widget-config": {
+      "ok": 0,
+      "fail": 290767,
+      "sumMs": 397871,
+      "n": 290767
+    },
+    "widget-token": {
+      "ok": 0,
+      "fail": 290767,
+      "sumMs": 0,
+      "n": 290767
+    }
+  },
+  "acceptance": {
+    "errorRateMax": 0.01,
+    "p95MaxMs": 2000,
+    "passed": false
+  }
+}

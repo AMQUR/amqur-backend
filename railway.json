@@ -1,11 +1,13 @@
 {
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS",
-    "buildCommand": "NODE_OPTIONS=--max-old-space-size=2048 npm run build"
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "node dist/main.js",
+    "startCommand": "sh -c 'if [ \"$PROCESS_ROLE\" = \"worker\" ]; then exec node dist/worker.js; else npx prisma migrate deploy && exec node dist/main.js; fi'",
+    "healthcheckPath": "/api/health/live",
+    "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
