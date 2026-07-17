@@ -15,14 +15,17 @@
 set -euo pipefail
 
 API="${API:-https://staging-api.dialusnow.com/api}"
+RAILWAY_ENV="${RAILWAY_ENV:-staging}"
+RAILWAY_SERVICE="${RAILWAY_SERVICE:-api}"
 TENANT_NAME="AMQUR Platform Operations"
 TENANT_SLUG="amqur-platform-ops"
 
 command -v railway >/dev/null || { echo "railway CLI required" >&2; exit 1; }
 command -v node >/dev/null || { echo "node required" >&2; exit 1; }
 
-echo "== AMQUR staging SUPER_ADMIN bootstrap =="
+echo "== AMQUR SUPER_ADMIN bootstrap =="
 echo "API: ${API}"
+echo "Railway: environment=${RAILWAY_ENV} service=${RAILWAY_SERVICE}"
 echo "Ops tenant: ${TENANT_NAME} (${TENANT_SLUG})"
 echo
 
@@ -34,8 +37,8 @@ read -r -s -p "Confirm password: " ADMIN_PASSWORD2; echo
 [ "${ADMIN_PASSWORD}" = "${ADMIN_PASSWORD2}" ] || { echo "Passwords do not match" >&2; exit 1; }
 [ "${#ADMIN_PASSWORD}" -ge 8 ] || { echo "Password too short" >&2; exit 1; }
 
-BOOTSTRAP_SECRET="$(railway variables --service api --environment staging --kv 2>/dev/null | grep '^BOOTSTRAP_SECRET=' | cut -d= -f2-)"
-[ -n "${BOOTSTRAP_SECRET}" ] || { echo "BOOTSTRAP_SECRET not set on staging api — bootstrap disabled" >&2; exit 1; }
+BOOTSTRAP_SECRET="$(railway variables --service "${RAILWAY_SERVICE}" --environment "${RAILWAY_ENV}" --kv 2>/dev/null | grep '^BOOTSTRAP_SECRET=' | cut -d= -f2-)"
+[ -n "${BOOTSTRAP_SECRET}" ] || { echo "BOOTSTRAP_SECRET not set on ${RAILWAY_ENV}/${RAILWAY_SERVICE} — bootstrap disabled" >&2; exit 1; }
 
 # Build the JSON body in node (proper escaping), pass sensitive values via env,
 # send via stdin so nothing sensitive appears in argv.
@@ -97,11 +100,15 @@ unset BOOTSTRAP_SECRET
 [ "${SECOND}" = "403" ] || { echo "Expected 403 on second bootstrap, got ${SECOND}" >&2; exit 1; }
 echo "Second bootstrap correctly rejected (403)"
 
-echo "==> removing BOOTSTRAP_SECRET from Railway staging and redeploying api"
-railway variables --service api --environment staging --set "BOOTSTRAP_SECRET=" >/dev/null
-railway redeploy --service api --environment staging --yes >/dev/null 2>&1 || \
-  echo "NOTE: automatic redeploy failed — redeploy the api service manually so the removal takes effect."
+echo "==> removing BOOTSTRAP_SECRET from Railway ${RAILWAY_ENV}/${RAILWAY_SERVICE} (+ worker twin if present) and redeploying"
+railway variables --service "${RAILWAY_SERVICE}" --environment "${RAILWAY_ENV}" --set "BOOTSTRAP_SECRET=" >/dev/null
+# Clear twin worker secret when production naming is used
+if [ "${RAILWAY_SERVICE}" = "prod-api" ]; then
+  railway variables --service prod-worker --environment "${RAILWAY_ENV}" --set "BOOTSTRAP_SECRET=" >/dev/null 2>&1 || true
+fi
+railway redeploy --service "${RAILWAY_SERVICE}" --environment "${RAILWAY_ENV}" --yes >/dev/null 2>&1 || \
+  echo "NOTE: automatic redeploy failed — redeploy ${RAILWAY_SERVICE} manually so the removal takes effect."
 
 echo
 echo "Done. Record (safe evidence): bootstrap 201, login ${LOGIN_HTTP}, refresh ${REFRESH_HTTP}, re-bootstrap 403, BOOTSTRAP_SECRET cleared."
-echo "After the api redeploys, verify: curl -s -o /dev/null -w '%{http_code}' -X POST ${API}/auth/bootstrap -H 'Content-Type: application/json' -d '{\"secret\":\"0000000000000000\",\"tenantName\":\"x y\",\"tenantSlug\":\"x-y\",\"email\":\"a@b.co\",\"password\":\"xxxxxxxx\",\"firstName\":\"a\",\"lastName\":\"b\"}'  # expect 403"
+echo "After redeploy, verify bootstrap stays 403 with a dummy secret."
