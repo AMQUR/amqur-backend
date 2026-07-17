@@ -1,0 +1,119 @@
+name: Deploy
+
+# Feature branch → CI (ci.yml) → approved merge to main → automatic staging
+# deploy (migrations run on container start) → staging smoke tests →
+# manual production approval (GitHub environment "production") → production
+# deploy → production smoke tests. Rollback: Railway "redeploy previous
+# deployment" (see docs/operations/runbook.md).
+#
+# OWNER SETUP REQUIRED (workflow is inert until then):
+#   - repo secret RAILWAY_TOKEN (Railway project token)
+#   - GitHub environment "production" with required reviewers
+#   - variables STAGING_API_URL / PRODUCTION_API_URL if they change
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Guard — token present
+        run: |
+          if [ -z "${{ secrets.RAILWAY_TOKEN }}" ]; then
+            echo "RAILWAY_TOKEN secret not configured — owner setup required" >&2
+            exit 1
+          fi
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      - name: Publish provenance variables + deploy api and worker
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          COMMIT_SHA="${{ github.sha }}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          RELEASE_ID="${{ github.run_id }}-${{ github.run_attempt }}"
+          VERSION="$(node -e 'console.log(require("./package.json").version)')"
+          for svc in api worker; do
+            railway variables --service "$svc" --environment staging \
+              --set "APP_COMMIT_SHA=${COMMIT_SHA}" \
+              --set "APP_BUILD_TIME=${BUILD_TIME}" \
+              --set "APP_RELEASE_ID=${RELEASE_ID}" \
+              --set "APP_RELEASE_VERSION=${VERSION}" \
+              --skip-deploys
+            railway up --service "$svc" --environment staging --ci
+          done
+      - name: Staging smoke — release identity + health + five-tenant contract
+        run: |
+          set -euo pipefail
+          scripts/verify-release.sh "https://staging-api.dialusnow.com" "${{ github.sha }}"
+          curl -sf https://staging-api.dialusnow.com/api/health | grep -q '"database":"up"'
+          for t in jeep-of-chicago dial-nissan-of-chicago dial-chevy-of-chicago infiniti-of-chicago dial-cdjr-of-chicago; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://staging-api.dialusnow.com/api/public/widget-config?tenantSlug=$t&locationSlug=main")
+            [ "$code" = "200" ] || { echo "widget-config $t returned $code" >&2; exit 1; }
+          done
+          # Fail-closed origin check
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST https://staging-api.dialusnow.com/api/public/widget-token \
+            -H 'Origin: https://unauthorized.example' -H 'Content-Type: application/json' \
+            -d '{"tenantSlug":"jeep-of-chicago","locationSlug":"main"}')
+          [ "$code" = "403" ] || { echo "expected 403 for unauthorized origin, got $code" >&2; exit 1; }
+          echo "staging smoke passed"
+
+  deploy-production:
+    # Requires the GitHub "production" environment with required reviewers —
+    # the job pauses for manual approval. Inert until the owner creates it.
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Guard — production environment must exist and be approved
+        run: echo "approved by required reviewer"
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      - name: Deploy api and worker to production
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          COMMIT_SHA="${{ github.sha }}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          RELEASE_ID="${{ github.run_id }}-${{ github.run_attempt }}"
+          VERSION="$(node -e 'console.log(require("./package.json").version)')"
+          for svc in api worker; do
+            railway variables --service "$svc" --environment production \
+              --set "APP_COMMIT_SHA=${COMMIT_SHA}" \
+              --set "APP_BUILD_TIME=${BUILD_TIME}" \
+              --set "APP_RELEASE_ID=${RELEASE_ID}" \
+              --set "APP_RELEASE_VERSION=${VERSION}" \
+              --skip-deploys
+            railway up --service "$svc" --environment production --ci
+          done
+      - name: Production smoke — release identity + health
+        run: |
+          set -euo pipefail
+          scripts/verify-release.sh "https://api.dialusnow.com" "${{ github.sha }}"
+          curl -sf https://api.dialusnow.com/api/health | grep -q '"database":"up"'
+          echo "production smoke passed"
+      - name: Rollback hint on failure
+        if: failure()
+        run: |
+          echo "::error::Production smoke failed — roll back via Railway: redeploy the previous api/worker deployment (docs/operations/runbook.md#rollback)"
