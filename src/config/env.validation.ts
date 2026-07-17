@@ -51,6 +51,9 @@ export const envValidationSchema = Joi.object({
    */
   WIDGET_TOKEN_SECRET: Joi.string().min(32).optional().allow(''),
 
+  /** Error-monitoring DSN (Sentry-compatible). Empty = monitoring disabled. */
+  ERROR_MONITORING_DSN: Joi.string().uri().optional().allow(''),
+
   /** AES key material for IntegrationSecret encryption (32+ chars). Required to store live credentials. */
   INTEGRATION_ENCRYPTION_KEY: Joi.string().min(32).optional().allow(''),
 

@@ -6,6 +6,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { captureError } from '../../observability/instrument';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -31,6 +32,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
 
     if (!(exception instanceof HttpException)) {
       console.error('UNHANDLED ERROR:', exception);
+      captureError(exception, { source: 'global-exception-filter' });
+    } else if (status >= 500) {
+      captureError(exception, { source: 'http-5xx' });
     }
 
     response.status(status).json({

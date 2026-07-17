@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import './observability/instrument'; // error monitoring — must load first
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';

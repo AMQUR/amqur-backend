@@ -7,6 +7,7 @@
  * without mounting the full API surface.
  */
 import 'reflect-metadata';
+import './observability/instrument'; // error monitoring — must load first
 import * as http from 'http';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
