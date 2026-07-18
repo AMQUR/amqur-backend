@@ -1,0 +1,31 @@
+{
+  "dealerGroupName": "Dial Auto Group",
+  "dealerGroupSlug": "dial-auto-group",
+  "tenantName": "Dial CDJR of Chicago",
+  "tenantSlug": "dial-cdjr-of-chicago",
+  "locationName": "Main",
+  "locationSlug": "main",
+  "allowedOrigins": [],
+  "timezone": "America/Chicago",
+  "featureFlags": {
+    "chat": true,
+    "leadCapture": true,
+    "handoff": true,
+    "inventory": false,
+    "payments": false,
+    "serviceAi": false,
+    "partsAi": false,
+    "appointments": false,
+    "voiceAi": false,
+    "multilingual": false,
+    "proactiveEngagement": false
+  },
+  "consentText": "This assistant may collect contact information you choose to share so dealership staff can follow up.",
+  "branding": {
+    "assistantDisplayName": "Dial CDJR of Chicago Assistant",
+    "welcomeMessage": "How can I help you today?",
+    "disclaimerText": "Vehicle availability, pricing, incentives, and dealership information are provided only when verified.",
+    "escalationMessage": "I can save your request for dealership staff to review."
+  },
+  "dataRetentionDays": 365
+}
