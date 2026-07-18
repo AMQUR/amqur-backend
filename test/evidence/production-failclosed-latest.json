@@ -1,0 +1,349 @@
+{
+  "ranAt": "2026-07-18T22:52:35.569Z",
+  "api": "https://api.dialusnow.com/api",
+  "total": 68,
+  "passed": 68,
+  "failed": 0,
+  "results": [
+    {
+      "name": "api /version reachable",
+      "pass": true,
+      "detail": "env=production"
+    },
+    {
+      "name": "api ready",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] no internal ids / secrets in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] no staging consent leak",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] verified-only disclaimer",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] durable handoff wording",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] chat/leadCapture/handoff enabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] distinct identity",
+      "pass": true,
+      "detail": "Jeep of Chicago"
+    },
+    {
+      "name": "[jeep-of-chicago] location main",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[jeep-of-chicago] token 403 (missing origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[jeep-of-chicago] token 403 (evil origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[jeep-of-chicago] token 403 (staging-widget origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[jeep-of-chicago] token 403 (foreign dealership origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-nissan-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] no internal ids / secrets in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] no staging consent leak",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] verified-only disclaimer",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] durable handoff wording",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] chat/leadCapture/handoff enabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] distinct identity",
+      "pass": true,
+      "detail": "Dial Nissan of Chicago"
+    },
+    {
+      "name": "[dial-nissan-of-chicago] location main",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-nissan-of-chicago] token 403 (missing origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-nissan-of-chicago] token 403 (evil origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-nissan-of-chicago] token 403 (staging-widget origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-nissan-of-chicago] token 403 (foreign dealership origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-chevy-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] no internal ids / secrets in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] no staging consent leak",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] verified-only disclaimer",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] durable handoff wording",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] chat/leadCapture/handoff enabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] distinct identity",
+      "pass": true,
+      "detail": "Dial Chevy of Chicago"
+    },
+    {
+      "name": "[dial-chevy-of-chicago] location main",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-chevy-of-chicago] token 403 (missing origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-chevy-of-chicago] token 403 (evil origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-chevy-of-chicago] token 403 (staging-widget origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-chevy-of-chicago] token 403 (foreign dealership origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[infiniti-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] no internal ids / secrets in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] no staging consent leak",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] verified-only disclaimer",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] durable handoff wording",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] chat/leadCapture/handoff enabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] distinct identity",
+      "pass": true,
+      "detail": "INFINITI of Chicago"
+    },
+    {
+      "name": "[infiniti-of-chicago] location main",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[infiniti-of-chicago] token 403 (missing origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[infiniti-of-chicago] token 403 (evil origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[infiniti-of-chicago] token 403 (staging-widget origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[infiniti-of-chicago] token 403 (foreign dealership origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] widget-config 200",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] no internal ids / secrets in public payload",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] no staging consent leak",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] verified-only disclaimer",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] durable handoff wording",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] unverified capabilities disabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] chat/leadCapture/handoff enabled",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] distinct identity",
+      "pass": true,
+      "detail": "Dial CDJR of Chicago"
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] location main",
+      "pass": true,
+      "detail": null
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] token 403 (missing origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] token 403 (evil origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] token 403 (staging-widget origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "[dial-cdjr-of-chicago] token 403 (foreign dealership origin)",
+      "pass": true,
+      "detail": "HTTP 403"
+    },
+    {
+      "name": "bootstrap disabled (not 2xx)",
+      "pass": true,
+      "detail": "HTTP 403"
+    }
+  ]
+}
