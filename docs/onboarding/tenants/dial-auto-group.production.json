@@ -1,0 +1,35 @@
+{
+  "dealerGroupName": "Dial Auto Group",
+  "dealerGroupSlug": "dial-auto-group",
+  "tenantName": "Dial Auto Group",
+  "tenantSlug": "dial-auto-group",
+  "locationName": "Main",
+  "locationSlug": "main",
+  "allowedOrigins": [],
+  "timezone": "America/Chicago",
+  "featureFlags": {
+    "chat": true,
+    "leadCapture": true,
+    "handoff": true,
+    "inventory": false,
+    "payments": false,
+    "serviceAi": false,
+    "partsAi": false,
+    "appointments": false,
+    "voiceAi": false,
+    "multilingual": false,
+    "proactiveEngagement": false
+  },
+  "consentText": "This assistant may collect contact information you choose to share so Dial Auto Group staff can follow up.",
+  "branding": {
+    "assistantDisplayName": "Dial Auto Group Assistant",
+    "welcomeMessage": "Welcome to Dial Auto Group. Which dealership are you interested in — Jeep, Nissan, Chevy, INFINITI, or CDJR?",
+    "disclaimerText": "Vehicle availability, pricing, incentives, and dealership information are provided only when verified. Store preference can be saved for staff follow-up.",
+    "escalationMessage": "I can save your request and preferred dealership for staff to review. I will not claim a transfer unless a verified handoff succeeds.",
+    "primaryColor": "#E5042F",
+    "accentColor": "#FFFFFF",
+    "logoUrl": "https://widget.dialusnow.com/assets/tenants/dial-auto-group/logo.14cd52b7b4aa.svg",
+    "logoAlt": "Dial Auto Group logo"
+  },
+  "dataRetentionDays": 365
+}

@@ -84,6 +84,7 @@ export class PublicService {
         primaryColor: branding.primaryColor,
         accentColor: branding.accentColor,
         logoUrl: branding.logoUrl,
+        logoAlt: branding.logoAlt,
         launcherIconUrl: branding.launcherIconUrl,
         phone: branding.phone,
         websiteUrl: branding.websiteUrl,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dry-run then apply five fail-closed production rooftops via DATABASE_URL.
+# Dry-run then apply six fail-closed production tenants via DATABASE_URL.
 # Intended to run with Railway-injected production DATABASE_URL:
 #
 #   railway run --service prod-api --environment production -- \
@@ -20,6 +20,7 @@ done
 [ -n "${DATABASE_URL:-}" ] || { echo "DATABASE_URL required (use railway run)" >&2; exit 1; }
 
 TENANTS=(
+  dial-auto-group
   jeep-of-chicago
   dial-nissan-of-chicago
   dial-chevy-of-chicago
