@@ -55,6 +55,7 @@ jobs:
               --set "APP_BUILD_TIME=${BUILD_TIME}" \
               --set "APP_RELEASE_ID=${RELEASE_ID}" \
               --set "APP_RELEASE_VERSION=${VERSION}" \
+              --set "APP_SERVICE_NAME=${svc}" \
               --skip-deploys
             railway up --service "$svc" --environment staging --ci
           done
@@ -98,12 +99,13 @@ jobs:
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           RELEASE_ID="${{ github.run_id }}-${{ github.run_attempt }}"
           VERSION="$(node -e 'console.log(require("./package.json").version)')"
-          for svc in api worker; do
+          for svc in prod-api prod-worker; do
             railway variables --service "$svc" --environment production \
               --set "APP_COMMIT_SHA=${COMMIT_SHA}" \
               --set "APP_BUILD_TIME=${BUILD_TIME}" \
               --set "APP_RELEASE_ID=${RELEASE_ID}" \
               --set "APP_RELEASE_VERSION=${VERSION}" \
+              --set "APP_SERVICE_NAME=${svc}" \
               --skip-deploys
             railway up --service "$svc" --environment production --ci
           done

@@ -15,7 +15,10 @@ describe('mergePublicBranding', () => {
 
   it('projects logoAlt when provided', () => {
     const b = mergePublicBranding(
-      { logoUrl: 'https://widget.dialusnow.com/assets/tenants/x/logo.abc.svg', logoAlt: 'X logo' },
+      {
+        logoUrl: 'https://widget.dialusnow.com/assets/tenants/x/logo.abc.svg',
+        logoAlt: 'X logo',
+      },
       null,
       null,
     );

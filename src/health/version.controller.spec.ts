@@ -16,6 +16,7 @@ describe('VersionController', () => {
     process.env.APP_COMMIT_SHA = 'abc123def456';
     process.env.APP_BUILD_TIME = '2026-07-16T00:00:00.000Z';
     process.env.APP_RELEASE_ID = 'rel-42';
+    process.env.APP_SERVICE_NAME = 'prod-api';
     process.env.RAILWAY_ENVIRONMENT_NAME = 'staging';
 
     const v = new VersionController().version();
@@ -25,6 +26,7 @@ describe('VersionController', () => {
       environment: 'staging',
       buildTime: '2026-07-16T00:00:00.000Z',
       releaseId: 'rel-42',
+      service: 'prod-api',
     });
   });
 
@@ -33,6 +35,9 @@ describe('VersionController', () => {
     delete process.env.APP_COMMIT_SHA;
     delete process.env.APP_BUILD_TIME;
     delete process.env.APP_RELEASE_ID;
+    delete process.env.APP_SERVICE_NAME;
+    delete process.env.RAILWAY_SERVICE_NAME;
+    delete process.env.PROCESS_ROLE;
     delete process.env.RAILWAY_ENVIRONMENT_NAME;
 
     const v = new VersionController().version();
@@ -41,8 +46,16 @@ describe('VersionController', () => {
     expect(v.version).toBeTruthy();
     expect(typeof v.commitSha).toBe('string');
     expect(typeof v.releaseId).toBe('string');
+    expect(typeof v.service).toBe('string');
     expect(Object.keys(v).sort()).toEqual(
-      ['version', 'commitSha', 'environment', 'buildTime', 'releaseId'].sort(),
+      [
+        'version',
+        'commitSha',
+        'environment',
+        'buildTime',
+        'releaseId',
+        'service',
+      ].sort(),
     );
   });
 
