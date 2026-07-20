@@ -25,7 +25,11 @@
     "assistantDisplayName": "INFINITI of Chicago Assistant",
     "welcomeMessage": "How can I help you today?",
     "disclaimerText": "Vehicle availability, pricing, incentives, and dealership information are provided only when verified.",
-    "escalationMessage": "I can save your request for dealership staff to review."
+    "escalationMessage": "I can save your request for dealership staff to review.",
+    "primaryColor": "#E5042F",
+    "accentColor": "#FFFFFF",
+    "logoUrl": "https://widget.dialusnow.com/assets/tenants/infiniti-of-chicago/logo.3e97eead086a.svg",
+    "logoAlt": "INFINITI of Chicago logo"
   },
   "dataRetentionDays": 365
 }

@@ -24,6 +24,27 @@ COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/package.json ./package.json
 # Optional deploy-time provenance stamp (glob keeps COPY happy when absent).
 COPY --from=build /app/release.jso[n] ./
+# Prefer build-arg stamps when provided by CI / railway up.
+ARG APP_COMMIT_SHA=unknown
+ARG APP_BUILD_TIME=unknown
+ARG APP_RELEASE_ID=unknown
+ARG APP_RELEASE_VERSION=0.0.1
+ARG APP_SERVICE_NAME=unknown
+RUN if [ ! -f release.json ] || [ "${APP_COMMIT_SHA}" != "unknown" ]; then \
+  printf '%s\n' \
+    '{' \
+    "  \"version\": \"${APP_RELEASE_VERSION}\"," \
+    "  \"commitSha\": \"${APP_COMMIT_SHA}\"," \
+    "  \"buildTime\": \"${APP_BUILD_TIME}\"," \
+    "  \"releaseId\": \"${APP_RELEASE_ID}\"," \
+    "  \"service\": \"${APP_SERVICE_NAME}\"" \
+    '}' > release.json; \
+  fi
+ENV APP_COMMIT_SHA=${APP_COMMIT_SHA} \
+    APP_BUILD_TIME=${APP_BUILD_TIME} \
+    APP_RELEASE_ID=${APP_RELEASE_ID} \
+    APP_RELEASE_VERSION=${APP_RELEASE_VERSION} \
+    APP_SERVICE_NAME=${APP_SERVICE_NAME}
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "if(process.env.PROCESS_ROLE==='worker'){process.exit(0)}fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

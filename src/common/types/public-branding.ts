@@ -8,6 +8,8 @@ export type PublicBrandingConfig = {
   primaryColor: string;
   accentColor: string;
   logoUrl: string | null;
+  /** Accessible alt text for logoUrl; never required for render. */
+  logoAlt: string | null;
   launcherIconUrl: string | null;
   phone: string | null;
   websiteUrl: string | null;
@@ -27,6 +29,7 @@ export const DEFAULT_PUBLIC_BRANDING: PublicBrandingConfig = {
   primaryColor: '#111111',
   accentColor: '#f5f5f5',
   logoUrl: null,
+  logoAlt: null,
   launcherIconUrl: null,
   phone: null,
   websiteUrl: null,
@@ -99,6 +102,7 @@ export function mergePublicBranding(
     ),
     accentColor: asString(m.accentColor, DEFAULT_PUBLIC_BRANDING.accentColor),
     logoUrl: asNullableString(m.logoUrl),
+    logoAlt: asNullableString(m.logoAlt),
     launcherIconUrl: asNullableString(m.launcherIconUrl),
     phone: asNullableString(m.phone) ?? asNullableString(locationPhone),
     websiteUrl: asNullableString(m.websiteUrl),

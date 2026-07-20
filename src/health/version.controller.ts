@@ -9,6 +9,7 @@ type ReleaseInfo = {
   environment: string;
   buildTime: string;
   releaseId: string;
+  service: string;
 };
 
 /**
@@ -52,6 +53,11 @@ export class VersionController {
       releaseId:
         process.env.APP_RELEASE_ID?.trim() ||
         (stamped?.releaseId as string) ||
+        'unknown',
+      service:
+        process.env.APP_SERVICE_NAME?.trim() ||
+        process.env.RAILWAY_SERVICE_NAME?.trim() ||
+        process.env.PROCESS_ROLE?.trim() ||
         'unknown',
     };
     return this.cached;

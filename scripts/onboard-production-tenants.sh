@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Dry-run then apply five fail-closed production rooftops via DATABASE_URL.
+# Dry-run then apply six fail-closed production tenants via DATABASE_URL.
 # Intended to run with Railway-injected production DATABASE_URL:
 #
 #   railway run --service prod-api --environment production -- \
@@ -20,6 +20,7 @@ done
 [ -n "${DATABASE_URL:-}" ] || { echo "DATABASE_URL required (use railway run)" >&2; exit 1; }
 
 TENANTS=(
+  dial-auto-group
   jeep-of-chicago
   dial-nissan-of-chicago
   dial-chevy-of-chicago
@@ -48,8 +49,34 @@ for (const banned of ["address","phone","storeHours","inventoryFeedUrl","escalat
   if (c[banned]!=null) { console.error("must omit guessed field:", banned); process.exit(1); }
 }
 const b=c.branding||{};
-for (const banned of ["primaryColor","accentColor","logoUrl","privacyUrl","termsUrl","websiteUrl","phone"]) {
+for (const banned of ["privacyUrl","termsUrl","websiteUrl","phone"]) {
   if (b[banned]!=null) { console.error("must omit guessed branding:", banned); process.exit(1); }
+}
+// Verified brand assets may set colors + CDN logo URLs only.
+for (const k of ["primaryColor","accentColor","logoUrl","logoAlt"]) {
+  if (b[k]==null) continue;
+  if (typeof b[k] !== "string" || !b[k].trim()) {
+    console.error("branding."+k+" must be a non-empty string when set"); process.exit(1);
+  }
+}
+if (b.logoUrl!=null) {
+  try {
+    const u=new URL(b.logoUrl);
+    if (u.protocol!=="https:" || u.hostname!=="widget.dialusnow.com") {
+      console.error("logoUrl must be https://widget.dialusnow.com/..."); process.exit(1);
+    }
+    if (!u.pathname.startsWith("/assets/tenants/")) {
+      console.error("logoUrl path must be under /assets/tenants/"); process.exit(1);
+    }
+  } catch {
+    console.error("logoUrl must be absolute URL"); process.exit(1);
+  }
+}
+if (b.primaryColor!=null && !/^#[0-9A-Fa-f]{6}$/.test(b.primaryColor)) {
+  console.error("primaryColor must be #RRGGBB"); process.exit(1);
+}
+if (b.accentColor!=null && !/^#[0-9A-Fa-f]{6}$/.test(b.accentColor)) {
+  console.error("accentColor must be #RRGGBB"); process.exit(1);
 }
 if (/staging/i.test(JSON.stringify(c))) { console.error("staging leak in config"); process.exit(1); }
 console.log("OK", c.tenantSlug);

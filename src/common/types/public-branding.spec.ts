@@ -10,6 +10,20 @@ describe('mergePublicBranding', () => {
       DEFAULT_PUBLIC_BRANDING.assistantDisplayName,
     );
     expect(b.logoUrl).toBeNull();
+    expect(b.logoAlt).toBeNull();
+  });
+
+  it('projects logoAlt when provided', () => {
+    const b = mergePublicBranding(
+      {
+        logoUrl: 'https://widget.dialusnow.com/assets/tenants/x/logo.abc.svg',
+        logoAlt: 'X logo',
+      },
+      null,
+      null,
+    );
+    expect(b.logoUrl).toContain('widget.dialusnow.com');
+    expect(b.logoAlt).toBe('X logo');
   });
 
   it('merges location over tenant and prefers location phone', () => {
