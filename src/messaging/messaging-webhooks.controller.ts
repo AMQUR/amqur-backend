@@ -24,7 +24,7 @@ const EMPTY_TWIML =
   '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
 /**
- * Twilio webhooks (official signature validation). Requires PUBLIC_API_BASE_URL so the exact
+ * Twilio webhooks (official signature validation). Requires PUBLIC_API_URL so the exact
  * URL Twilio signed can be reconstructed; without it every request is rejected (fail closed).
  * Inbound texts never trigger autonomous AI replies here — they land in the staff inbox.
  */
@@ -47,7 +47,9 @@ export class MessagingWebhooksController {
       where: { slug: tenantSlug },
       select: { id: true },
     });
-    const base = process.env.PUBLIC_API_BASE_URL?.replace(/\/$/, '');
+    const base = (
+      process.env.PUBLIC_API_URL || process.env.PUBLIC_API_BASE_URL
+    )?.replace(/\/$/, '');
     if (!tenant || !base) return null;
     const creds = await this.messaging.twilioCredentials(tenant.id);
     if (!creds) return null;

@@ -251,7 +251,9 @@ export class MessagingService implements OnModuleInit {
       });
       return { note: 'provider_not_configured' };
     }
-    const base = process.env.PUBLIC_API_BASE_URL?.replace(/\/$/, '');
+    const base = (
+      process.env.PUBLIC_API_URL || process.env.PUBLIC_API_BASE_URL
+    )?.replace(/\/$/, '');
     const tenant = await this.prisma.tenant.findUnique({
       where: { id: m.tenantId },
       select: { slug: true },

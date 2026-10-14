@@ -337,7 +337,13 @@ describe('messaging, consent ledger, campaigns (fake Twilio)', () => {
       })
       .expect(201);
     const step = await ctx.prisma.outboxEvent.findFirst({
-      where: { topic: 'campaign.step', AND: [{ idempotencyKey: { contains: appt.id } }, { idempotencyKey: { contains: c.id } }] },
+      where: {
+        topic: 'campaign.step',
+        AND: [
+          { idempotencyKey: { contains: appt.id } },
+          { idempotencyKey: { contains: c.id } },
+        ],
+      },
     });
     expect(step).toBeTruthy();
     expect(step!.nextAttemptAt.getTime()).toBeGreaterThan(
