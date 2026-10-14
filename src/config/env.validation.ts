@@ -45,6 +45,10 @@ export const envValidationSchema = Joi.object({
   LLM_MAX_CONCURRENCY: Joi.number().integer().min(1).max(200).optional(),
   LLM_COST_INPUT_PER_MTOK: Joi.number().min(0).optional(),
   LLM_COST_OUTPUT_PER_MTOK: Joi.number().min(0).optional(),
+  /** Dollar caps per UTC day (group-wide / per tenant). A cap needs both prices above — an
+   *  unpriced cap is rejected here, and the router fails closed if it ever sees one. */
+  LLM_DAILY_BUDGET_USD: Joi.number().greater(0).optional(),
+  LLM_TENANT_DAILY_BUDGET_USD: Joi.number().greater(0).optional(),
 
   /** Comma-separated staff roles that must complete TOTP MFA (production default SUPER_ADMIN,ADMIN). */
   STAFF_MFA_REQUIRED_ROLES: Joi.string().optional().allow(''),
@@ -150,4 +154,12 @@ export const envValidationSchema = Joi.object({
   /** Public HTTPS URLs for this deployment (tenant/env config — not hardcoded branding). */
   PUBLIC_API_URL: Joi.string().uri().optional().allow(''),
   PUBLIC_WIDGET_URL: Joi.string().uri().optional().allow(''),
-});
+})
+  .with('LLM_DAILY_BUDGET_USD', [
+    'LLM_COST_INPUT_PER_MTOK',
+    'LLM_COST_OUTPUT_PER_MTOK',
+  ])
+  .with('LLM_TENANT_DAILY_BUDGET_USD', [
+    'LLM_COST_INPUT_PER_MTOK',
+    'LLM_COST_OUTPUT_PER_MTOK',
+  ]);

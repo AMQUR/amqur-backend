@@ -986,8 +986,12 @@ export class OperationsService {
   }
 
   /** AI provider status for admins: configured/missing, models, circuits, spend — never keys. */
-  aiStatus() {
-    return this.llm.status();
+  async aiStatus(tenantId?: string | null) {
+    const status = await this.llm.status();
+    return {
+      ...status,
+      tenantSpend: tenantId ? await this.llm.tenantSpendToday(tenantId) : null,
+    };
   }
 
   // ───────────── unified customer view (read-only, exact-match linking)

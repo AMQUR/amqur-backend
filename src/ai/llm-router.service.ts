@@ -20,6 +20,8 @@ export type LlmFailureReason =
   | 'provider_error'
   | 'empty_completion'
   | 'budget_exhausted'
+  | 'spend_cap_exhausted'
+  | 'spend_cap_unpriced'
   | 'rate_limited';
 
 export type LlmRouteResult =
@@ -45,14 +47,20 @@ const BREAKER_TTL_S = 120;
  *                             defaults to 2,000,000 so spend is never unbounded
  *  - LLM_MAX_CONCURRENCY      in-process concurrent provider calls (excess → deterministic)
  *  - LLM_COST_INPUT_PER_MTOK / LLM_COST_OUTPUT_PER_MTOK  USD per million tokens, from the
- *    owner's contract/price sheet — used only for metering; no prices are hard-coded
+ *    owner's contract/price sheet — no prices are hard-coded
+ *  - LLM_DAILY_BUDGET_USD          hard daily dollar cap across all stores
+ *  - LLM_TENANT_DAILY_BUDGET_USD   hard daily dollar cap per tenant (one store cannot spend
+ *                                  the group's budget)
+ *  A dollar cap without both prices fails CLOSED (no model calls) — an unpriced cap could
+ *  not be enforced. Caps are checked before each call, so the overshoot is bounded by the
+ *  calls already in flight (≤ LLM_MAX_CONCURRENCY × one reply). Counters are atomic in Redis
+ *  (shared by replicas) and per-replica without it.
  */
 @Injectable()
 export class LlmRouterService {
   private readonly logger = new Logger(LlmRouterService.name);
   private readonly local = new Map<string, BreakerState>();
   private inFlight = 0;
-  private localSpend = { day: '', tokens: 0 };
 
   private num(k: string): number | null {
     const v = Number(this.config.get<string>(k));
@@ -63,37 +71,92 @@ export class LlmRouterService {
     return this.num('LLM_DAILY_TOKEN_BUDGET') ?? 2_000_000;
   }
 
+  private prices(): { cin: number; cout: number } | null {
+    const cin = this.num('LLM_COST_INPUT_PER_MTOK');
+    const cout = this.num('LLM_COST_OUTPUT_PER_MTOK');
+    return cin !== null && cout !== null ? { cin, cout } : null;
+  }
+
+  /** Caps in micro-USD (null = not set). */
+  private usdCaps() {
+    const g = this.num('LLM_DAILY_BUDGET_USD');
+    const t = this.num('LLM_TENANT_DAILY_BUDGET_USD');
+    return {
+      group: g === null ? null : Math.round(g * 1_000_000),
+      tenant: t === null ? null : Math.round(t * 1_000_000),
+    };
+  }
+
   private today() {
     return new Date().toISOString().slice(0, 10);
   }
 
-  private async spentToday(): Promise<number> {
+  private keys(tenantId?: string) {
     const day = this.today();
-    const shared = await this.cache
-      .getJson<{ tokens: number }>(`llm:spend:${day}`)
-      .catch(() => null);
-    const local = this.localSpend.day === day ? this.localSpend.tokens : 0;
-    return Math.max(shared?.tokens ?? 0, local);
+    return {
+      tokens: `llm:spend:tokens:${day}`,
+      usd: `llm:spend:microusd:${day}`,
+      tenantUsd: tenantId ? `llm:spend:microusd:${day}:${tenantId}` : null,
+    };
   }
 
-  private async addSpend(tokens: number) {
-    const day = this.today();
-    if (this.localSpend.day !== day) this.localSpend = { day, tokens: 0 };
-    this.localSpend.tokens += tokens;
-    const prev = await this.spentToday();
-    await this.cache
-      .setJson(
-        `llm:spend:${day}`,
-        { tokens: Math.max(prev, this.localSpend.tokens) },
-        2 * 86_400,
-      )
-      .catch(() => undefined);
+  private async counter(key: string): Promise<number> {
+    return this.cache.getCounter(key).catch(() => 0);
+  }
+
+  /** Why a call must not be made right now (spend controls), or null. */
+  private async spendBlock(
+    tenantId?: string,
+  ): Promise<LlmFailureReason | null> {
+    const k = this.keys(tenantId);
+    if ((await this.counter(k.tokens)) >= this.dailyBudget())
+      return 'budget_exhausted';
+    const caps = this.usdCaps();
+    if (caps.group === null && caps.tenant === null) return null;
+    if (!this.prices()) return 'spend_cap_unpriced';
+    if (caps.group !== null && (await this.counter(k.usd)) >= caps.group)
+      return 'spend_cap_exhausted';
+    if (
+      caps.tenant !== null &&
+      k.tenantUsd &&
+      (await this.counter(k.tenantUsd)) >= caps.tenant
+    )
+      return 'spend_cap_exhausted';
+    return null;
+  }
+
+  private async addSpend(tokens: number, microUsd: number, tenantId?: string) {
+    const k = this.keys(tenantId);
+    const ttl = 2 * 86_400;
+    const inc = (key: string, by: number) =>
+      this.cache.incrBy(key, by, ttl).catch(() => 0);
+    if (tokens) await inc(k.tokens, tokens);
+    if (microUsd) {
+      await inc(k.usd, microUsd);
+      if (k.tenantUsd) await inc(k.tenantUsd, microUsd);
+    }
+  }
+
+  /** Spend today for one tenant (micro-USD), for the Command Center. */
+  async tenantSpendToday(tenantId: string) {
+    const k = this.keys(tenantId);
+    const caps = this.usdCaps();
+    const used = k.tenantUsd ? await this.counter(k.tenantUsd) : 0;
+    return {
+      microUsdUsedToday: used,
+      capMicroUsd: caps.tenant,
+      capExhausted: caps.tenant !== null && used >= caps.tenant,
+    };
   }
 
   /** Configured/missing per provider, models, circuits, today's spend vs cap — never keys. */
   async status() {
     const budget = this.dailyBudget();
-    const used = await this.spentToday();
+    const k = this.keys();
+    const used = await this.counter(k.tokens);
+    const caps = this.usdCaps();
+    const usdUsed = await this.counter(k.usd);
+    const priced = this.prices() !== null;
     return {
       primary: this.config.get<string>('LLM_PRIMARY_PROVIDER') ?? 'anthropic',
       providers: (await this.health()).map((h) => ({
@@ -109,9 +172,16 @@ export class LlmRouterService {
       budgetExhausted: used >= budget,
       maxConcurrency: this.num('LLM_MAX_CONCURRENCY'),
       inFlight: this.inFlight,
-      costMetering:
-        this.num('LLM_COST_INPUT_PER_MTOK') !== null &&
-        this.num('LLM_COST_OUTPUT_PER_MTOK') !== null,
+      costMetering: priced,
+      spend: {
+        microUsdUsedToday: priced ? usdUsed : null,
+        dailyCapUsd: caps.group === null ? null : caps.group / 1_000_000,
+        tenantDailyCapUsd:
+          caps.tenant === null ? null : caps.tenant / 1_000_000,
+        // a dollar cap that cannot be enforced (no prices) blocks all model calls
+        capUnpriced: (caps.group !== null || caps.tenant !== null) && !priced,
+        groupCapExhausted: caps.group !== null && usdUsed >= caps.group,
+      },
     };
   }
 
@@ -194,10 +264,10 @@ export class LlmRouterService {
       this.metrics.increment('ai.llm.unavailable');
       return { ok: false, reason: 'no_provider_configured', attempts: 0 };
     }
-    const budget = this.dailyBudget();
-    if ((await this.spentToday()) >= budget) {
-      this.metrics.increment('ai.llm.budget_exhausted');
-      return { ok: false, reason: 'budget_exhausted', attempts: 0 };
+    const blocked = await this.spendBlock(params.tenantId);
+    if (blocked) {
+      this.metrics.increment(`ai.llm.${blocked}`);
+      return { ok: false, reason: blocked, attempts: 0 };
     }
     const maxConc = this.num('LLM_MAX_CONCURRENCY');
     if (maxConc !== null && this.inFlight >= maxConc) {
@@ -250,16 +320,17 @@ export class LlmRouterService {
         if (result.outputTokens)
           this.metrics.increment('ai.llm.tokens_out', result.outputTokens);
         const used = (result.inputTokens ?? 0) + (result.outputTokens ?? 0);
-        if (used) await this.addSpend(used);
-        const cin = this.num('LLM_COST_INPUT_PER_MTOK');
-        const cout = this.num('LLM_COST_OUTPUT_PER_MTOK');
-        if (cin !== null && cout !== null) {
-          const micro = Math.round(
-            (result.inputTokens ?? 0) * cin + (result.outputTokens ?? 0) * cout,
+        const price = this.prices();
+        let micro = 0;
+        if (price) {
+          micro = Math.round(
+            (result.inputTokens ?? 0) * price.cin +
+              (result.outputTokens ?? 0) * price.cout,
           ); // USD per MTok × tokens = micro-USD
           this.metrics.increment('ai.llm.cost_microusd', micro);
           result.costMicroUsd = micro;
         }
+        await this.addSpend(used, micro, params.tenantId);
         return { ok: true, result, attempts };
       } catch (e: unknown) {
         lastReason =

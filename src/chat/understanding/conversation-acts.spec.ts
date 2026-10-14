@@ -235,3 +235,25 @@ describe('hold-out #2 regressions (2026-10-14)', () => {
     );
   });
 });
+
+describe('contact phone questions (live-probe regression 2026-10-14)', () => {
+  it.each([
+    "What's your service department's phone number?",
+    'whats the number to call for parts',
+    'how do i call you guys',
+    'cual es su telefono',
+    'can i get the dealership phone number',
+  ])('"%s" → phone answer, not a scheduling flow', (m) => {
+    const r = u(m);
+    expect(r.primary).toBe('HOURS_LOCATION');
+    expect(r.entities.askPhone).toBe(true);
+    expect(r.intents.map((i) => i.intent)).not.toContain('SERVICE_APPOINTMENT');
+  });
+  it.each([
+    'my phone number is 312-555-0188',
+    'you can text me at 312 555 0188',
+    'book a service appointment and call me on my phone',
+  ])('"%s" is not a phone question', (m) => {
+    expect(u(m).entities.askPhone).toBeUndefined();
+  });
+});

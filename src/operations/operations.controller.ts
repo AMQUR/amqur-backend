@@ -289,8 +289,8 @@ export class OperationsController {
 
   @Roles('SUPER_ADMIN', 'ADMIN')
   @Get('ai/status')
-  aiStatus() {
-    return this.ops.aiStatus();
+  aiStatus(@CurrentUser() u: AuthUser) {
+    return this.ops.aiStatus(u.tenantId);
   }
 
   /** Unified, read-only customer timeline within the caller's store (exact phone/email). */

@@ -50,6 +50,7 @@ export class ClaudeConversationService {
     userMessage?: string;
     language?: string | null;
     assistantName?: string | null;
+    tenantId?: string;
   }): Promise<string> {
     if (!this.router.isAvailable()) return params.draft;
     const system = [
@@ -71,14 +72,18 @@ export class ClaudeConversationService {
     ]
       .filter(Boolean)
       .join('\n\n');
-    const r = await this.router.route({
-      system,
-      messages: [{ role: 'user', content: user }],
-      maxTokens: 320,
-      timeoutMs: 8000,
-      promptVersion: POLISH_PROMPT_VERSION,
-    });
-    if (!r.ok) return params.draft;
+    // The draft is always a complete, correct reply — any router fault keeps it.
+    const r = await this.router
+      .route({
+        system,
+        messages: [{ role: 'user', content: user }],
+        maxTokens: 320,
+        timeoutMs: 8000,
+        promptVersion: POLISH_PROMPT_VERSION,
+        tenantId: params.tenantId,
+      })
+      .catch(() => null);
+    if (!r?.ok) return params.draft;
     const out = r.result.text.trim();
     if (!out) return params.draft;
     return out.length > 900 ? `${out.slice(0, 897)}…` : out;
@@ -87,7 +92,13 @@ export class ClaudeConversationService {
   async answerIntelligentQuestion(
     question: string,
     context: string[] = [],
-    opts: { language?: string | null; assistantName?: string | null } = {},
+    opts: {
+      language?: string | null;
+      assistantName?: string | null;
+      tenantId?: string;
+      /** Called only when the reply text came from a language model. */
+      onModelAnswer?: () => void;
+    } = {},
   ): Promise<string> {
     // Dealership-specific facts we can't verify are never guessed — but the reply stays human
     // and offers ONE next step instead of a menu.
@@ -127,6 +138,7 @@ export class ClaudeConversationService {
       maxTokens: 400,
       timeoutMs: 10000,
       promptVersion: INTELLIGENT_PROMPT_VERSION,
+      tenantId: opts.tenantId,
     });
     if (!r.ok) {
       this.logger.warn(`intelligent answer degraded reason=${r.reason}`);
@@ -134,6 +146,7 @@ export class ClaudeConversationService {
         ? `Here’s what the dealership has on file: ${context.join(' ').slice(0, 500)}`
         : noFacts;
     }
+    opts.onModelAnswer?.();
     return r.result.text.trim();
   }
 }

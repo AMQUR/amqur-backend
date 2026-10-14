@@ -15,6 +15,8 @@ export class ConfigCacheService implements OnModuleDestroy {
     get: (k: string) => Promise<string | null>;
     set: (k: string, v: string, mode: string, ttl: number) => Promise<unknown>;
     del: (...keys: string[]) => Promise<unknown>;
+    incrby: (k: string, by: number) => Promise<number>;
+    expire: (k: string, ttl: number) => Promise<unknown>;
     quit: () => Promise<unknown>;
     disconnect: () => void;
     status: string;
@@ -38,6 +40,8 @@ export class ConfigCacheService implements OnModuleDestroy {
           ttl: number,
         ) => Promise<unknown>;
         del: (...keys: string[]) => Promise<unknown>;
+        incrby: (k: string, by: number) => Promise<number>;
+        expire: (k: string, ttl: number) => Promise<unknown>;
         quit: () => Promise<unknown>;
         disconnect: () => void;
         status: string;
@@ -119,6 +123,52 @@ export class ConfigCacheService implements OnModuleDestroy {
     } catch {
       this.redisEnabled = false;
     }
+  }
+
+  /**
+   * Atomic counter shared across replicas (Redis INCRBY). Used for spend caps, where a
+   * read-modify-write would undercount under concurrency. Without Redis it counts in-process
+   * (per replica) — callers must treat that as a lower bound.
+   */
+  async incrBy(key: string, by: number, ttlSeconds: number): Promise<number> {
+    const local = this.memoryCounter(key) + by;
+    const prev = this.memory.get(key);
+    this.memory.set(key, {
+      value: JSON.stringify(local),
+      expiresAt:
+        prev && Date.now() <= prev.expiresAt
+          ? prev.expiresAt
+          : Date.now() + ttlSeconds * 1000,
+    });
+    try {
+      if (this.redis && this.redisEnabled) {
+        const n = await this.redis.incrby(key, by);
+        if (n === by) await this.redis.expire(key, ttlSeconds);
+        return Math.max(n, local);
+      }
+    } catch {
+      this.redisEnabled = false;
+    }
+    return local;
+  }
+
+  async getCounter(key: string): Promise<number> {
+    const local = this.memoryCounter(key);
+    try {
+      if (this.redis && this.redisEnabled) {
+        const raw = await this.redis.get(key);
+        return Math.max(Number(raw) || 0, local);
+      }
+    } catch {
+      this.redisEnabled = false;
+    }
+    return local;
+  }
+
+  private memoryCounter(key: string): number {
+    const hit = this.memory.get(key);
+    if (!hit || Date.now() > hit.expiresAt) return 0;
+    return Number(JSON.parse(hit.value)) || 0;
   }
 
   async invalidatePrefix(prefix: string): Promise<void> {

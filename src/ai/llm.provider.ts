@@ -10,6 +10,8 @@ export type LlmGenerateParams = {
   maxTokens?: number;
   timeoutMs?: number;
   promptVersion?: string;
+  /** Tenant the call is made for — per-tenant spend cap and attribution. Not sent to providers. */
+  tenantId?: string;
 };
 
 export type LlmGenerateResult = {

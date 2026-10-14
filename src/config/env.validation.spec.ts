@@ -32,4 +32,26 @@ describe('env validation', () => {
       envValidationSchema.validate({ ...base, JWT_SECRET: 'short' }).error,
     ).toBeDefined();
   });
+  it('a dollar spend cap requires both token prices (an unpriced cap cannot be enforced)', () => {
+    expect(
+      envValidationSchema.validate({ ...base, LLM_DAILY_BUDGET_USD: 25 }).error
+        ?.message,
+    ).toMatch(/LLM_COST_INPUT_PER_MTOK/);
+    expect(
+      envValidationSchema.validate({
+        ...base,
+        LLM_TENANT_DAILY_BUDGET_USD: 5,
+        LLM_COST_INPUT_PER_MTOK: 3,
+      }).error?.message,
+    ).toMatch(/LLM_COST_OUTPUT_PER_MTOK/);
+    expect(
+      envValidationSchema.validate({
+        ...base,
+        LLM_DAILY_BUDGET_USD: 25,
+        LLM_TENANT_DAILY_BUDGET_USD: 5,
+        LLM_COST_INPUT_PER_MTOK: 3,
+        LLM_COST_OUTPUT_PER_MTOK: 15,
+      }).error,
+    ).toBeUndefined();
+  });
 });

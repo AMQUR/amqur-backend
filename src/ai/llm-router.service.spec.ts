@@ -22,6 +22,12 @@ const memCache = () => {
   return {
     getJson: async (k: string) => (m.get(k) as never) ?? null,
     setJson: async (k: string, v: unknown) => void m.set(k, v),
+    incrBy: async (k: string, by: number) => {
+      const n = ((m.get(k) as number) ?? 0) + by;
+      m.set(k, n);
+      return n;
+    },
+    getCounter: async (k: string) => (m.get(k) as number) ?? 0,
   };
 };
 const cfg = (primary = 'anthropic') => ({
@@ -220,5 +226,100 @@ describe('LlmRouterService', () => {
     );
     const out2 = await call(r2);
     expect(out2.ok && out2.result.costMicroUsd).toBeUndefined();
+  });
+
+  describe('dollar-denominated spend caps', () => {
+    const priced = {
+      LLM_COST_INPUT_PER_MTOK: '3',
+      LLM_COST_OUTPUT_PER_MTOK: '15',
+    };
+    const off = () => provider('openai', async () => ({ text: 'x' }), false);
+    // 1000 in × $3 + 200 out × $15 per MTok = 6,000 micro-USD ($0.006) per call
+    const tcall = (r: LlmRouterService, tenantId?: string) =>
+      r.route({
+        messages: [{ role: 'user', content: 'hi' }],
+        timeoutMs: 1000,
+        tenantId,
+      });
+
+    it('stops model calls once the group daily USD cap is reached', async () => {
+      const a = withUsage('anthropic', 1000, 200);
+      const r = new LlmRouterService(
+        a as never,
+        off() as never,
+        metrics as never,
+        memCache() as never,
+        cfgWith({ ...priced, LLM_DAILY_BUDGET_USD: '0.01' }) as never,
+      );
+      expect((await tcall(r)).ok).toBe(true); // $0.006
+      expect((await tcall(r)).ok).toBe(true); // $0.012 — over the cap now
+      expect(await tcall(r)).toMatchObject({
+        ok: false,
+        reason: 'spend_cap_exhausted',
+      });
+      expect(a.generate).toHaveBeenCalledTimes(2);
+      const st = await r.status();
+      expect(st.spend).toMatchObject({
+        microUsdUsedToday: 12_000,
+        dailyCapUsd: 0.01,
+        groupCapExhausted: true,
+        capUnpriced: false,
+      });
+    });
+
+    it('caps each tenant separately — one store cannot spend another store’s budget', async () => {
+      const a = withUsage('anthropic', 1000, 200);
+      const r = new LlmRouterService(
+        a as never,
+        off() as never,
+        metrics as never,
+        memCache() as never,
+        cfgWith({ ...priced, LLM_TENANT_DAILY_BUDGET_USD: '0.006' }) as never,
+      );
+      expect((await tcall(r, 'north')).ok).toBe(true);
+      expect(await tcall(r, 'north')).toMatchObject({
+        ok: false,
+        reason: 'spend_cap_exhausted',
+      });
+      expect((await tcall(r, 'south')).ok).toBe(true);
+      expect((await r.tenantSpendToday('north')).capExhausted).toBe(true);
+      expect((await r.tenantSpendToday('south')).microUsdUsedToday).toBe(6000);
+    });
+
+    it('fails closed when a USD cap is set but prices are not configured', async () => {
+      const a = withUsage('anthropic', 1000, 200);
+      const r = new LlmRouterService(
+        a as never,
+        off() as never,
+        metrics as never,
+        memCache() as never,
+        cfgWith({ LLM_DAILY_BUDGET_USD: '50' }) as never,
+      );
+      expect(await tcall(r)).toMatchObject({
+        ok: false,
+        reason: 'spend_cap_unpriced',
+      });
+      expect(a.generate).not.toHaveBeenCalled();
+      expect((await r.status()).spend.capUnpriced).toBe(true);
+    });
+
+    it('shares spend across replicas through the cache', async () => {
+      const cache = memCache();
+      const env = cfgWith({ ...priced, LLM_DAILY_BUDGET_USD: '0.01' });
+      const mk = () =>
+        new LlmRouterService(
+          withUsage('anthropic', 1000, 200) as never,
+          off() as never,
+          metrics as never,
+          cache as never,
+          env as never,
+        );
+      const r1 = mk();
+      const r2 = mk();
+      expect((await tcall(r1)).ok).toBe(true);
+      expect((await tcall(r2)).ok).toBe(true);
+      expect((await tcall(r1)).ok).toBe(false);
+      expect((await tcall(r2)).ok).toBe(false);
+    });
   });
 });

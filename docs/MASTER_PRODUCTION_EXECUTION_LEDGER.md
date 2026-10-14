@@ -4,7 +4,7 @@ Last updated: 2026-10-14 (release reconciliation pass). Branch `feat/production-
 
 Statuses: `NOT_IMPLEMENTED` · `IN_PROGRESS` · `CODE_COMPLETE` (built, unit-tested) · `LOCAL_VERIFIED` (proven on the disposable Postgres/Redis stack through the real HTTP API) · `INTEGRATION_VERIFIED` (proven against the real vendor) · `STAGING_VERIFIED` · `PRODUCTION_VERIFIED` · `EXTERNAL_DEPENDENCY_BLOCKED` · `RELEASE_BLOCKED`.
 
-No row is above `LOCAL_VERIFIED`: no vendor integration has credentials, staging could not be reached (Railway CLI session expired; engineering does not log in on the owner's behalf), and no production approval exists.
+No row is above `LOCAL_VERIFIED`: no vendor integration has credentials, the October build has not been deployed to staging (merge is an owner action; the Railway CLI session is expired), and no production approval exists.
 
 ## Customer conversation
 
@@ -92,9 +92,25 @@ No row is above `LOCAL_VERIFIED`: no vendor integration has credentials, staging
 |---|---|
 | PR #28 head `7ce3931`, PR #21 head `6950060` | CI green on every job (build-test, e2e-postgres, migrations-empty-db, docker-build, command-center, sbom; widget build) |
 | Merge to `main` | **Not performed** — the engineering session's permission policy blocks merging without review. Owner action. |
-| Staging | Still running `63425e0` (2026-08-28). Read-only acceptance against it: 21/21 (`scripts/staging-acceptance.sh`) |
+| Staging | Still running the **August** build `63425e0` (2026-08-28). The October release is **not deployed and not verified on staging**. A 21/21 read-only check against the August build only proves the script works and that the old build serves no simulated vehicles — it is **not** acceptance of this release. |
 | Production dependency advisories | 0 (`deepmerge-ts` pinned ^8 via overrides) |
 | Real-model AI | Infrastructure complete (spend cap, load shedding, cost metering, status, probe, live eval harness); **no provider key available** → not verified |
 | Five-store simulation | 3,000 scenarios / 9,319 turns, 0 P0/P1/P2 |
 | Blind hold-out #2 | first run 75/84 (89.3%), fixed to 84/84 (no longer blind) |
 | Browser matrix | sales journey on all five engines incl. iPhone Safari; isolation on WebKit |
+
+## Release continuation (2026-10-14, evening)
+
+| Item | Result |
+|---|---|
+| CI for `3b96329` | **green on all 6 jobs** (run 38584499775) — superseded by the commit below, which needs its own green run |
+| Staging acceptance can no longer pass on an old build | `scripts/staging-acceptance.sh` now requires the expected SHA and three October-only release markers. Against today's staging (August `63425e0`) it **fails 3 markers** — correct. Wired into `deploy.yml` after staging smoke with `github.sha`. |
+| Deploy preflight | `scripts/env-preflight.js` in both deploy jobs: names-only check of the variables this build needs to boot (prod-mode `CORS_ORIGINS`, `INTEGRATION_ENCRYPTION_KEY`; prices when a dollar cap is set), before migrations run |
+| Dollar spend cap | `LLM_DAILY_BUDGET_USD` (group) + `LLM_TENANT_DAILY_BUDGET_USD` (per store), atomic Redis counters shared by replicas, fail closed when unpriced, boot refuses a cap without prices; `/api/ops/ai/status` shows spend vs caps and the caller's store spend |
+| Grounding gap closed | model-written knowledge answers now pass the grounding guard (previously only polished rewrites did); router exceptions can no longer break a reply |
+| Genuine-model proof | every chat reply carries `provenance.languageModel` (`polished`/`answered`/`discarded`/`none`) |
+| Live-model eval | in-process: 124 cases / ~340 turns (hold-out + generated full journeys for all five stores), oracle + DB invariants + isolation, model-share threshold; remote mode against deployed staging (no key in any shell). Dry-run harness check: 124 cases, 341 turns, 0 findings. Remote harness check against a local new build: 40 turns, 0 violations, provenance on every reply. **Real-model run still not possible — no key.** |
+| New coverage | widget API contract e2e (8), release markers + model failure injection e2e (9), five-rooftop separation (6), USD caps (4), env (1), phone-number questions (8) |
+| Defect fixed from live probe | "What's your service department's phone number?" started a service-scheduling flow → now answers from the store record or says it has no verified number and offers a callback |
+| Local totals | unit 449/449 + 6 new; e2e 150/150 + contract 8/8; simulator 3,000 scenarios / 9,319 turns 0 findings; hold-outs 54/54, 84/84 |
+| Exact post-merge steps | `docs/POST_MERGE_STAGING_SEQUENCE.md` |

@@ -1,0 +1,77 @@
+{
+  "generatedAt": "2026-10-14T15:06:32.652Z",
+  "mode": "dry-run (no model — harness self-check only)",
+  "providers": [
+    {
+      "provider": "anthropic",
+      "configured": false,
+      "model": "claude-sonnet-5-5"
+    },
+    {
+      "provider": "openai",
+      "configured": false,
+      "model": "gpt-4o-mini"
+    }
+  ],
+  "cases": 124,
+  "journeys": 40,
+  "turns": 341,
+  "taskSuccess": 1,
+  "p0": 0,
+  "p1": 0,
+  "byStore": {
+    "jeep-north": {
+      "cases": 19,
+      "success": 1,
+      "p0": 0
+    },
+    "chevy": {
+      "cases": 28,
+      "success": 1,
+      "p0": 0
+    },
+    "nissan": {
+      "cases": 27,
+      "success": 1,
+      "p0": 0
+    },
+    "infiniti": {
+      "cases": 25,
+      "success": 1,
+      "p0": 0
+    },
+    "cdjr-south": {
+      "cases": 25,
+      "success": 1,
+      "p0": 0
+    }
+  },
+  "dbFindings": [],
+  "languageModel": {
+    "none": 341,
+    "modelShare": 0
+  },
+  "latencyMs": {
+    "p50": 11,
+    "p95": 15,
+    "p99": 20,
+    "max": 47
+  },
+  "llm": {
+    "successes": 0,
+    "failures": 0,
+    "groundingDiscards": 0,
+    "tokensIn": 0,
+    "tokensOut": 0,
+    "costMicroUsd": null,
+    "budgetExhausted": false,
+    "spend": {
+      "microUsdUsedToday": null,
+      "dailyCapUsd": null,
+      "tenantDailyCapUsd": null,
+      "capUnpriced": false,
+      "groupCapExhausted": false
+    }
+  },
+  "failures": []
+}

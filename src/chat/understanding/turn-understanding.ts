@@ -56,6 +56,8 @@ export type TurnIntent =
 export type Sentiment = 'neutral' | 'frustrated' | 'anxious' | 'positive';
 
 export type TurnEntities = {
+  /** The customer asked for a phone number to call ("service department's phone number?"). */
+  askPhone?: boolean;
   vin?: string;
   stock?: string;
   partNumber?: string;
@@ -1708,6 +1710,31 @@ export function understandTurn(
     'GREETING',
     'UNKNOWN',
   ];
+  // ── CONTACT NUMBER question: answered from the store record, not a scheduling request.
+  const phoneQ =
+    !/\d{3}\D{0,3}\d{3}\D{0,3}\d{4}/.test(t) &&
+    (/\b(?:what(?:'?s| is| are)|give me|can i (?:get|have)|do you have|need|send me|share)\b.{0,40}\b(?:phone(?: number)?s?|number to call|contact number|call(?:back)? number|tel[eé]fono)\b/.test(
+      t,
+    ) ||
+      /\bhow (?:do|can|could) i (?:call|phone|reach|contact) (?:you|the|your|someone)\b/.test(
+        t,
+      ) ||
+      /\b(?:phone|number) (?:for|to) (?:the |your )?(?:service|parts|sales|finance|store|dealership|call)\b/.test(
+        t,
+      ) ||
+      /\bcu[aá]l es (?:el|su) (?:n[uú]mero|tel[eé]fono)\b/.test(t));
+  if (phoneQ) {
+    e.askPhone = true;
+    add('HOURS_LOCATION', 0.95, 'contact phone question');
+    if (!/\b(schedule|book|appointment|cita|come in|bring|drop)\b/.test(t))
+      for (const x of [
+        'SERVICE_APPOINTMENT',
+        'SALES_APPOINTMENT',
+        'PARTS_INQUIRY',
+      ])
+        for (let i = intents.length - 1; i >= 0; i -= 1)
+          if (intents[i].intent === x) intents.splice(i, 1);
+  }
   intents.sort(
     (a, b) => PRIORITY.indexOf(a.intent) - PRIORITY.indexOf(b.intent),
   );

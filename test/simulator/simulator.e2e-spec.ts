@@ -13,6 +13,7 @@ import { ConversationOracle, evaluateTurn, Finding, Reply } from './evaluator';
 import { HOLDOUT } from './holdout';
 import { STORES, StoreVocab } from './stores';
 import { HOLDOUT2 } from './holdout2';
+import { dbInvariants } from './db-invariants';
 
 /**
  * Autonomous customer simulator — drives the REAL HTTP API + Postgres with thousands of
@@ -170,54 +171,11 @@ describe('customer simulator', () => {
     }
 
     // ── database-level invariants (independent of replies)
-    const db = ctx.prisma;
-    const dbFindings: Finding[] = [];
-    const fleetIds = fleet.map((f) => f.dealer.tenantId);
-    const confirmed = await db.appointment.count({
-      where: { tenantId: { in: fleetIds }, status: 'CONFIRMED' },
-    });
-    if (confirmed)
-      dbFindings.push({
-        severity: 'P0',
-        rule: 'db_appointment_confirmed',
-        detail: String(confirmed),
-      });
-    const leaked = await db.message.count({
-      where: {
-        OR: [
-          { content: { contains: '123-45-6789' } },
-          { content: { contains: '4111 1111 1111 1111' } },
-          { content: { contains: '078-05-1120' } },
-        ],
-      },
-    });
-    if (leaked)
-      dbFindings.push({
-        severity: 'P0',
-        rule: 'db_sensitive_stored',
-        detail: String(leaked),
-      });
-    const credit = await db.financeRequest.count({
-      where: {
-        tenantId: { in: fleetIds },
-        creditLinkState: { in: ['CLICKED', 'COMPLETED_VERIFIED'] },
-      },
-    });
-    if (credit)
-      dbFindings.push({
-        severity: 'P0',
-        rule: 'db_credit_state_without_click',
-        detail: String(credit),
-      });
-    const crossAppt = await db.appointment.count({
-      where: { tenantId: rival.tenantId },
-    });
-    if (crossAppt)
-      dbFindings.push({
-        severity: 'P0',
-        rule: 'db_cross_tenant_write',
-        detail: String(crossAppt),
-      });
+    const dbFindings = await dbInvariants(
+      ctx.prisma,
+      fleet.map((f) => f.dealer.tenantId),
+      [rival.tenantId],
+    );
 
     // ── metrics
     const ok = (x: (typeof results)[number]) =>

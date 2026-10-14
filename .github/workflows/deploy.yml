@@ -46,6 +46,15 @@ jobs:
           fi
       - name: Install Railway CLI
         run: npm i -g @railway/cli
+      - name: Preflight — staging variables this build needs to boot (names only, values never printed)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          for svc in api worker; do
+            railway variables --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment staging --json \
+              | node scripts/env-preflight.js staging "$svc"
+          done
       - name: Publish provenance variables + deploy api and worker
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
@@ -80,6 +89,11 @@ jobs:
             -d '{"tenantSlug":"jeep-of-chicago","locationSlug":"main"}')
           [ "$code" = "403" ] || { echo "expected 403 for unauthorized origin, got $code" >&2; exit 1; }
           echo "staging smoke passed"
+      - name: Staging acceptance — this exact build (SHA + October release markers + five stores)
+        # Fails if staging is not running github.sha or lacks the release markers, so a green
+        # run can never be mistaken for acceptance of an older build. Read-only apart from
+        # anonymous widget conversations on staging.
+        run: bash scripts/staging-acceptance.sh "https://staging-api.dialusnow.com" "${{ github.sha }}"
 
   deploy-production:
     # Requires the GitHub "production" environment with required reviewers —
@@ -96,6 +110,15 @@ jobs:
         run: echo "approved by required reviewer"
       - name: Install Railway CLI
         run: npm i -g @railway/cli
+      - name: Preflight — production variables this build needs to boot (names only, values never printed)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          for svc in api worker; do
+            railway variables --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment production --json \
+              | node scripts/env-preflight.js production "$svc"
+          done
       - name: Deploy api and worker to production
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}

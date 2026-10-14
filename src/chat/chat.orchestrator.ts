@@ -87,6 +87,13 @@ export type ChatProvenance = {
   inventoryAsOf?: string | null;
   disclaimer?: string;
   verifiedFactsOnly: boolean;
+  /**
+   * Whether a language model shaped this reply: `polished` (model rewrite of the server draft
+   * passed the grounding guard), `answered` (model answered a knowledge question from verified
+   * data), `discarded` (model output rejected by the grounding guard; draft sent), `none`.
+   * Lets operators and the live-model evaluation prove genuine model replies.
+   */
+  languageModel?: 'polished' | 'answered' | 'discarded' | 'none';
 };
 
 export type ChatCard =
@@ -263,6 +270,7 @@ type Turn = {
   sources: Set<string>;
   facts: string[];
   toolCount: number;
+  languageModel: NonNullable<ChatProvenance['languageModel']>;
   urgent: boolean;
   quickReplies: string[];
   /** Social opener for this turn ("Hi there!") — replaces the generic acknowledgement. */
@@ -538,6 +546,7 @@ export class ChatOrchestrator {
       sources: new Set(),
       facts: [],
       toolCount: 0,
+      languageModel: 'none',
       urgent: false,
       quickReplies: [],
       // "Actually, …" opening a new request is not a correction of what we just did.
@@ -3679,6 +3688,39 @@ export class ChatOrchestrator {
   // ───────────────────────────────────────── info
 
   private async handleHours(t: Turn) {
+    if (t.u.entities.askPhone) {
+      // One verified number per store (the location record) — never a guessed department line.
+      const phone = await this.locationPhone(t);
+      if (phone) {
+        t.sources.add('location_record');
+        t.answers.push(
+          tr(
+            t.lang,
+            `You can reach the dealership at ${phone}.`,
+            `Puede comunicarse con la agencia al ${phone}.`,
+          ),
+        );
+      } else {
+        t.answers.push(
+          tr(
+            t.lang,
+            'I don’t have a verified phone number on file for this store yet, so I won’t guess one.',
+            'Aún no tengo un teléfono verificado para esta agencia, así que no voy a adivinar uno.',
+          ),
+        );
+        this.ask(
+          t,
+          'confirm_handoff',
+          tr(
+            t.lang,
+            'Want me to have someone from the team reach out to you instead?',
+            '¿Quiere que alguien del equipo se comunique con usted?',
+          ),
+          6,
+        );
+      }
+      if (!/\b(hours|open|close|horario)\b/i.test(t.message)) return;
+    }
     const hours = await this.getHours(t);
     const dept =
       t.st.department === 'service'
@@ -4057,9 +4099,40 @@ export class ChatOrchestrator {
       t.facts.push(...ctx.map((c) => c.slice(0, 300)));
       return;
     }
-    const answer = await this.llm.answerIntelligentQuestion(t.message, ctx, {
+    let fromModel = false;
+    let answer = await this.llm.answerIntelligentQuestion(t.message, ctx, {
       language: t.lang,
+      tenantId: t.tenantId,
+      onModelAnswer: () => {
+        fromModel = true;
+      },
     });
+    if (fromModel) {
+      // Model-written answers pass the same grounding guard as polished replies: only claim
+      // types present in the retrieved dealership documents may appear.
+      const g = this.grounding.sanitizeCustomerReply({
+        reply: answer,
+        verifiedFacts: verifiedFactsFrom(t.evidence),
+        allowedClaimTypes: detectClaimTypes(ctx.join('\n')),
+      });
+      if (g.sanitized) {
+        this.metrics.increment('chat.grounding.sanitized');
+        t.languageModel = 'discarded';
+        answer = ctx.length
+          ? tr(
+              t.lang,
+              `Here’s what the dealership has on file: ${ctx.join(' ').slice(0, 500)}`,
+              `Esto es lo que la agencia tiene registrado: ${ctx.join(' ').slice(0, 500)}`,
+            )
+          : tr(
+              t.lang,
+              'That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?',
+              'Eso no lo tengo en la información de la agencia, y prefiero no adivinar. ¿Quiere que alguien del equipo se lo confirme?',
+            );
+      } else {
+        t.languageModel = 'answered';
+      }
+    }
     t.answers.push(stripFiller(answer));
     t.facts.push(...ctx.map((c) => c.slice(0, 300)));
   }
@@ -4692,6 +4765,7 @@ export class ChatOrchestrator {
         facts: t.facts.join('\n') || undefined,
         userMessage: redactCreditSensitive(t.message),
         language: t.lang,
+        tenantId: t.tenantId,
       });
       if (polished && polished !== draft) {
         const g = this.grounding.sanitizeCustomerReply({
@@ -4702,9 +4776,11 @@ export class ChatOrchestrator {
         if (g.sanitized) {
           // Model added an unverified claim → discard the polish entirely, keep the draft.
           this.metrics.increment('chat.grounding.sanitized');
+          t.languageModel = 'discarded';
         } else {
           reply = stripFiller(polished);
           segments = [reply];
+          if (t.languageModel === 'none') t.languageModel = 'polished';
         }
       }
     }
@@ -4731,6 +4807,7 @@ export class ChatOrchestrator {
       inventoryAsOf: inventoryAsOf ?? null,
       verifiedFactsOnly: t.evidence.every((e) => e.verified || !!e.disclaimer),
       disclaimer: disclaimers.slice(0, 2).join(' ') || undefined,
+      languageModel: t.languageModel,
     };
     await this.store.appendMessage(t.s, 'ASSISTANT', reply, {
       type: t.type ?? 'reply',
