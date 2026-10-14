@@ -28,6 +28,8 @@ export type JourneyState = {
   };
   visibleVins: string[];
   selectedVin?: string;
+  /** Human label for the selected vehicle (e.g. "black 2024 Jeep Wrangler Sport S") */
+  selectedLabel?: string;
   compareVins: string[];
   savedVins: string[];
   payment: {

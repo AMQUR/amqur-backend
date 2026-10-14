@@ -534,7 +534,10 @@ export class ChatOrchestrator {
   ) {
     const { st, u } = t;
     const e = u.entities;
-    if (input.vin) st.selectedVin = input.vin.toUpperCase();
+    if (input.vin && input.vin.toUpperCase() !== st.selectedVin) {
+      st.selectedVin = input.vin.toUpperCase();
+      st.selectedLabel = undefined; // set by the handler that loads the vehicle
+    }
     if (e.contact) {
       st.contact = {
         ...st.contact,
@@ -1177,6 +1180,7 @@ export class ChatOrchestrator {
     }
     const v = ref.v;
     t.st.selectedVin = v.vin;
+    t.st.selectedLabel = vehicleLabel(v, true);
     this.signal(t, 'vehicle_selected');
     void this.analytics.trackEvent(
       t.tenantId,
@@ -1438,6 +1442,7 @@ export class ChatOrchestrator {
     );
     if (shown.length === 1) {
       t.st.selectedVin = shown[0].vin;
+      t.st.selectedLabel = vehicleLabel(shown[0], true);
       this.ask(
         t,
         'none',
@@ -1515,7 +1520,10 @@ export class ChatOrchestrator {
       t.vehicles = await this.withPaymentEstimates(t, yes);
       t.type = 'vehicle_carousel';
       t.st.visibleVins = yes.map((v) => v.vin);
-      if (yes.length === 1) t.st.selectedVin = yes[0].vin;
+      if (yes.length === 1) {
+        t.st.selectedVin = yes[0].vin;
+        t.st.selectedLabel = vehicleLabel(yes[0], true);
+      }
       await this.attachVehicleEvidence(t, yes);
     } else {
       t.narration.push(
@@ -1597,6 +1605,7 @@ export class ChatOrchestrator {
       return;
     }
     t.st.selectedVin = v.vin;
+    t.st.selectedLabel = vehicleLabel(v, true);
     t.toolCount += 1;
     const policy = await this.getPolicy(t);
     const est: PolicyEstimate = this.payments.estimateWithPolicy({
@@ -3273,16 +3282,7 @@ export class ChatOrchestrator {
     const est = st.payment.lastEstimate;
     return {
       selectedVehicle: st.selectedVin
-        ? {
-            vin: st.selectedVin,
-            label:
-              (t.vehicles?.find((v) => v.vin === st.selectedVin) &&
-                vehicleLabel(
-                  t.vehicles.find((v) => v.vin === st.selectedVin)!,
-                  true,
-                )) ||
-              st.selectedVin,
-          }
+        ? { vin: st.selectedVin, label: st.selectedLabel ?? st.selectedVin }
         : null,
       payment: est
         ? {
