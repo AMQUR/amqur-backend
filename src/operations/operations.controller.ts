@@ -35,6 +35,7 @@ import { OperationsService } from './operations.service';
 import { ConversationIdService } from '../chat/conversation-id.service';
 import { CreditDestinationAdminService } from '../finance/credit-destination-admin.service';
 import { CREDIT_LINK_TYPES } from '../finance/credit-destination';
+import { RooftopReadinessService } from './rooftop-readiness';
 import type { CreditLinkType } from '../finance/credit-destination';
 
 class TextDto {
@@ -79,7 +80,16 @@ export class OperationsController {
   constructor(
     private readonly ops: OperationsService,
     private readonly creditAdmin: CreditDestinationAdminService,
+    private readonly readiness: RooftopReadinessService,
   ) {}
+
+  /** Group-level five-rooftop readiness scorecard (platform admins only). */
+  @Roles('SUPER_ADMIN')
+  @Get('group/readiness')
+  groupReadiness(@CurrentUser() u: AuthUser) {
+    assertStaffRole(u);
+    return this.readiness.scorecard();
+  }
 
   private scope(user: AuthUser, tenantId?: string, locationId?: string) {
     assertStaffRole(user);

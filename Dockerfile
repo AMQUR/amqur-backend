@@ -22,6 +22,8 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/command-center/dist ./command-center/dist
 COPY --from=build /app/prisma ./prisma
+# Non-secret five-rooftop readiness registry (evidence states only).
+COPY --from=build /app/config/rooftops ./config/rooftops
 COPY --from=build /app/package.json ./package.json
 # Optional deploy-time provenance stamp (glob keeps COPY happy when absent).
 COPY --from=build /app/release.jso[n] ./

@@ -97,9 +97,14 @@ export class InventoryFeedService {
   }
 
   private parseCsv(csv: string): any[] {
-    return parse(csv, {
+    const rows = parse(csv, {
       columns: true,
       skip_empty_lines: true,
-    });
+    }) as Array<Record<string, unknown>>;
+    // Defense in depth: feed headers can never name prototype-bearing keys.
+    const BAD = new Set(['__proto__', 'constructor', 'prototype']);
+    return rows.map((r) =>
+      Object.fromEntries(Object.entries(r).filter(([k]) => !BAD.has(k))),
+    );
   }
 }
