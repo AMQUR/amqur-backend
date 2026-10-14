@@ -34,6 +34,16 @@ const PROFILES = {
 
 const cfg = PROFILES[PROFILE] || PROFILES.SMOKE;
 
+/** Realistic first turns exercising inventory search, payment policy, hours and NLU paths. */
+const MESSAGES = [
+  'Looking for a black Wrangler under 45 grand',
+  'What time do you close today?',
+  'Do you have any trucks under 60k?',
+  'I need an oil change next Friday morning',
+  'What would the payment be on a Grand Cherokee with 5k down?',
+  'hello',
+];
+
 async function requestNamed(name, fn, acceptStatuses = null) {
   const t0 = Date.now();
   try {
@@ -96,8 +106,7 @@ async function oneCycle() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            message: 'hello',
-            conversationId: `load-${Math.random().toString(16).slice(2)}`,
+            message: MESSAGES[Math.floor(Math.random() * MESSAGES.length)],
           }),
         }),
       ),

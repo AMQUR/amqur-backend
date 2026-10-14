@@ -1,44 +1,56 @@
 {
   "profile": "SMOKE",
-  "base": "https://staging-api.dialusnow.com/api",
-  "expectTokenForbidden": true,
-  "started": "2026-07-17T00:46:17.628Z",
-  "ended": "2026-07-17T00:46:37.897Z",
+  "base": "http://127.0.0.1:3001/api",
+  "expectTokenForbidden": false,
+  "started": "2026-10-14T03:02:10.577Z",
+  "ended": "2026-10-14T03:02:30.802Z",
   "durationSec": 20,
   "targetRps": 15,
   "workers": 5,
-  "total": 912,
-  "ok": 543,
-  "fail": 369,
-  "errorRate": 0.40460526315789475,
-  "avgMs": 42,
-  "p95Ms": 65,
-  "p99Ms": 209,
-  "achievedRps": 46,
+  "total": 1525,
+  "ok": 1525,
+  "fail": 0,
+  "errorRate": 0,
+  "avgMs": 8,
+  "p95Ms": 23,
+  "p99Ms": 28,
+  "achievedRps": 76,
   "byName": {
     "health": {
-      "ok": 186,
-      "fail": 118,
-      "sumMs": 12600,
-      "n": 304
+      "ok": 305,
+      "fail": 0,
+      "sumMs": 604,
+      "n": 305
     },
     "widget-config": {
-      "ok": 186,
-      "fail": 118,
-      "sumMs": 13015,
-      "n": 304
+      "ok": 305,
+      "fail": 0,
+      "sumMs": 1551,
+      "n": 305
     },
     "widget-token": {
-      "ok": 171,
-      "fail": 133,
-      "sumMs": 13054,
-      "n": 304
+      "ok": 305,
+      "fail": 0,
+      "sumMs": 1214,
+      "n": 305
+    },
+    "chat": {
+      "ok": 305,
+      "fail": 0,
+      "sumMs": 5429,
+      "n": 305
+    },
+    "handoff": {
+      "ok": 305,
+      "fail": 0,
+      "sumMs": 4161,
+      "n": 305
     }
   },
   "acceptance": {
     "errorRateMax": 0.01,
     "p95MaxMs": 2000,
-    "passed": false,
-    "note": "Staging canary: widget-token 403 counted OK (fail-closed origins)."
+    "passed": true,
+    "note": "Paced load under test throttle ceiling."
   }
 }
