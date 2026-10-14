@@ -94,7 +94,9 @@ describe('owner acceptance — real owner conversation', () => {
     const r8 = await s.say('How much is it?');
     expect(r8.reply).toContain('$49,870');
     expect(r8.reply).toMatch(/demo figure/i);
-    expect(r8.reply).not.toMatch(/\$[\d,]+ (?:a|per) month|out-the-door total is/i);
+    expect(r8.reply).not.toMatch(
+      /\$[\d,]+ (?:a|per) month|out-the-door total is/i,
+    );
 
     const r9 = await s.say('How long has it been on your lot?');
     expect(r9.reply).toMatch(/isn.t on the lot yet|in transit/i);
