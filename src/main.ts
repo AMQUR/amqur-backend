@@ -65,22 +65,39 @@ async function bootstrap() {
   // AMQUR Command Center (staff app) — static, same-origin, strict CSP, never indexed.
   const ccDist = join(__dirname, '..', 'command-center', 'dist');
   if (existsSync(ccDist)) {
-    app.use('/cc', (_req: unknown, res: { setHeader: (k: string, v: string) => void }, next: () => void) => {
-      res.setHeader(
-        'Content-Security-Policy',
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
-      );
-      res.setHeader('X-Frame-Options', 'DENY');
-      res.setHeader('X-Content-Type-Options', 'nosniff');
-      res.setHeader('Referrer-Policy', 'no-referrer');
-      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-      res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-      next();
+    app.use(
+      '/cc',
+      (
+        _req: unknown,
+        res: { setHeader: (k: string, v: string) => void },
+        next: () => void,
+      ) => {
+        res.setHeader(
+          'Content-Security-Policy',
+          "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
+        );
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        res.setHeader(
+          'Permissions-Policy',
+          'camera=(), microphone=(), geolocation=()',
+        );
+        next();
+      },
+    );
+    app.useStaticAssets(ccDist, {
+      prefix: '/cc/',
+      index: 'index.html',
+      maxAge: '1h',
+      setHeaders: (res, path) => {
+        if (path.endsWith('index.html'))
+          res.setHeader('Cache-Control', 'no-store');
+        else if (path.includes('/assets/'))
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      },
     });
-    app.useStaticAssets(ccDist, { prefix: '/cc/', index: 'index.html', maxAge: '1h', setHeaders: (res, path) => {
-      if (path.endsWith('index.html')) res.setHeader('Cache-Control', 'no-store');
-      else if (path.includes('/assets/')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
-    } });
     logger.log('Command Center served at /cc/');
   }
 

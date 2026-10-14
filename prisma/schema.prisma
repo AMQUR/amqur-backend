@@ -69,8 +69,12 @@ model Tenant {
   /// Bumped on branding/config changes for cache invalidation
   configVersion Int @default(1)
 
-  /// Data retention days for conversations/leads (ops policy; enforced by retention job)
+  /// Days after LAST ACTIVITY before conversations + messages are HARD-DELETED (not archived).
   dataRetentionDays Int @default(365)
+  /// Analytics events older than this are hard-deleted (aggregate-safe, no PII).
+  analyticsRetentionDays Int @default(400)
+  /// When true, the retention job deletes nothing for this tenant (litigation / regulator hold).
+  legalHold Boolean @default(false)
 
   /// Customer-facing consent text (public-safe)
   consentText String?
