@@ -211,4 +211,20 @@ describe('owner acceptance — real owner conversation', () => {
     expect(r.journey.selectedVehicle ?? null).toBeNull();
     expect(r.journey.payment ?? null).toBeNull();
   });
+
+  it('a purchase after an open handoff is added to that inbox item, not lost', async () => {
+    const s = await session();
+    await s.say('Grand Cherokee');
+    await s.say('can someone call me');
+    await s.say('How do I get started buying it?');
+    const conv = await ctx.prisma.conversation.findFirstOrThrow({
+      where: { tenantId: d.tenantId, externalKey: s.cid },
+    });
+    const esc = await ctx.prisma.escalation.findMany({
+      where: { tenantId: d.tenantId, conversationId: conv.id },
+    });
+    expect(esc).toHaveLength(1);
+    expect(esc[0].summary).toContain('PURCHASE REQUEST');
+    expect(esc[0].summary).toContain(gc().vin);
+  });
 });

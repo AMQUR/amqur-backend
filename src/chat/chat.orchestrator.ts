@@ -5228,7 +5228,7 @@ export class ChatOrchestrator {
     if (st.purchase?.vin !== v.vin && (await this.cap(t, 'handoff')).allowed) {
       t.toolCount += 1;
       const pay = st.payment.leaseOrPurchase;
-      const { escalation, notified } = await this.escalations.create({
+      const { escalation, notified, deduped } = await this.escalations.create({
         tenantId: t.tenantId,
         locationId: t.locationId,
         externalKey: t.s.externalKey,
@@ -5261,6 +5261,18 @@ export class ChatOrchestrator {
           leadId: st.leadId ?? null,
         },
       });
+      if (deduped) {
+        // One open inbox item per conversation: add the purchase to it so staff see it.
+        const line = `PURCHASE REQUEST: ${label} | VIN ${v.vin}${v.stock ? ` | Stock ${v.stock}` : ''} | Status ${v.status}`;
+        if (!(escalation.summary ?? '').includes(line))
+          await this.prisma.escalation.updateMany({
+            where: { id: escalation.id, tenantId: t.tenantId },
+            data: {
+              summary: `${escalation.summary ?? ''} | ${line}`.slice(0, 4000),
+              urgency: EscalationUrgency.HIGH,
+            },
+          });
+      }
       st.purchase = {
         vin: v.vin,
         stock: v.stock ?? undefined,
