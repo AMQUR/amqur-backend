@@ -35,6 +35,20 @@ export type JourneyState = {
   selectedVin?: string;
   /** Human label for the selected vehicle (e.g. "black 2024 Jeep Wrangler Sport S") */
   selectedLabel?: string;
+  /** Stock number and inventory status of the selected vehicle, as last read from inventory. */
+  selectedStock?: string;
+  selectedStatus?: string;
+  /** Purchase intent ("how do I buy it now") — one record per vehicle, visible to sales staff. */
+  purchase?: {
+    vin: string;
+    stock?: string;
+    status?: string;
+    escalationId?: string;
+    notified?: boolean;
+    requestedAt: string;
+  };
+  /** How many times in a row the assistant could not help — varies the fallback wording. */
+  fallbacks?: number;
   compareVins: string[];
   savedVins: string[];
   payment: {
@@ -85,6 +99,8 @@ export type JourneyState = {
     type: 'SALES' | 'TEST_DRIVE' | 'SERVICE' | 'PARTS' | 'FINANCE';
     serviceNeed?: string;
     note?: string;
+    /** Date/time pieces already given ("Friday", then "morning") — merged across turns. */
+    when?: import('../../common/time/date-phrase').ResolvedWhen;
   };
   service?: {
     need?: string;
@@ -116,7 +132,12 @@ export type JourneyState = {
     partNumber?: string;
     vehicle?: { year?: number; make?: string; model?: string };
   };
-  finance?: { requestId?: string; creditLinkOffered?: boolean };
+  finance?: {
+    requestId?: string;
+    creditLinkOffered?: boolean;
+    /** The link shown was a labeled demo preview, not a live destination. */
+    creditPreview?: boolean;
+  };
   handoff?: { escalationId?: string; notified?: boolean; queued?: boolean };
   /** customer questions we could not answer yet — resolved before pushing a CTA */
   openQuestions: string[];

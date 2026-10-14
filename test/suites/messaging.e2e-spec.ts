@@ -146,10 +146,17 @@ describe('messaging, consent ledger, campaigns (fake Twilio)', () => {
       where: { topic: 'messaging.send', idempotencyKey: `msg:${q.id}` },
       data: { nextAttemptAt: new Date(0) },
     });
-    await ctx.app.get(OutboxProcessorService).processBatch(500, 'msg-test');
-    const sent = await ctx.prisma.outboundMessage.findUniqueOrThrow({
+    // The outbox claims oldest-first; a shared test DB can hold a backlog from earlier suites,
+    // so drain until this message has been attempted (production drains continuously).
+    let sent = await ctx.prisma.outboundMessage.findUniqueOrThrow({
       where: { id: q.id },
     });
+    for (let i = 0; i < 20 && sent.status === 'QUEUED'; i += 1) {
+      await ctx.app.get(OutboxProcessorService).processBatch(500, 'msg-test');
+      sent = await ctx.prisma.outboundMessage.findUniqueOrThrow({
+        where: { id: q.id },
+      });
+    }
     expect(sent.status).toBe('SENT');
     expect(received.find((r) => r.To === PHONE)).toMatchObject({
       To: PHONE,

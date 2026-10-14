@@ -50,6 +50,9 @@ export type TurnIntent =
   | 'SMALL_TALK'
   | 'SHOPPING_START'
   | 'OTD_QUOTE'
+  | 'PURCHASE_START'
+  | 'CHANGE_OF_MIND'
+  | 'RESUME_VEHICLE'
   | 'SAFETY_URGENT'
   | 'UNKNOWN';
 
@@ -99,6 +102,14 @@ export type TurnEntities = {
   zip?: string;
   /** "does that mean I'm approved?" */
   approvalQuestion?: boolean;
+  /** Customer signals credit worries ("my credit isn't great", "bad credit", "little down"). */
+  creditConcern?: boolean;
+  /** "What do I need to bring?" — documents question inside a purchase/visit. */
+  bringQuestion?: boolean;
+  /** Customer says the assistant is not answering ("you keep dodging my question"). */
+  notAnswered?: boolean;
+  /** Visit time described loosely ("after work", "in the evening") — needs an exact time. */
+  looseTime?: 'after_work' | 'morning' | 'afternoon' | 'evening' | 'lunch';
   /** "go back to the Wrangler" — resume an earlier vehicle instead of searching again. */
   resume?: boolean;
   trade?: {
@@ -152,7 +163,8 @@ export type PendingQuestion =
   | 'confirm_credit_link'
   | 'text_consent'
   | 'service_vehicle'
-  | 'otd_zip';
+  | 'otd_zip'
+  | 'payment_method';
 
 export const MAKES = [
   'acura',
@@ -536,6 +548,11 @@ const FUZZY_STOP = new Set([
   'renewal',
   'renegade',
   'wrangle',
+  'changed',
+  'charged',
+  'charges',
+  'changes',
+  'charter',
 ]);
 
 export function fuzzyModel(text: string): string | null {
@@ -553,9 +570,14 @@ export function fuzzyModel(text: string): string | null {
       }
       continue;
     }
+    // 6–7 letters: one edit ("changed" must never become "charger"); 8+: two edits.
+    const budget = w.length >= 8 ? 2 : 1;
     for (const m of Object.keys(MODELS)) {
       if (m.includes(' ') || m.length < 6) continue;
-      if (Math.abs(m.length - w.length) <= 2 && editDistance(w, m) <= 2)
+      if (
+        Math.abs(m.length - w.length) <= budget &&
+        editDistance(w, m) <= budget
+      )
         return m;
     }
   }
@@ -608,7 +630,16 @@ export function extractContact(
       )
         out.lastName = cap(last);
     }
-  } else if (pending === 'contact_name') {
+  } else if (
+    pending === 'contact_name' ||
+    // "Mike Jones 312-555-0188" in answer to "best number?": a capitalized name next to the
+    // number they were asked for.
+    (pending === 'contact_method' &&
+      (out.phone || out.email) &&
+      /^\s*[A-ZÀ-Ý][a-zà-ÿ'-]+(?:\s+[A-ZÀ-Ý][a-zà-ÿ'-]+){0,2}\s*[,:-]?\s*(?:\+?1|\(?\d{3}|[A-Za-z0-9._%+-]+@)/.test(
+        text,
+      ))
+  ) {
     // Only treat a bare short reply as a name when we just asked for one. Contact details in
     // the same reply ("Mike Chen, 312-555-0199") are removed first.
     const clean = text
@@ -728,6 +759,10 @@ export function detectLanguage(text: string): 'en' | 'es' | undefined {
   if (sEn >= 2 && sEn > sEs) return 'en';
   return undefined;
 }
+
+/** Concepts (not vehicles) people compare: "AWD vs 4WD", "lease or finance", "hybrid vs EV". */
+export const GENERAL_TOPIC =
+  /\b(awd|4wd|4x4|fwd|rwd|all[- ]wheel|four[- ]wheel|front[- ]wheel|rear[- ]wheel|lease|leasing|financ\w*|loan|hybrid|plug[- ]in|phev|ev|electric|gas|diesel|turbo|msrp|invoice|apr|gap insurance|extended warranty|certified|cpo|new (?:and|or|vs\.?) used)\b/;
 
 export function understandTurn(
   message: string,
@@ -1094,6 +1129,23 @@ export function understandTurn(
     e.leaseOrPurchase = 'lease';
   else if (/\b(buy|purchase|finance it|financing|own it)\b/.test(t))
     e.leaseOrPurchase = 'purchase';
+  // Short answers to "finance or cash?"
+  if (pending === 'payment_method') {
+    if (
+      /^\s*(?:cash|all cash|cash please|efectivo|de contado)\s*[.!]*\s*$/.test(
+        t,
+      )
+    ) {
+      e.leaseOrPurchase = 'cash';
+      add('OTD_QUOTE', 0.9, 'answers payment method: cash');
+    } else if (/\b(financ\w*|loan|monthly|payments?)\b/.test(t)) {
+      e.leaseOrPurchase = 'purchase';
+      add('FINANCE_REQUEST', 0.9, 'answers payment method: finance');
+    } else if (/\blease\b/.test(t)) {
+      e.leaseOrPurchase = 'lease';
+      add('FINANCE_REQUEST', 0.9, 'answers payment method: lease');
+    }
+  }
 
   // ── when
   const when = resolveWhen(raw, ctx.timeZone, ctx.now);
@@ -1143,7 +1195,7 @@ export function understandTurn(
   // ── sentiment
   let sentiment: Sentiment = 'neutral';
   if (
-    /\b(pissed|angry|furious|ridiculous|unacceptable|nobody (?:is )?help|no one (?:is )?help|called (?:twice|three times|\d+ times|multiple times)|waste of (?:my )?time|terrible|worst|fed up|frustrat|annoyed|ignored|still waiting|never called back|wtf|molesto|enojado)\b/.test(
+    /\b(pissed|angry|furious|ridiculous|unacceptable|nobody (?:is )?help|no one (?:is )?help|called (?:twice|three times|\d+ times|multiple times)|waste of (?:my )?time|terrible|worst|fed up|frustrat|annoyed|ignored|still waiting|never called back|wtf|molesto|enojado|keep dodging|dodg(?:e|ing) (?:my|the) question|not answering|you(?:'re| are) not listening|answer (?:my|the) question|didn'?t answer|useless)\b/.test(
       t,
     )
   )
@@ -1428,9 +1480,14 @@ export function understandTurn(
     (ctx.hasPaymentEstimate &&
       (e.termMonths ||
         e.customerApr !== undefined ||
-        /\b(with my trade|what (?:would|does) (?:that|it) look like|what if|how about|what about)\b/.test(
+        (/\b(with my trade|what (?:would|does) (?:that|it) look like|what if|how about|what about)\b/.test(
           t,
-        )))
+        ) &&
+          // "what if I come tomorrow at 5" is about a visit, not the payment
+          !when &&
+          !/\b(come|visit|stop by|swing by|test[- ]?drive|appointment|service|oil change)\b/.test(
+            t,
+          ))))
   ) {
     add(
       'PAYMENT_ESTIMATE',
@@ -1457,7 +1514,9 @@ export function understandTurn(
       t,
     )
   ) {
-    add('COMPARE', 0.85, 'compare cue');
+    if (GENERAL_TOPIC.test(t) && !e.vehicle?.model && !e.vehicle?.make)
+      add('KNOWLEDGE_QUESTION', 0.85, 'general automotive comparison');
+    else add('COMPARE', 0.85, 'compare cue');
   }
 
   // ── selection of prior vehicle
@@ -1682,6 +1741,9 @@ export function understandTurn(
     'HUMAN_HANDOFF',
     'APPOINTMENT_CANCEL',
     'APPOINTMENT_RESCHEDULE',
+    'CHANGE_OF_MIND',
+    'RESUME_VEHICLE',
+    'PURCHASE_START',
     'CREDIT_APPLICATION',
     'SERVICE_STATUS',
     'SERVICE_AMENITY_QUESTION',
@@ -1710,6 +1772,140 @@ export function understandTurn(
     'GREETING',
     'UNKNOWN',
   ];
+  // ── PURCHASE: "how do I buy it now", "take it home today", "what do I need to bring"
+  const purchaseCue =
+    /\b(?:how (?:do i |can i |would i |could i |to |do we )(?:buy|purchase|get|take home) (?:it|this|that|one|the \w+|a \w+)|buy (?:it|this|that|this one|that one|one|the \w+(?: \w+)?) (?:now|today|right now|asap|this week)|(?:can|could) i (?:buy|purchase) (?:it|this|that|one)|i(?:'?d| would)? (?:like|want) to (?:buy|purchase) (?:it|this|that|one|the)|i(?:'?m| am) ready to (?:buy|purchase|sign|do this|move forward|make a deal)|ready to (?:buy|purchase)|take (?:it|this|her|him|this one) home|drive (?:it|this|her|this one) home|get (?:this|it) done|make (?:this|it) happen|let'?s do (?:it|this|the deal)|i'?ll take it|i want it|sign (?:the papers|today|tonight)|close the deal|start the (?:purchase|paperwork|buying process)|(?:quiero )?comprar(?:lo|la)|lo quiero|la quiero|c[oó]mo (?:lo|la) compro)\b/.test(
+      t,
+    );
+  const bringQ =
+    /\bwhat (?:do i|should i|do we|will i) (?:need to |have to )?bring\b|\bwhat (?:documents|paperwork|docs) (?:do i|will i|should i)\b|\bqu[eé] (?:necesito|tengo que) (?:traer|llevar)\b/.test(
+      t,
+    );
+  if (bringQ) e.bringQuestion = true;
+  if (purchaseCue || (bringQ && ctx.hasSelectedVehicle))
+    add('PURCHASE_START', 0.93, 'purchase intent');
+  else if (bringQ) add('PURCHASE_START', 0.8, 'documents question');
+  if (
+    /\bbefore (?:the |this )?weekend\b|\bby (?:friday|saturday|the weekend)\b/.test(
+      t,
+    ) &&
+    (ctx.hasSelectedVehicle || purchaseCue) &&
+    !intents.some((i) => /APPOINTMENT/.test(i.intent))
+  )
+    add('PURCHASE_START', 0.85, 'purchase timeline');
+
+  // ── more OTD phrasings ("what's the damage after taxes", "how much all in")
+  if (
+    /\b(?:what'?s|what is) the damage\b|\bdamage after (?:tax|taxes|fees)\b|\bafter (?:tax|taxes)(?: and fees)?\b.{0,20}\b(?:price|cost|total|pay|damage|be)\b|\b(?:how much|what) (?:am i|would i be|will i be) (?:looking at|paying)(?: all in| total| in total)?\b(?=.*\b(?:tax|taxes|fees|all in|total|out)\b)|\ball in\b(?=.*\b(?:price|cost|how much|pay)\b)|\bhow much all in\b/.test(
+      t,
+    )
+  )
+    add('OTD_QUOTE', 0.9, 'out-the-door phrasing');
+
+  // ── credit worries / "send me whatever application I need"
+  if (
+    /\b(?:my )?credit (?:isn'?t|is not|ain'?t|is) (?:great|good|the best|bad|poor|low|terrible|rough|not great|messed up)\b|\b(?:bad|poor|low|no|thin|rough|damaged|bruised) credit\b|\bbankruptcy\b|\brepo(?:ssession)?\b|\blittle (?:money )?down\b|\bno money down\b|\bzero down\b|\bmal cr[eé]dito\b|\bsin cr[eé]dito\b/.test(
+      t,
+    )
+  ) {
+    e.creditConcern = true;
+    add('FINANCE_REQUEST', 0.88, 'credit concern');
+  }
+  if (
+    /\b(?:send|give|get) me (?:whatever|the|any|all the|what) (?:application|apps?|forms?|paperwork)\b|\bwhat (?:application|forms?|paperwork) do i (?:need|fill)\b|\bwhere do i start\b(?=.*\b(?:financ|credit|loan|apply|application)\b)|\bcan i apply (?:now|today|online)\b|\bget approved before (?:coming|i come|i get there)\b/.test(
+      t,
+    )
+  )
+    add('CREDIT_APPLICATION', 0.92, 'application request');
+
+  // ── loose visit times ("I'll come after work")
+  const loose = /\bafter work\b/.test(t)
+    ? 'after_work'
+    : /\b(?:at |around |on my )?lunch(?: break)?\b/.test(t)
+      ? 'lunch'
+      : /\bin the (morning|afternoon|evening)\b|\bthis (morning|afternoon|evening)\b|\btomorrow (morning|afternoon|evening)\b/.exec(
+          t,
+        );
+  if (loose) {
+    e.looseTime =
+      typeof loose === 'string'
+        ? (loose as 'after_work' | 'lunch')
+        : ((loose[1] ?? loose[2] ?? loose[3]) as
+            | 'morning'
+            | 'afternoon'
+            | 'evening');
+  }
+  if (
+    /\bi'?ll (?:come|stop|swing|drop|head|be there|be over|come by|come in)\b|\bi(?:'m| am) (?:coming|heading) (?:in|over|by)\b|\bcome (?:after work|by later|in later)\b/.test(
+      t,
+    ) &&
+    !e.serviceNeed &&
+    !intents.some((i) => /APPOINTMENT/.test(i.intent))
+  )
+    add(
+      ctx.activeDepartment === 'service'
+        ? 'SERVICE_APPOINTMENT'
+        : 'SALES_APPOINTMENT',
+      0.85,
+      'visit statement',
+    );
+
+  // ── change of mind / "you're not answering"
+  if (
+    /\b(?:i )?changed my mind\b|\bnever ?mind\b|\bscratch that\b|\bforget (?:it|that|about it)\b|\bon second thought\b|\bcambi[eé] de opini[oó]n\b|\bolv[ií]dalo\b/.test(
+      t,
+    ) &&
+    !e.vehicle?.model
+  )
+    add('CHANGE_OF_MIND', 0.9, 'change of mind');
+  if (
+    /\b(?:keep|kept) (?:dodging|avoiding|ignoring)\b|\bdodg(?:e|ing) (?:my|the) question\b|\bnot answering (?:my|the) question\b|\byou didn'?t answer\b|\banswer (?:my|the) question\b|\byou(?:'re| are) not listening\b|\bthat'?s not what i asked\b|\bno respondiste\b/.test(
+      t,
+    )
+  )
+    e.notAnswered = true;
+
+  // ── "why should I buy this one?" is a question about the shown vehicle
+  if (
+    /\bwhy (?:should|would) i (?:buy|get|choose|pick|go with) (?:this|that|it|this one|that one)\b|\bwhat makes (?:it|this one|this) (?:special|worth it|stand out|better)\b|\bis (?:it|this one) worth it\b|\bsell me on (?:it|this)\b/.test(
+      t,
+    ) &&
+    (ctx.hasSelectedVehicle || ctx.hasVisibleVehicles)
+  )
+    add('VEHICLE_QUESTION', 0.88, 'why this vehicle');
+
+  // "morning" / "Friday" while we're collecting a booking is a time answer, not a greeting.
+  if (
+    (pending === 'appointment_date' || pending === 'appointment_time') &&
+    e.when &&
+    intents.some((i) => /APPOINTMENT/.test(i.intent))
+  )
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (['GREETING', 'SMALL_TALK'].includes(intents[i].intent))
+        intents.splice(i, 1);
+
+  // "Let's go back to the Jeep" — return to the vehicle already being discussed.
+  if (
+    ctx.hasSelectedVehicle &&
+    /\b(?:go|going|get|come|switch|head) back to (?:the |that |my |our )?(?:jeep|car|truck|suv|vehicle|one|it|\w+)\b|\bback to the (?:jeep|car|truck|suv|vehicle|\w+)\b|\bvolvamos (?:al|a la)\b/.test(
+      t,
+    )
+  ) {
+    add('RESUME_VEHICLE', 0.95, 'back to selected vehicle');
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (
+        ['INVENTORY_SEARCH', 'SELECT_VEHICLE', 'KNOWLEDGE_QUESTION'].includes(
+          intents[i].intent,
+        )
+      )
+        intents.splice(i, 1);
+  }
+
+  // A generic "open question" fallback yields to any specific intent found above.
+  if (intents.some((i) => i.evidence !== 'open question'))
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (intents[i].evidence === 'open question') intents.splice(i, 1);
+
   // ── CONTACT NUMBER question: answered from the store record, not a scheduling request.
   const phoneQ =
     !/\d{3}\D{0,3}\d{3}\D{0,3}\d{4}/.test(t) &&

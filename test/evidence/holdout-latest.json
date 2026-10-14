@@ -1,7 +1,21 @@
 {
-  "generatedAt": "2026-10-14T15:12:37.753Z",
+  "generatedAt": "2026-10-14T21:21:37.827Z",
   "cases": 54,
-  "taskSuccess": 1,
+  "taskSuccess": 0.9815,
   "p0": 0,
-  "failures": []
+  "failures": [
+    {
+      "say": "get me a manager",
+      "kind": "handoff",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_handoff:no_handoff",
+          "detail": "get me a manager → I want to make sure I get this right — what are you looking for?"
+        }
+      ],
+      "reply": "I want to make sure I get this right — what are you looking for?"
+    }
+  ]
 }

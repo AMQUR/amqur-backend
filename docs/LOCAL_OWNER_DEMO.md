@@ -75,6 +75,35 @@ the API from here because no key exists in this environment.
 
 Never write the key into `.env.test`, `.env.local` or any tracked file.
 
+## Verify the model is really answering (do this before the demo)
+
+Presence of a key is not proof. In **your own terminal** (the key is typed hidden and lives only
+in that shell):
+
+```bash
+read -rs AMQUR_DEMO_ANTHROPIC_API_KEY && export AMQUR_DEMO_ANTHROPIC_API_KEY && cd backend && ANTHROPIC_API_KEY="$AMQUR_DEMO_ANTHROPIC_API_KEY" npm run ai:check
+```
+
+`ai:check` makes one short real call through the router and prints provider, model id, latency
+and tokens — never the key. If it fails, the model id or key is the problem; nothing else is
+worth testing yet. Then start the API from the same shell (`npm run start:local-demo`) and check:
+
+- `curl -s localhost:3001/api/health` → `"llm":"configured"` (presence only)
+- every chat reply's `provenance.languageModel` (`polished` / `answered` = a real model reply;
+  `none` = deterministic) and `provenance.modelInterpreted` (the model helped understand an
+  unscripted turn).
+
+How the model is used: the rules understand the turn first; only when they find nothing
+specific does the model propose an intent (schema-validated, ≥ 0.7 confidence, never cancel/
+safety, never invents a ZIP or amount the customer didn't type). Business actions always go
+through the same services. The model then rephrases the server's reply; any rewrite that changes
+a number, drops "request"/"estimate"/"in transit", or adds an unverified claim is discarded.
+
+Demo honesty notes: `start:local-demo` unsets `CRM_WEBHOOK_URL` (the test stack points it at a
+mock CRM — its 200 is not a person), so handoffs say "logged for the team" and the Command Center
+shows them. Set `DEMO_CRM_WEBHOOK_URL` to a real receiver if you want delivery shown as notified.
+`PORT=3002 npm run start:local-demo` now really uses 3002.
+
 ## Credit application destination (owner-supplied Tekion link)
 
 Status: **stored encrypted in the local demo DB, link type `UNVERIFIED`, demo preview only.**

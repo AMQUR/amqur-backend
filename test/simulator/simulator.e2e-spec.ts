@@ -161,7 +161,12 @@ describe('customer simulator', () => {
             ...f,
             detail: `[turn ${transcript.length + 1}] ${f.detail}`,
           });
-        transcript.push({ u: turn.say, a: body?.reply ?? `HTTP ${r.status}` });
+        transcript.push({
+          u: turn.say,
+          a:
+            body?.reply ??
+            `HTTP ${r.status} ${String(r.text ?? '').slice(0, 200)} ct=${String(r.headers['content-type'] ?? '')} rid=${String(r.headers['x-request-id'] ?? '')}`,
+        });
         if (body) {
           prev = body;
           history.push(body);
@@ -255,7 +260,7 @@ describe('customer simulator', () => {
           seed: x.s.seed,
           persona: x.s.persona,
           findings: x.findings.slice(0, 6),
-          transcript: x.transcript.slice(0, 12),
+          transcript: x.transcript.slice(0, 40),
         })),
     };
     const out = path.join(__dirname, '../evidence/simulator-latest.json');

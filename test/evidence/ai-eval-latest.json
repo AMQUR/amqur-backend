@@ -1,9 +1,17 @@
 {
-  "generatedAt": "2026-10-14T15:12:47.486Z",
+  "generatedAt": "2026-10-14T21:21:48.159Z",
   "cases": 25,
-  "passRate": 1,
+  "passRate": 0.96,
   "severe": 0,
-  "findings": [],
+  "findings": [
+    {
+      "case": "sales-in-transit",
+      "turn": 0,
+      "severity": "EXPECT",
+      "rule": "reply_forbidden:/on the lot|in stock now/i",
+      "reply": "I found one 1500 — it’s marked in transit, so it isn’t on the lot yet. Curious what it would run per month?"
+    }
+  ],
   "results": [
     {
       "id": "sales-broad",
@@ -33,7 +41,7 @@
     {
       "id": "sales-in-transit",
       "category": "sales",
-      "pass": true
+      "pass": false
     },
     {
       "id": "sales-compare-budget-payment",

@@ -3,10 +3,14 @@
 # Never points at Railway: refuses any non-local DATABASE_URL.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+CALLER_PORT="${PORT:-}"
 set -a; . ./test-infra/.env.test; set +a
 DB_HOST="$(node -e "console.log(new URL(process.env.DATABASE_URL).hostname)")"
 case "$DB_HOST" in localhost|127.0.0.1) ;; *) echo "Refusing: non-local DATABASE_URL host $DB_HOST" >&2; exit 1;; esac
-export NODE_ENV=development PORT="${PORT:-3001}"
+export NODE_ENV=development PORT="${CALLER_PORT:-3001}"
+# .env.test points CRM_WEBHOOK_URL at the mock-CRM test double. Its 200 is not a person being
+# alerted, so the demo must not say "I've alerted the team". Use a real receiver only if given.
+export CRM_WEBHOOK_URL="${DEMO_CRM_WEBHOOK_URL:-}"
 export CORS_ORIGINS="http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173,http://localhost:3001,http://127.0.0.1:18084,http://localhost:18084"
 # AI: set ANTHROPIC_API_KEY in your own shell (never in a file in Git) to enable LLM polish.
 # Without it the concierge runs fully deterministic.

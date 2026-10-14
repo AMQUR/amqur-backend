@@ -121,8 +121,52 @@ function fixWord(w: string): string {
   return best && bestD <= max ? best : w;
 }
 
+const SPOKEN: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  fifteen: 15,
+  twenty: 20,
+  'twenty five': 25,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+  uno: 1,
+  dos: 2,
+  tres: 3,
+  cuatro: 4,
+  cinco: 5,
+  seis: 6,
+  siete: 7,
+  ocho: 8,
+  nueve: 9,
+  diez: 10,
+  veinte: 20,
+};
+/** "five grand" → "5 grand", "two thousand" → "2 thousand", "cinco mil" → "5 mil". */
+function spokenAmounts(t: string): string {
+  return t.replace(
+    /\b(twenty five|[a-z]+)\s+(grand|thousand|k|mil)\b/g,
+    (m, w: string, unit: string) =>
+      SPOKEN[w] !== undefined ? `${SPOKEN[w]} ${unit}` : m,
+  );
+}
+
 export function normalizeCustomerText(lower: string): string {
-  let t = lower;
+  let t = spokenAmounts(lower);
   for (const [re, rep] of SLANG) t = t.replace(re, rep);
   for (const [re, rep] of VOICE) t = t.replace(re, rep);
   t = t.replace(/[a-z][a-z'-]{5,}/g, (w) => fixWord(w));

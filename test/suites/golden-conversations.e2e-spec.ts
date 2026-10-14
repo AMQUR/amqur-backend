@@ -315,7 +315,9 @@ describe('golden owner-demo conversations', () => {
       preliminary: true,
     });
     expect(otd.missingInputs).toEqual(expect.arrayContaining(['tax_rate']));
-    expect(r[1].reply).toMatch(/won't guess|aren't something I'll guess/i);
+    expect(r[1].reply).toMatch(
+      /won['’]t guess|aren['’]t something I['’]ll guess/i,
+    );
     expect(r[2].reply).toMatch(/no credit application needed/i);
     expect(r[2].cards.some((c) => c.kind === 'credit_application')).toBe(false);
     const q = await ctx.prisma.priceQuoteRequest.findFirst({
@@ -356,7 +358,7 @@ describe('golden owner-demo conversations', () => {
     expect(appt.status).toBe('REQUESTED');
     expect(r[5].reply).toMatch(/request/i);
     expect(r[7].reply).toMatch(/2019 Jeep Cherokee/);
-    expect(r[8].reply).toMatch(/back to the .*Wrangler Sport S/);
+    expect(r[8].reply).toMatch(/back to the .*Wrangler Sport S/i);
     expect(r[9].cards.some((c) => c.kind === 'payment')).toBe(true);
     expect(r[9].reply).toMatch(/60 months/);
     const j = r[9].journey as {
