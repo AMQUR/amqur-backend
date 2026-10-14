@@ -1,4 +1,7 @@
-import { PLATFORM_FEATURE_DEFAULTS } from '../feature-flags/feature-flags.service';
+import {
+  PLATFORM_FEATURE_DEFAULTS,
+  RESERVED_FLAGS,
+} from '../feature-flags/feature-flags.service';
 import { inventoryFreshnessDisclaimer } from '../chat/engines/inventory-freshness';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CircuitBreakerService } from '../integrations/core/circuit-breaker.service';
@@ -15,7 +18,11 @@ describe('internal canary gate contracts', () => {
       expect(PLATFORM_FEATURE_DEFAULTS.serviceAi).toBe(false);
       expect(PLATFORM_FEATURE_DEFAULTS.partsAi).toBe(false);
       expect(PLATFORM_FEATURE_DEFAULTS.tekionIntegration).toBe(false);
-      expect(PLATFORM_FEATURE_DEFAULTS.vAutoFeed).toBe(false);
+      // vAutoFeed/leadScoring were removed (2026-10-13): they had no consumer and implied
+      // functionality. Inventory availability is gated by the `inventory` capability chain.
+      expect(PLATFORM_FEATURE_DEFAULTS).not.toHaveProperty('vAutoFeed');
+      for (const k of Object.keys(RESERVED_FLAGS))
+        expect(PLATFORM_FEATURE_DEFAULTS[k]).toBe(false);
     });
   });
 

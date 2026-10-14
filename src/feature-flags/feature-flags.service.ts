@@ -6,6 +6,18 @@ import { PrismaService } from '../prisma/prisma.service';
  * Only explicitly enabled tenant/location flags turn features on, and
  * CapabilityService still verifies dependency chains before use.
  */
+/**
+ * Reserved flags: named so dealers/ops can see the roadmap, but FORCED OFF until the
+ * capability is implemented and its dependencies exist. Setting them true has no effect.
+ */
+export const RESERVED_FLAGS: Record<string, string> = {
+  voiceAi: 'voice_provider_not_configured',
+  whatsapp: 'whatsapp_sender_not_configured',
+  email: 'email_provider_not_selected',
+  priceDropAlerts: 'requires_verified_inventory_change_events_and_messaging',
+  crossStoreInventory: 'requires_dealer_group_cross_rooftop_permission_model',
+};
+
 export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   chat: true, // widget shell; inventory/payments still gated
   inventory: false,
@@ -13,7 +25,6 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   vehicleCompare: false,
   savedVehicles: false,
   tekionIntegration: false,
-  vAutoFeed: false,
   serviceAi: false,
   partsAi: false,
   financeCalculator: false,
@@ -23,7 +34,6 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   automatedFollowup: false,
   priceDropAlerts: false,
   crossStoreInventory: false,
-  leadScoring: false,
   copilot: false,
   leadCapture: true,
   handoff: true,
@@ -89,19 +99,28 @@ export class FeatureFlagsService {
     if (!tekionLive) {
       merged.tekionIntegration = false;
     }
-    if (!vautoLive && merged.vAutoFeed === true) {
-      // Allow feed URL on Location without IntegrationConnection, but do not
-      // claim vAuto live integration health unless connection is liveReady.
-      // Flag may still be true for feed-based inventory — CapabilityService checks data.
-    }
-    if (!tekionLive && !vautoLive) {
-      // no-op; kept for clarity
-    }
-
-    // Voice never claimed until a live voice provider is wired
-    merged.voiceAi = false;
+    for (const k of Object.keys(RESERVED_FLAGS)) merged[k] = false;
+    void vautoLive; // vAuto health is reported by the integration, not a flag
 
     return merged;
+  }
+
+  /** Ops view: each flag's effective value with a reason code when forced off. */
+  async explain(tenantId: string, locationId?: string | null) {
+    const f = await this.resolve(tenantId, locationId);
+    return Object.fromEntries(
+      Object.entries(f).map(([k, v]) => [
+        k,
+        {
+          enabled: v,
+          reason:
+            RESERVED_FLAGS[k] ??
+            (k === 'tekionIntegration' && !v
+              ? 'no_live_ready_tekion_connection'
+              : undefined),
+        },
+      ]),
+    );
   }
 
   /** Widget-safe subset — fail-closed (`=== true` only). */

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OutboxService } from '../integrations/core/outbox.service';
 import { OutboxProcessorService } from '../integrations/core/outbox-processor.service';
 import { MessagingService } from './messaging.service';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { ConsentPurpose } from './consent.service';
 
 /** Supported triggers. Each maps to an event emitted by authoritative business state. */
@@ -80,11 +81,20 @@ export class CampaignEngine implements OnModuleInit {
     private readonly outbox: OutboxService,
     private readonly processor: OutboxProcessorService,
     private readonly messaging: MessagingService,
+    private readonly flags: FeatureFlagsService,
   ) {}
 
   onModuleInit() {
     this.processor.registerHandler('campaign.step', (p) =>
       this.execute(p as StepPayload),
+    );
+  }
+
+  /** Tenant/location kill switch for ALL automated follow-up (in addition to per-campaign enable). */
+  private async automationOn(tenantId: string, locationId?: string | null) {
+    return (
+      (await this.flags.resolve(tenantId, locationId)).automatedFollowup ===
+      true
     );
   }
 
@@ -96,6 +106,7 @@ export class CampaignEngine implements OnModuleInit {
     at?: Date;
     scheduledAt?: Date | null;
   }) {
+    if (!(await this.automationOn(e.tenantId, e.locationId))) return;
     const campaigns = await this.prisma.followUpCampaign.findMany({
       where: {
         tenantId: e.tenantId,
@@ -146,6 +157,8 @@ export class CampaignEngine implements OnModuleInit {
     });
     if (!c || !c.enabled) return this.stop('campaign_disabled');
     if (c.version !== p.version) return this.stop('campaign_changed');
+    if (!(await this.automationOn(c.tenantId, c.locationId)))
+      return this.stop('automation_disabled');
     const now = new Date();
     if ((c.startsAt && c.startsAt > now) || (c.endsAt && c.endsAt < now))
       return this.stop('outside_window');

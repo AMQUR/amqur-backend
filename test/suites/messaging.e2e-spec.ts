@@ -63,6 +63,7 @@ describe('messaging, consent ledger, campaigns (fake Twilio)', () => {
           handoff: true,
           leadCapture: true,
           sms: true,
+          automatedFollowup: true,
         },
       },
     });
