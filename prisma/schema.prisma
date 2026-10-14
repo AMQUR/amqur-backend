@@ -1258,12 +1258,58 @@ model TradeRequest {
   appraisalValue    Float?
   status            TradeRequestStatus @default(REQUESTED)
   photoFileIds      String[]           @default([])
+  /// Registration/valuation ZIP as declared by the customer
+  zip               String?
+  /// Customer-declared accident history (NONE | MINOR | MAJOR | UNKNOWN) — never verified
+  accidentHistory   String?
+  /// CLEAN | LIEN | SALVAGE | REBUILT | UNKNOWN as declared
+  titleStatus       String?
+  appraisals        TradeAppraisal[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
   @@index([tenantId, conversationId])
+}
+
+/// One valuation event for a trade. The four kinds are never conflated:
+///   MARKET_ESTIMATE      — licensed market data (e.g. MMR/KBB/Black Book) — NOT an offer
+///   PRELIMINARY_ESTIMATE — provider/dealer estimate before inspection — NOT an offer
+///   DEALER_APPRAISAL     — staff appraisal after review/inspection
+///   FINAL_OFFER          — manager-approved offer with an expiry
+/// A dollar figure reaches the customer only when displayPermitted (provider license and
+/// dealership rules allow it) and the row is ACTIVE and unexpired.
+model TradeAppraisal {
+  id String @id @default(cuid())
+
+  tenantId       String
+  tradeRequestId String
+  tradeRequest   TradeRequest @relation(fields: [tradeRequestId], references: [id], onDelete: Cascade)
+
+  kind             String
+  /// Provider id (e.g. "staff", "vauto", "manheim_mmr") — "staff" for human appraisals
+  provider         String
+  providerRef      String?
+  amount           Float?
+  amountLow        Float?
+  amountHigh       Float?
+  displayPermitted Boolean   @default(false)
+  /// ACTIVE | SUPERSEDED | EXPIRED | ACCEPTED | DECLINED | COUNTERED
+  status           String    @default("ACTIVE")
+  counterAmount    Float?
+  conditionBasis   String?
+  notes            String?
+  createdById      String?
+  approvedById     String?
+  approvedAt       DateTime?
+  expiresAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, tradeRequestId])
+  @@index([tenantId, status])
 }
 
 enum TradeRequestStatus {

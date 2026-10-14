@@ -1,4 +1,5 @@
-import { api } from '../api';
+import { useState } from 'react';
+import { api, session } from '../api';
 import { ago, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 
@@ -74,9 +75,12 @@ export function Queues({ locationId }: { locationId: string }) {
             {!data.trades.length ? <Empty>None open.</Empty> : (
               <ul className="list">
                 {data.trades.map((t) => (
-                  <li key={t.id}>
-                    <span>{[t.year, t.make, t.model].filter(Boolean).join(' ') || 'Vehicle'} {t.mileage ? `· ${t.mileage.toLocaleString()} mi` : ''} {t.customerName ? `· ${t.customerName}` : ''}</span>
-                    <Badge tone={statusTone(t.status)}>{t.status}</Badge>
+                  <li key={t.id} className="stack">
+                    <span className="row">
+                      <span>{[t.year, t.make, t.model].filter(Boolean).join(' ') || 'Vehicle'} {t.mileage ? `· ${t.mileage.toLocaleString()} mi` : ''} {t.customerName ? `· ${t.customerName}` : ''}</span>
+                      <Badge tone={statusTone(t.status)}>{t.status}</Badge>
+                    </span>
+                    <TradeActions tradeId={t.id} />
                   </li>
                 ))}
               </ul>
@@ -85,5 +89,36 @@ export function Queues({ locationId }: { locationId: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+/** Staff record an appraisal; managers issue an expiring offer (the only value customers see). */
+function TradeActions({ tradeId }: { tradeId: string }) {
+  const [amount, setAmount] = useState('');
+  const [days, setDays] = useState('7');
+  const [msg, setMsg] = useState<string | null>(null);
+  const isManager = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(session.user?.role ?? '');
+  const post = async (path: string, body: unknown, ok: string) => {
+    setMsg(null);
+    try {
+      await api(`/ops/trades/${tradeId}/${path}`, { method: 'POST', body: JSON.stringify(body) });
+      setMsg(ok);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const n = Number(amount);
+  return (
+    <span className="row small">
+      <label>Amount $<input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: 90 }} /></label>
+      <button className="btn btn--ghost" disabled={!(n > 0)} onClick={() => void post('appraisals', { amount: n }, 'Appraisal recorded (internal)')}>Record appraisal</button>
+      {isManager && (
+        <>
+          <label>Valid days<input inputMode="numeric" value={days} onChange={(e) => setDays(e.target.value)} style={{ width: 44 }} /></label>
+          <button className="btn" disabled={!(n > 0)} onClick={() => void post('offer', { amount: n, validDays: Number(days) || 7 }, 'Offer issued — visible to the customer')}>Issue offer</button>
+        </>
+      )}
+      {msg && <span className="muted">{msg}</span>}
+    </span>
   );
 }

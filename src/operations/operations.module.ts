@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { OperationsService } from './operations.service';
 import { RooftopReadinessService } from './rooftop-readiness';
+import { TradeModule } from '../trade/trade.module';
 import {
   OperationsController,
   WidgetLiveController,
@@ -9,7 +10,7 @@ import { IntegrationsModule } from '../integrations/integrations.module';
 import { ChatModule } from '../chat/chat.module';
 
 @Module({
-  imports: [IntegrationsModule, ChatModule],
+  imports: [IntegrationsModule, ChatModule, TradeModule],
   controllers: [OperationsController, WidgetLiveController],
   providers: [OperationsService, RooftopReadinessService],
 })

@@ -24,6 +24,7 @@ import { FinanceRequestService } from '../finance/finance-request.service';
 import { CreditApplicationService } from '../finance/credit-application.service';
 import { PartsInquiryService } from '../parts/parts-inquiry.service';
 import { TradeService } from '../trade/trade.service';
+import { AppraisalService } from '../trade/appraisal.service';
 import {
   AppointmentRequestResult,
   AppointmentService,
@@ -126,7 +127,24 @@ export type ChatCard =
       preliminary: true;
     }
   | { kind: 'finance_request'; id: string; status: string }
-  | { kind: 'trade'; id: string; summary: string; appraisalVerified: false }
+  | {
+      kind: 'trade';
+      id: string;
+      summary: string;
+      /** true only when a staff appraisal/offer (or licensed provider value) is shown */
+      appraisalVerified: boolean;
+      value?: {
+        kind:
+          | 'MARKET_ESTIMATE'
+          | 'PRELIMINARY_ESTIMATE'
+          | 'DEALER_APPRAISAL'
+          | 'FINAL_OFFER';
+        amount: number | null;
+        low: number | null;
+        high: number | null;
+        expiresAt: string | null;
+      } | null;
+    }
   | {
       kind: 'parts';
       id: string;
@@ -377,6 +395,7 @@ export class ChatOrchestrator {
     private readonly campaigns: CampaignEngine,
     private readonly consent: ConsentService,
     private readonly quotes: PriceQuoteService,
+    private readonly appraisals: AppraisalService,
   ) {}
 
   // ───────────────────────────────────────── entry
@@ -1294,6 +1313,8 @@ export class ChatOrchestrator {
         notes: redactCreditSensitive(t.message).slice(0, 500),
       });
       tr0.requestId = row.id;
+      // Licensed providers first (none configured → queued for a human appraiser).
+      await this.appraisals.requestEstimate(t.tenantId, row.id);
       void this.analytics.trackEvent(
         t.tenantId,
         t.locationId,
@@ -1321,27 +1342,77 @@ export class ChatOrchestrator {
         `Anoté su ${label}${miles} como vehículo a cuenta.`,
       ),
     );
-    t.narration.push(
-      tr(
-        t.lang,
-        "I can't put a value on it here — the dealership appraises it, usually with a quick look in person.",
-        'No puedo darle un valor aquí — la agencia lo valúa, normalmente con una revisión rápida en persona.',
-      ),
+    const value = await this.appraisals.customerValue(
+      t.tenantId,
+      tr0.requestId!,
     );
+    if (value) {
+      const amt =
+        value.amount != null
+          ? money(value.amount)
+          : `${money(value.low!)}–${money(value.high!)}`;
+      const until = value.expiresAt
+        ? dateLabel(value.expiresAt.toISOString().slice(0, 10), t.lang)
+        : null;
+      t.narration.push(
+        value.kind === 'FINAL_OFFER'
+          ? tr(
+              t.lang,
+              `The dealership's trade offer for it is ${amt}${until ? `, valid through ${until}` : ''}. It's separate from any financing decision.`,
+              `La oferta de la agencia por su vehículo es de ${amt}${until ? `, válida hasta el ${until}` : ''}. Es independiente de cualquier decisión de financiamiento.`,
+            )
+          : value.kind === 'DEALER_APPRAISAL'
+            ? tr(
+                t.lang,
+                `The team appraised it at ${amt}. A manager confirms the final offer.`,
+                `El equipo lo valuó en ${amt}. Un gerente confirma la oferta final.`,
+              )
+            : tr(
+                t.lang,
+                `A market estimate puts it around ${amt} — that's an estimate, not an offer.`,
+                `Una estimación de mercado lo ubica en ${amt} — es una estimación, no una oferta.`,
+              ),
+      );
+      t.facts.push(`Trade value (${value.kind}, dealership record): ${amt}`);
+      t.evidence.push(
+        this.evidenceSvc.verifiedConfig(
+          t.tenantId,
+          t.locationId,
+          'trade_value',
+          value.amount ?? value.low ?? 0,
+          `trade_appraisal.${value.kind.toLowerCase()}`,
+          new Date().toISOString(),
+        ),
+      );
+    } else {
+      t.narration.push(
+        tr(
+          t.lang,
+          "I can't put a value on it here — the dealership appraises it, usually with a quick look in person.",
+          'No puedo darle un valor aquí — la agencia lo valúa, normalmente con una revisión rápida en persona.',
+        ),
+      );
+      t.evidence.push(
+        this.evidenceSvc.unverified(
+          t.tenantId,
+          t.locationId,
+          'trade_value',
+          'Appraisal requires the dealership or an authorized appraisal provider.',
+        ),
+      );
+    }
     t.cards.push({
       kind: 'trade',
       id: tr0.requestId!,
       summary: `${label}${miles}`,
-      appraisalVerified: false,
+      appraisalVerified: !!value,
+      value: value
+        ? {
+            ...value,
+            expiresAt: value.expiresAt ? value.expiresAt.toISOString() : null,
+          }
+        : null,
     });
-    t.evidence.push(
-      this.evidenceSvc.unverified(
-        t.tenantId,
-        t.locationId,
-        'trade_value',
-        'Appraisal requires the dealership or an authorized appraisal provider.',
-      ),
-    );
     if (!tr0.mileage)
       this.ask(
         t,

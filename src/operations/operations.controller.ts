@@ -36,6 +36,8 @@ import { ConversationIdService } from '../chat/conversation-id.service';
 import { CreditDestinationAdminService } from '../finance/credit-destination-admin.service';
 import { CREDIT_LINK_TYPES } from '../finance/credit-destination';
 import { RooftopReadinessService } from './rooftop-readiness';
+import { AppraisalService } from '../trade/appraisal.service';
+import { IsNumber, Max, Min } from 'class-validator';
 import type { CreditLinkType } from '../finance/credit-destination';
 
 class TextDto {
@@ -67,6 +69,17 @@ class CreditDestinationDto {
   @IsOptional() @IsBoolean() demoPreview?: boolean;
   @IsOptional() @IsBoolean() enable?: boolean;
 }
+class AppraisalDto {
+  @IsNumber() @Min(1) @Max(500000) amount!: number;
+  @IsOptional() @IsString() @MaxLength(200) conditionBasis?: string;
+  @IsOptional() @IsString() @MaxLength(1000) notes?: string;
+  @IsOptional() @IsBoolean() showToCustomer?: boolean;
+}
+class OfferDto {
+  @IsNumber() @Min(1) @Max(500000) amount!: number;
+  @IsNumber() @Min(1) @Max(30) validDays!: number;
+  @IsOptional() @IsString() @MaxLength(1000) notes?: string;
+}
 class CreditAuthorizeDto {
   @IsIn(CREDIT_LINK_TYPES) linkType!: CreditLinkType;
   @IsString() @MinLength(6) @MaxLength(200) evidenceRef!: string;
@@ -81,7 +94,52 @@ export class OperationsController {
     private readonly ops: OperationsService,
     private readonly creditAdmin: CreditDestinationAdminService,
     private readonly readiness: RooftopReadinessService,
+    private readonly appraisals: AppraisalService,
   ) {}
+
+  // ── trade-in appraisal workflow (staff records; managers issue offers)
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('appraisal-providers')
+  appraisalProviders() {
+    return this.appraisals.providerStatus();
+  }
+
+  @Roles(...STAFF)
+  @Get('trades/:id/appraisals')
+  listAppraisals(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    return this.appraisals.list(this.scope(u).tenantId, id);
+  }
+
+  @Roles(...STAFF)
+  @Post('trades/:id/appraisals')
+  recordAppraisal(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: AppraisalDto,
+  ) {
+    return this.appraisals.recordAppraisal(
+      this.scope(u).tenantId,
+      { id: u.sub, role: u.role },
+      id,
+      b,
+    );
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Post('trades/:id/offer')
+  issueOffer(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: OfferDto,
+  ) {
+    return this.appraisals.issueOffer(
+      this.scope(u).tenantId,
+      { id: u.sub, role: u.role },
+      id,
+      b,
+    );
+  }
 
   /** Group-level five-rooftop readiness scorecard (platform admins only). */
   @Roles('SUPER_ADMIN')

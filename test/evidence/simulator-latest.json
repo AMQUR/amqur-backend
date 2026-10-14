@@ -1,14 +1,14 @@
 {
-  "generatedAt": "2026-10-14T11:49:33.495Z",
+  "generatedAt": "2026-10-14T12:01:24.404Z",
   "seed": 20261014,
   "mode": "deterministic (LLM disabled)",
-  "scenarios": 1670,
-  "turns": 5079,
-  "durationMs": 101370,
-  "throttleWaits": 1,
+  "scenarios": 525,
+  "turns": 1449,
+  "durationMs": 11255,
+  "throttleWaits": 0,
   "taskSuccess": 1,
   "holdoutTaskSuccess": 1,
-  "holdoutScenarios": 334,
+  "holdoutScenarios": 105,
   "severities": {
     "P0": 0,
     "P1": 0,
@@ -16,53 +16,53 @@
   },
   "byCategory": {
     "property": {
-      "n": 1000,
-      "success": 1000,
+      "n": 300,
+      "success": 300,
       "rate": 1
     },
     "multi-turn": {
-      "n": 500,
-      "success": 500,
+      "n": 150,
+      "success": 150,
       "rate": 1
     },
     "adversarial": {
-      "n": 120,
-      "success": 120,
+      "n": 60,
+      "success": 60,
       "rate": 1
     },
     "long": {
-      "n": 50,
-      "success": 50,
+      "n": 15,
+      "success": 15,
       "rate": 1
     }
   },
   "byDepartmentTurns": {
     "sales": {
-      "n": 2567,
+      "n": 734,
       "failed": 0
     },
     "security": {
-      "n": 409,
+      "n": 132,
       "failed": 0
     },
     "conversation": {
-      "n": 771,
+      "n": 224,
       "failed": 0
     },
     "support": {
-      "n": 213,
+      "n": 54,
       "failed": 0
     },
     "service": {
-      "n": 753,
+      "n": 203,
       "failed": 0
     },
     "parts": {
-      "n": 231,
+      "n": 62,
       "failed": 0
     },
     "finance": {
-      "n": 135,
+      "n": 40,
       "failed": 0
     }
   },
