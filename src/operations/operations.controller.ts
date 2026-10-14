@@ -69,6 +69,11 @@ class CreditDestinationDto {
   @IsOptional() @IsBoolean() demoPreview?: boolean;
   @IsOptional() @IsBoolean() enable?: boolean;
 }
+class AiControlDto {
+  @IsOptional() @IsBoolean() chat?: boolean;
+  @IsOptional() @IsBoolean() llmDisabled?: boolean;
+  @IsString() @MinLength(3) @MaxLength(300) reason!: string;
+}
 class AppraisalDto {
   @IsNumber() @Min(1) @Max(500000) amount!: number;
   @IsOptional() @IsString() @MaxLength(200) conditionBasis?: string;
@@ -280,6 +285,18 @@ export class OperationsController {
   settings(@CurrentUser() u: AuthUser, @Param('id') id: string) {
     const s = this.scope(u, undefined, id);
     return this.ops.locationSettings(s.tenantId, s.locationId ?? id);
+  }
+
+  /** Emergency kill switch — managers can stop the AI for their rooftop instantly. */
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Post('locations/:id/ai-control')
+  aiControl(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: AiControlDto,
+  ) {
+    const s = this.scope(u, undefined, id);
+    return this.ops.setAiControl(s.tenantId, s.locationId ?? id, u.sub, b);
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN')

@@ -102,3 +102,14 @@ export function verifyWebhookSignature(params: {
   }
   return { ok: false, reason: 'bad_signature' };
 }
+
+/**
+ * Strict base64url decode for signatures: rejects anything whose re-encoding differs from the
+ * input. Node's decoder silently ignores unused trailing bits and invalid characters, which
+ * would let several distinct strings verify as the same MAC (signature malleability).
+ */
+export function decodeCanonicalBase64Url(s: string): Buffer | null {
+  if (!/^[A-Za-z0-9_-]+$/.test(s)) return null;
+  const buf = Buffer.from(s, 'base64url');
+  return buf.toString('base64url') === s ? buf : null;
+}

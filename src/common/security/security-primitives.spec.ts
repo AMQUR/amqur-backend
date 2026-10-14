@@ -193,6 +193,17 @@ describe('credit application config', () => {
       tenantId: 't_1',
     });
     expect(svc.verify(tok.slice(0, -2) + 'xx', 2_000)).toBeNull();
+    // Non-canonical encodings of the SAME MAC bytes must be rejected (no malleability):
+    // every 1-character change to the final char is refused.
+    const mac = tok.split('.')[1];
+    const alphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    for (const ch of alphabet) {
+      if (ch === mac.slice(-1)) continue;
+      expect(
+        svc.verify(`${tok.split('.')[0]}.${mac.slice(0, -1)}${ch}`, 2_000),
+      ).toBeNull();
+    }
     expect(svc.verify(tok, 1_000 + 8 * 24 * 3600_000)).toBeNull();
     expect(Buffer.from(tok.split('.')[0], 'base64url').toString()).not.toMatch(
       /@|\d{10}/,

@@ -985,6 +985,64 @@ export class OperationsService {
     return this.locationSettings(tenantId, locationId);
   }
 
+  // ───────────── emergency AI controls (no redeploy)
+
+  /**
+   * Store-level emergency switch. `chat:false` stops the assistant for this rooftop (widget
+   * shows the dealership's contact path); `llmDisabled:true` keeps the deterministic concierge
+   * but makes zero language-model calls. Effective on the next message; audited.
+   */
+  async setAiControl(
+    tenantId: string,
+    locationId: string,
+    userId: string,
+    patch: { chat?: boolean; llmDisabled?: boolean; reason: string },
+  ) {
+    const loc = await this.prisma.location.findFirst({
+      where: { id: locationId, tenantId },
+      select: { id: true, featureFlags: true },
+    });
+    if (!loc) throw new NotFoundException('Location not found');
+    const cur = (loc.featureFlags ?? {}) as Record<string, unknown>;
+    const next = {
+      ...cur,
+      ...(typeof patch.chat === 'boolean' ? { chat: patch.chat } : {}),
+      ...(typeof patch.llmDisabled === 'boolean'
+        ? { llmDisabled: patch.llmDisabled }
+        : {}),
+    };
+    await this.prisma.$transaction([
+      this.prisma.location.update({
+        where: { id: loc.id },
+        data: { featureFlags: next as Prisma.InputJsonValue },
+      }),
+      // Bust widget-config caches so the change reaches every replica immediately.
+      this.prisma.tenant.update({
+        where: { id: tenantId },
+        data: { configVersion: { increment: 1 } },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          tenantId,
+          userId,
+          action: 'ai.control.changed',
+          resource: 'Location',
+          resourceId: loc.id,
+          metadata: {
+            chat: next.chat ?? null,
+            llmDisabled: next.llmDisabled ?? null,
+            reason: patch.reason.slice(0, 300),
+          } as Prisma.InputJsonValue,
+        },
+      }),
+    ]);
+    return {
+      locationId: loc.id,
+      chat: next.chat !== false,
+      llmDisabled: next.llmDisabled === true,
+    };
+  }
+
   // ───────────── widget: messages since (staff replies)
 
   async widgetMessagesSince(

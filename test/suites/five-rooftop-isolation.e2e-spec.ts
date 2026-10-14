@@ -5,6 +5,8 @@ import { createE2eApp, E2eCtx, unwrap } from '../helpers/e2e-app';
 import { seedDemoDealer, SIM_ORIGIN } from '../helpers/demo-dealer';
 import type { DemoVehicle } from '../../scripts/lib/local-demo-data';
 import { CreditDestinationAdminService } from '../../src/finance/credit-destination-admin.service';
+import { FeatureFlagsService } from '../../src/feature-flags/feature-flags.service';
+import { CrmSyncService } from '../../src/integrations/crm/crm-sync.service';
 
 /**
  * Five-rooftop negative matrix against the real API + Postgres. Stores mirror the Dial Auto
@@ -327,5 +329,68 @@ describe('five-rooftop isolation matrix', () => {
         unwrap<{ vehicles?: unknown[] }>(r.body).vehicles ?? [],
       ).toHaveLength(0);
     else expect(r.status).toBe(400);
+  });
+
+  it('an authorized Tekion credit destination never turns on Tekion CRM/DMS integration', async () => {
+    // Even if someone switches the tenant flag on, only a live CRM/DMS connection may honor it.
+    const t = await ctx.prisma.tenant.findUnique({
+      where: { id: ids.south.tenantId },
+    });
+    await ctx.prisma.tenant.update({
+      where: { id: ids.south.tenantId },
+      data: {
+        featureFlags: {
+          ...(t!.featureFlags as object),
+          tekionIntegration: true,
+        },
+      },
+    });
+    const flags = await ctx.app
+      .get(FeatureFlagsService)
+      .resolve(ids.south.tenantId, ids.south.locationId);
+    expect(flags.tekionIntegration).toBe(false);
+    const gate = await ctx.app
+      .get(CrmSyncService)
+      .tekionGate(ids.south.tenantId, ids.south.locationId);
+    expect(gate.open).toBe(false);
+  });
+
+  it('emergency kill switch stops one store instantly, leaves others running, and is audited', async () => {
+    const since = new Date();
+    const off = await http()
+      .post(`/api/ops/locations/${ids.nissan.locationId}/ai-control`)
+      .set('Authorization', `Bearer ${ids.nissan.staff}`)
+      .send({ chat: false, reason: 'incident drill' });
+    expect(off.status).toBe(201);
+    const blocked = await chat('nissan', 'any Rogues?');
+    expect(blocked.vehicles ?? []).toHaveLength(0);
+    expect(blocked.reply).toMatch(/not available|call/i);
+    // Another store keeps working; another store's admin cannot flip Nissan's switch.
+    expect((await chat('chevy', 'Do you have a Tahoe?')).vehicles?.length).toBe(
+      1,
+    );
+    const foreign = await http()
+      .post(`/api/ops/locations/${ids.nissan.locationId}/ai-control`)
+      .set('Authorization', `Bearer ${ids.chevy.staff}`)
+      .send({ chat: true, reason: 'should be denied' });
+    expect([403, 404]).toContain(foreign.status);
+    await http()
+      .post(`/api/ops/locations/${ids.nissan.locationId}/ai-control`)
+      .set('Authorization', `Bearer ${ids.nissan.staff}`)
+      .send({
+        chat: true,
+        llmDisabled: true,
+        reason: 'restore, deterministic only',
+      })
+      .expect(201);
+    expect((await chat('nissan', 'any Rogues?')).vehicles?.length).toBe(1);
+    const audits = await ctx.prisma.auditLog.count({
+      where: {
+        tenantId: ids.nissan.tenantId,
+        action: 'ai.control.changed',
+        createdAt: { gte: since },
+      },
+    });
+    expect(audits).toBe(2);
   });
 });

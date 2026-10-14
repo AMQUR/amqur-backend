@@ -107,6 +107,7 @@ export function Settings({ locationId }: { locationId: string }) {
               </div>
             </Card>
             <CreditDestination locationId={locationId} canEdit={canEdit} />
+            <AiControls locationId={locationId} />
           </div>
           <Card title="Service amenities (only verified answers are given to customers)">
             <div className="row">
@@ -189,6 +190,35 @@ function CreditDestination({ locationId, canEdit }: { locationId: string; canEdi
           </div>
         </div>
       )}
+    </Card>
+  );
+}
+
+/** Emergency controls — managers can stop the AI for this rooftop instantly (audited). */
+function AiControls({ locationId }: { locationId: string }) {
+  const [reason, setReason] = useState('');
+  const [state, setState] = useState<{ chat: boolean; llmDisabled: boolean } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const canUse = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(session.user?.role ?? '');
+  const send = async (body: { chat?: boolean; llmDisabled?: boolean }) => {
+    setErr(null);
+    try {
+      setState(await api(`/ops/locations/${locationId}/ai-control`, { method: 'POST', body: JSON.stringify({ ...body, reason }) }));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  if (!canUse) return null;
+  return (
+    <Card title="Emergency AI controls" actions={state && <Badge tone={state.chat ? (state.llmDisabled ? 'warn' : 'ok') : 'bad'}>{state.chat ? (state.llmDisabled ? 'deterministic only' : 'on') : 'AI OFF'}</Badge>}>
+      <ErrorNote error={err} />
+      <p className="muted small">Takes effect on the next customer message. Every change is audited with your reason.</p>
+      <label>Reason<input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. wrong answer reported, incident #" /></label>
+      <div className="row">
+        <button className="btn btn--danger" disabled={reason.trim().length < 3} onClick={() => void send({ chat: false })}>Turn AI off</button>
+        <button className="btn" disabled={reason.trim().length < 3} onClick={() => void send({ chat: true, llmDisabled: true })}>On — no language model</button>
+        <button className="btn btn--ghost" disabled={reason.trim().length < 3} onClick={() => void send({ chat: true, llmDisabled: false })}>Fully on</button>
+      </div>
     </Card>
   );
 }

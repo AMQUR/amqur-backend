@@ -1,3 +1,4 @@
+import { decodeCanonicalBase64Url } from '../common/security/webhook-signature';
 import { createHash, randomBytes } from 'crypto';
 import { mkdir, writeFile } from 'fs/promises';
 import * as path from 'path';
@@ -176,12 +177,8 @@ export class UploadsService {
     const want = createHmac('sha256', this.signKey())
       .update(`${q.t}:${fileId}:${exp}`)
       .digest();
-    let got: Buffer;
-    try {
-      got = Buffer.from(q.s, 'base64url');
-    } catch {
-      throw new ForbiddenException('Bad signature');
-    }
+    const got = decodeCanonicalBase64Url(q.s ?? '');
+    if (!got) throw new ForbiddenException('Bad signature');
     if (got.length !== want.length || !timingSafeEqual(got, want))
       throw new ForbiddenException('Bad signature');
     const f = await this.prisma.fileObject.findFirst({

@@ -20,6 +20,8 @@ export const RESERVED_FLAGS: Record<string, string> = {
 
 export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   chat: true, // widget shell; inventory/payments still gated
+  /** Emergency switch: true = no LLM calls at all; deterministic concierge only. */
+  llmDisabled: false,
   inventory: false,
   payments: false,
   vehicleCompare: false,
@@ -67,12 +69,15 @@ export class FeatureFlagsService {
     }
     const tenantFlags = (tenant?.featureFlags as Record<string, unknown>) ?? {};
 
+    // Only Tekion DATA capabilities (CRM/DMS/scheduling/parts) open the integration flag.
+    // A Tekion-hosted credit-application destination is not a CRM/DMS connection.
     const tekionLive = await this.prisma.integrationConnection.findFirst({
       where: {
         tenantId,
         provider: 'TEKION',
         enabled: true,
         liveReady: true,
+        capability: { not: 'credit_application' },
       },
       select: { id: true },
     });

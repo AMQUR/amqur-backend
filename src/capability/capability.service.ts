@@ -30,15 +30,20 @@ export type CapabilityResult = {
 export class CapabilityService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly flags: FeatureFlagsService,
+    private readonly flags_: FeatureFlagsService,
   ) {}
+
+  /** Raw effective flags (for non-capability switches such as llmDisabled). */
+  flags(tenantId: string, locationId: string | null | undefined) {
+    return this.flags_.resolve(tenantId, locationId);
+  }
 
   async check(
     tenantId: string,
     locationId: string | null | undefined,
     capability: CapabilityName,
   ): Promise<CapabilityResult> {
-    const f = await this.flags.resolve(tenantId, locationId);
+    const f = await this.flags_.resolve(tenantId, locationId);
     const unavailable = (
       reason: string,
       customerMessage: string,

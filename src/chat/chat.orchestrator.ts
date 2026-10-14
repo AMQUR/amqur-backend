@@ -3967,7 +3967,9 @@ export class ChatOrchestrator {
       }
     }
     t.toolCount += 1;
-    if (!ctx.length && !this.llm.isEnabled()) {
+    const llmOff = !!(await this.capabilities.flags(t.tenantId, t.locationId))
+      .llmDisabled;
+    if (!ctx.length && (!this.llm.isEnabled() || llmOff)) {
       t.answers.push(
         tr(
           t.lang,
@@ -3985,6 +3987,18 @@ export class ChatOrchestrator {
         ),
         6,
       );
+      return;
+    }
+    if (llmOff) {
+      // Language model switched off: share the approved text verbatim, never improvise.
+      t.answers.push(
+        tr(
+          t.lang,
+          `Here’s what the dealership has on file: ${ctx.join(' ').slice(0, 500)}`,
+          `Esto es lo que la agencia tiene registrado: ${ctx.join(' ').slice(0, 500)}`,
+        ),
+      );
+      t.facts.push(...ctx.map((c) => c.slice(0, 300)));
       return;
     }
     const answer = await this.llm.answerIntelligentQuestion(t.message, ctx, {
@@ -4607,7 +4621,10 @@ export class ChatOrchestrator {
             : 'general';
     let reply = draft;
     let segments = plan.segments.length ? plan.segments : [draft];
+    const llmOff = !!(await this.capabilities.flags(t.tenantId, t.locationId))
+      .llmDisabled;
     const usePolish =
+      !llmOff &&
       !opts.forcedReply &&
       !t.urgent &&
       draft.length > 0 &&

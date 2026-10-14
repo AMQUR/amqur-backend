@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { SecretVaultService } from '../integrations/core/secret-vault.service';
+import { decodeCanonicalBase64Url } from '../common/security/webhook-signature';
 import {
   checkDestination,
   CREDIT_CONNECTION_CAPABILITY,
@@ -287,12 +288,8 @@ export class CreditApplicationService {
     const [body, mac] = token.split('.');
     if (!body || !mac || body.length > 400) return null;
     const expected = createHmac('sha256', this.secret()).update(body).digest();
-    let got: Buffer;
-    try {
-      got = Buffer.from(mac, 'base64url');
-    } catch {
-      return null;
-    }
+    const got = decodeCanonicalBase64Url(mac);
+    if (!got) return null;
     if (got.length !== expected.length || !timingSafeEqual(got, expected))
       return null;
     try {
