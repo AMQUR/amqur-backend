@@ -95,7 +95,7 @@ const CASES: Case[] = [
       {
         say: 'Do you have a Porsche 911 in stock?',
         expect: {
-          replyMatch: /not finding|didn't find|no.*match/i,
+          replyMatch: /not finding|didn't find|don't see|no.*match/i,
           replyNot: /\$\d/,
         },
       },

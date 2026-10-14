@@ -647,6 +647,8 @@ export function understandTurn(
     now?: Date;
     /** Models of vehicles already shown/selected in this conversation (lowercase). */
     knownModels?: string[];
+    /** Trims of vehicles on screen (lowercase), e.g. "series ii 4x4", "rubicon 4xe". */
+    knownTrims?: string[];
     hasPaymentEstimate?: boolean;
     hasCriteria?: boolean;
     creditOffered?: boolean;
@@ -1371,6 +1373,23 @@ export function understandTurn(
         tShop,
       )) &&
     !shopVerb;
+  // "I like the Series II" — a trim of a vehicle on screen (longest match wins: II vs III).
+  if (!mentionsKnown && ctx.knownTrims?.length && ctx.hasVisibleVehicles) {
+    const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const hit = [...ctx.knownTrims]
+      .flatMap((tr) => {
+        const w = tr.split(/\s+/);
+        return [tr, w.slice(0, 2).join(' '), w[0]].filter((x) => x.length >= 3);
+      })
+      .sort((a, b) => b.length - a.length)
+      .find((tr) => new RegExp(`\\b${esc(tr)}\\b`).test(t));
+    if (hit && !/\b(compare|vs|versus)\b/.test(t)) {
+      veh.trim = hit;
+      e.vehicle = { ...veh };
+      e.referencesPrior = true;
+      add('SELECT_VEHICLE', 0.86, 'trim of shown vehicle');
+    }
+  }
   if (mentionsKnown) {
     add(
       'SELECT_VEHICLE',
@@ -1379,7 +1398,16 @@ export function understandTurn(
     );
     e.referencesPrior = true;
   }
-  if (!e.serviceNeed && !partsCue && !mentionsKnown && !e.ownVehicle) {
+  const trimSelected = intents.some(
+    (i) => i.evidence === 'trim of shown vehicle',
+  );
+  if (
+    !e.serviceNeed &&
+    !partsCue &&
+    !mentionsKnown &&
+    !e.ownVehicle &&
+    !trimSelected
+  ) {
     if (browseMore && !shoppingSpec && ctx.hasCriteria)
       add('INVENTORY_SEARCH', 0.85, 'browse with saved criteria');
     else if (shopVerb && shoppingSpec)

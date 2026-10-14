@@ -17,7 +17,6 @@ export function Settings({ locationId }: { locationId: string }) {
   const [tz, setTz] = useState('');
   const [holidays, setHolidays] = useState('');
   const [policy, setPolicy] = useState({ illustrativeApr: '', defaultTermMonths: '', taxRatePercent: '', docFee: '', verified: false });
-  const [credit, setCredit] = useState({ enabled: false, url: '', label: '', allowedHosts: '' });
   const [amen, setAmen] = useState({ shuttle: '', loaner: '' });
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
@@ -31,8 +30,6 @@ export function Settings({ locationId }: { locationId: string }) {
     setHolidays((d.holidayHours ?? []).map((h) => `${h.date} ${h.closed ? 'closed' : `${h.open}-${h.close}`}${h.note ? ` ${h.note}` : ''}`).join('\n'));
     const p = d.financialPolicy ?? {};
     setPolicy({ illustrativeApr: String(p.illustrativeApr ?? ''), defaultTermMonths: String(p.defaultTermMonths ?? ''), taxRatePercent: String(p.taxRatePercent ?? ''), docFee: String(p.docFee ?? ''), verified: !!p.verifiedAt });
-    const c = d.creditApplication ?? {};
-    setCredit({ enabled: c.enabled === true, url: String(c.url ?? ''), label: String(c.label ?? ''), allowedHosts: Array.isArray(c.allowedHosts) ? (c.allowedHosts as string[]).join(', ') : '' });
     const a = d.serviceAmenities ?? {};
     setAmen({ shuttle: a.shuttle === true ? 'yes' : a.shuttle === false ? 'no' : '', loaner: a.loaner === true ? 'yes' : a.loaner === false ? 'no' : '' });
   }, [s.data]);
@@ -109,15 +106,7 @@ export function Settings({ locationId }: { locationId: string }) {
                 } })}>Save policy</button>}
               </div>
             </Card>
-            <Card title="Secure credit application" actions={<Badge tone={d.effective.creditApplication.available ? 'ok' : 'neutral'}>{d.effective.creditApplication.available ? 'live' : `off — ${d.effective.creditApplication.reason?.replace(/_/g, ' ')}`}</Badge>}>
-              <div className="stack">
-                <label>Approved HTTPS URL<input value={credit.url} onChange={(e) => setCredit({ ...credit, url: e.target.value })} disabled={!canEdit} /></label>
-                <label>Allowed hosts (comma separated)<input value={credit.allowedHosts} onChange={(e) => setCredit({ ...credit, allowedHosts: e.target.value })} disabled={!canEdit} /></label>
-                <label>Button label<input value={credit.label} onChange={(e) => setCredit({ ...credit, label: e.target.value })} disabled={!canEdit} /></label>
-                <label className="row"><input type="checkbox" checked={credit.enabled} onChange={(e) => setCredit({ ...credit, enabled: e.target.checked })} disabled={!canEdit} /> Enabled (I verified this is the dealership’s approved application)</label>
-                {canEdit && <button className="btn" onClick={() => void save('Credit application', { creditApplication: { enabled: credit.enabled, url: credit.url, label: credit.label || undefined, allowedHosts: credit.allowedHosts.split(',').map((h) => h.trim()).filter(Boolean), lastVerifiedAt: new Date().toISOString() } })}>Save</button>}
-              </div>
-            </Card>
+            <CreditDestination locationId={locationId} canEdit={canEdit} />
           </div>
           <Card title="Service amenities (only verified answers are given to customers)">
             <div className="row">
@@ -136,5 +125,70 @@ export function Settings({ locationId }: { locationId: string }) {
         </>
       )}
     </div>
+  );
+}
+
+type CreditStatus = {
+  enabled: boolean;
+  destination: 'vault' | 'plain' | 'none';
+  vault: null | { host: string; providerName: string | null; linkType: string; fingerprint: string; configuredAt: string; authorized: boolean; authorization: { approvedAt: string; evidenceRef: string } | null; demoPreview: boolean };
+  customerFacing: { available: boolean; preview?: boolean; reason?: string };
+};
+
+/**
+ * Write-only destination management. The URL (which may carry a vendor token) is never shown
+ * back — only host, fingerprint, link type and authorization. Rotating the URL clears the
+ * authorization; going live requires the vendor-confirmed link type + written dealer approval.
+ */
+function CreditDestination({ locationId, canEdit }: { locationId: string; canEdit: boolean }) {
+  const st = useAsync(() => api<CreditStatus>(`/ops/locations/${locationId}/credit-application`), [locationId]);
+  const [url, setUrl] = useState('');
+  const [linkType, setLinkType] = useState('DEALER_REUSABLE');
+  const [evidence, setEvidence] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const run = async (path: string, body?: unknown) => {
+    setErr(null);
+    try {
+      st.setData(await api<CreditStatus>(`/ops/locations/${locationId}/credit-application${path}`, { method: path === '/destination' ? 'PUT' : 'POST', body: body ? JSON.stringify(body) : undefined }));
+      setUrl('');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const d = st.data;
+  const cf = d?.customerFacing;
+  return (
+    <Card
+      title="Secure credit application"
+      actions={cf && <Badge tone={cf.available ? (cf.preview ? 'warn' : 'ok') : 'neutral'}>{cf.available ? (cf.preview ? 'demo preview' : 'live') : `off — ${cf.reason?.replace(/_/g, ' ')}`}</Badge>}
+    >
+      <ErrorNote error={st.error ?? err} />
+      {d?.vault ? (
+        <dl className="kv">
+          <dt>Provider</dt><dd>{d.vault.providerName ?? '—'} · {d.vault.host}</dd>
+          <dt>Link type</dt><dd>{d.vault.linkType.replace(/_/g, ' ').toLowerCase()}</dd>
+          <dt>Fingerprint</dt><dd><code>{d.vault.fingerprint}</code> (URL stored encrypted)</dd>
+          <dt>Authorization</dt><dd>{d.vault.authorization ? `${new Date(d.vault.authorization.approvedAt).toLocaleDateString()} · ${d.vault.authorization.evidenceRef}` : 'not recorded'}</dd>
+        </dl>
+      ) : <p className="muted small">No secure destination configured.</p>}
+      {canEdit && (
+        <div className="stack">
+          <label>Replace / rotate destination URL (write-only)<input type="password" autoComplete="off" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" /></label>
+          <button className="btn" disabled={!url} onClick={() => void run('/destination', { url, linkType: 'UNVERIFIED' })}>Save encrypted (needs authorization before going live)</button>
+          <label>Vendor-confirmed link type
+            <select value={linkType} onChange={(e) => setLinkType(e.target.value)}>
+              <option value="DEALER_REUSABLE">Reusable for this rooftop</option>
+              <option value="PUBLIC_REUSABLE">Public reusable link</option>
+              <option value="PER_CUSTOMER">Per-customer (static link must not be shared)</option>
+            </select>
+          </label>
+          <label>Written approval reference<input value={evidence} onChange={(e) => setEvidence(e.target.value)} placeholder="Ticket / email reference" /></label>
+          <div className="row">
+            <button className="btn" disabled={!d?.vault || evidence.trim().length < 6} onClick={() => void run('/authorize', { linkType, evidenceRef: evidence })}>Record authorization</button>
+            <button className="btn btn--ghost" disabled={!d?.vault} onClick={() => void run('/disable')}>Disable</button>
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }

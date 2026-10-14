@@ -64,7 +64,7 @@ async function main() {
       'Local demo: vehicles, prices and hours are simulated. Payment figures are estimates, not offers.',
     escalationMessage: 'I can pass this to the team so a person follows up.',
     primaryColor: '#14213d',
-    accentColor: '#c8102e',
+    accentColor: '#ffffff',
     salesEnabled: true,
     serviceEnabled: true,
     partsEnabled: true,

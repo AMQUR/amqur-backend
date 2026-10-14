@@ -29,6 +29,7 @@ export type JourneyState = {
   visibleVins: string[];
   /** Lowercase models of vehicles shown/selected — lets "that Wrangler" resolve to them. */
   visibleModels?: string[];
+  visibleTrims?: string[];
   /** Vehicles the customer passed on ("not that one") — not re-suggested first. */
   rejectedVins?: string[];
   selectedVin?: string;

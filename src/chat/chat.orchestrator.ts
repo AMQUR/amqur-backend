@@ -306,7 +306,12 @@ function vehicleLabel(
   withColor = false,
 ) {
   return [
-    withColor && v.color ? v.color.toLowerCase() : null,
+    // Named paint colors keep their casing ("Silver Zynith"); plain ones read naturally ("black").
+    withColor && v.color
+      ? /\s/.test(v.color.trim())
+        ? v.color.trim()
+        : v.color.toLowerCase()
+      : null,
     v.year,
     v.make,
     v.model,
@@ -469,6 +474,7 @@ export class ChatOrchestrator {
       activeDepartment: st.department ?? null,
       timeZone: (await this.locationTz(tenantId, s.locationId)) ?? hoursTz,
       knownModels: st.visibleModels ?? [],
+      knownTrims: st.visibleTrims ?? [],
       hasPaymentEstimate: !!st.payment.lastEstimate,
       hasCriteria: Object.keys(st.criteria ?? {}).length > 0,
       creditOffered: !!st.finance?.creditLinkOffered,
@@ -834,6 +840,10 @@ export class ChatOrchestrator {
     t.st.visibleModels = [
       ...new Set([...(t.st.visibleModels ?? []), ...models]),
     ].slice(-12);
+    t.st.visibleTrims = vehicles
+      .map((v) => (v.trim ?? '').toLowerCase().trim())
+      .filter(Boolean)
+      .slice(0, 6);
   }
 
   /** One-time, plain-language note that the demo runs on simulated inventory. */
@@ -942,10 +952,17 @@ export class ChatOrchestrator {
       cands = cands.filter((v) =>
         (v.model ?? '').toLowerCase().includes(want.model!.toLowerCase()),
       );
-    if (want?.trim)
-      cands = cands.filter((v) =>
-        (v.trim ?? '').toLowerCase().includes(want.trim!.toLowerCase()),
+    if (want?.trim) {
+      const tw = want.trim.toLowerCase();
+      const exact = cands.filter((v) =>
+        new RegExp(
+          `(^|\\s)${tw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`,
+        ).test((v.trim ?? '').toLowerCase()),
       );
+      cands = exact.length
+        ? exact
+        : cands.filter((v) => (v.trim ?? '').toLowerCase().includes(tw));
+    }
     if (cands.length === 1) return { v: cands[0] };
     // Several match, but one is the vehicle they already chose → that's the one they mean.
     const chosen = cands.find((c) => c.vin === t.st.selectedVin);
@@ -2433,11 +2450,13 @@ export class ChatOrchestrator {
     await this.attachVehicleEvidence(t, [v]);
     const policy = await this.getPolicy(t);
     const est = estimateOutTheDoor({ price: v.price, policy });
+    // A payment estimate is not a decision to finance; only an explicit choice counts.
     const method =
       st.otd?.paymentMethod ??
       (st.payment.leaseOrPurchase === 'lease'
         ? 'LEASE'
-        : st.finance?.requestId
+        : st.finance?.creditLinkOffered ||
+            st.signals.includes('finance_interest')
           ? 'FINANCE'
           : 'UNDECIDED');
     const label = vehicleLabel(v, true);
@@ -4352,14 +4371,33 @@ export class ChatOrchestrator {
           st.appointment.status,
         )) ||
       !!st.handoff?.escalationId;
+    // After a topic change, say WHY we still need it instead of a bare "who should they ask for?".
+    const offTopic =
+      !!st.appointment &&
+      !t.u.intents.some((i) => /APPOINTMENT|PROVIDE_CONTACT/.test(i.intent));
+    const forWhat = offTopic
+      ? st.appointment!.type === 'SERVICE'
+        ? tr(
+            t.lang,
+            'For your service request, ',
+            'Para su solicitud de servicio, ',
+          )
+        : tr(
+            t.lang,
+            'For your visit request, ',
+            'Para su solicitud de visita, ',
+          )
+      : '';
     if (needsContact && !st.contact.firstName) {
       return {
         key: 'contact_name',
-        text: tr(
-          t.lang,
-          'Who should the team ask for?',
-          '¿A nombre de quién lo dejo?',
-        ),
+        text: forWhat
+          ? `${forWhat}${tr(t.lang, 'who should the team ask for?', '¿a nombre de quién lo dejo?')}`
+          : tr(
+              t.lang,
+              'Who should the team ask for?',
+              '¿A nombre de quién lo dejo?',
+            ),
         priority: 10,
       };
     }

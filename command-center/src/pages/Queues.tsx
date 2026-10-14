@@ -7,6 +7,7 @@ type Q = {
   parts: Array<{ id: string; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; installationRequested: boolean; createdAt: string; customerName: string | null }>;
   trades: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; createdAt: string; customerName: string | null }>;
   escalations: Array<{ id: string; reason: string; urgency: string; status: string; notifiedAt: string | null; createdAt: string; conversationId: string | null }>;
+  quotes?: Array<{ id: string; vehicleLabel: string | null; vehicleVin: string; paymentMethod: string; registrationZip: string | null; status: string; missingInputs: string[]; estimateShown: { total?: number } | null; createdAt: string; customerName: string | null }>;
 };
 
 export function Queues({ locationId }: { locationId: string }) {
@@ -48,6 +49,22 @@ export function Queues({ locationId }: { locationId: string }) {
                   <li key={f.id}>
                     <span>{f.customerName ?? 'Visitor'} · {f.vehicleVin ?? 'no vehicle'} {f.downPayment ? `· $${f.downPayment.toLocaleString()} down` : ''} {f.desiredPayment ? `· target $${f.desiredPayment}/mo` : ''}</span>
                     <span className="row"><Badge tone={statusTone(f.creditLinkState)}>credit {f.creditLinkState.toLowerCase()}</Badge><span className="muted small">{ago(f.createdAt)}</span></span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <Card title={`Out-the-door quotes (${data.quotes?.length ?? 0})`}>
+            {!data.quotes?.length ? <Empty>None open.</Empty> : (
+              <ul className="list">
+                {data.quotes.map((q) => (
+                  <li key={q.id}>
+                    <span>{q.vehicleLabel ?? q.vehicleVin} {q.customerName ? `· ${q.customerName}` : ''} {q.registrationZip ? `· ZIP ${q.registrationZip}` : ''}</span>
+                    <span className="row">
+                      <Badge tone={q.paymentMethod === 'CASH' ? 'info' : 'neutral'}>{q.paymentMethod.toLowerCase()}</Badge>
+                      {q.estimateShown?.total != null ? <Badge tone="ok">estimate shown ${Math.round(q.estimateShown.total).toLocaleString()}</Badge> : <Badge tone="warn">needs written quote</Badge>}
+                      <span className="muted small">{ago(q.createdAt)}</span>
+                    </span>
                   </li>
                 ))}
               </ul>

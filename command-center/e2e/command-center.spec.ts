@@ -33,10 +33,15 @@ test('staff can sign in, take over a conversation, reply, and return it to AI', 
   await page.getByRole('button', { name: 'Return to AI' }).click();
   await expect(page.getByRole('button', { name: 'Take over' })).toBeVisible();
 
+  await page.getByRole('link', { name: 'Service · Parts · Finance' }).click();
+  await expect(page.getByText(/Out-the-door quotes/)).toBeVisible();
   await page.getByRole('link', { name: 'Knowledge' }).click();
   await expect(page.getByRole('heading', { name: 'Knowledge' })).toBeVisible();
   await page.getByRole('link', { name: 'Rooftop settings' }).click();
   await expect(page.getByText(/Hours/).first()).toBeVisible();
+  // Credit destination is write-only: the panel never renders a stored URL.
+  await expect(page.getByText('Secure credit application')).toBeVisible();
+  await expect(page.locator('body')).not.toContainText(/token=/);
   await page.getByRole('link', { name: 'Integrations' }).click();
   await expect(page.getByText(/awaiting vendor credentials/i)).toBeVisible();
 });

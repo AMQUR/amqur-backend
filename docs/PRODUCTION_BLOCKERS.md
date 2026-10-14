@@ -1,6 +1,6 @@
 # Production blockers (external only)
 
-Last verified: 2026-10-13 (engineering completion pass on branch `feat/production-completion-2026-10`).
+Last verified: 2026-10-14 (engineering completion pass on branch `feat/production-completion-2026-10`).
 
 Every item below is something the **dealership, a vendor, or the platform owner must supply or approve**. The code paths are built, tested, and fail closed until the artifact exists. Nothing here is an engineering TODO.
 
@@ -62,15 +62,17 @@ Secrets are never placed in Git or in this file. "Vault" below means the encrypt
 | Behavior until then | Escalations are persisted and shown in the Command Center; the assistant says it **cannot confirm** anyone was notified |
 | Code complete | Yes |
 
-## B-05 — Dealership-approved credit application destination
+## B-05 — Dealership-approved credit application destination (Tekion)
 
 | Field | Value |
 |---|---|
-| Capability | "Send me the credit application" secure handoff |
-| Exact artifacts | HTTPS URL of the dealership's approved credit application, its hostname(s), provider name; written approval |
-| Where configured | Command Center → Rooftop settings → Secure credit application (allowlist enforced) |
-| Behavior until then | Assistant offers a finance-team follow-up instead |
-| Code complete | Yes |
+| Capability | "Where's the credit application?" → secure Tekion handoff card |
+| Current state (2026-10-14) | Owner supplied a candidate `consumer-credit.tekioncloud.com/creditApplication?token=…` URL. It is stored **AES-256-GCM encrypted** in the local demo database only, link type **UNVERIFIED**, shown as a labeled **demo preview** (click lands on an AMQUR interstitial; never navigates to or consumes the token). Not configured on any shared environment. |
+| Why blocked | No official Tekion documentation available to us states whether this token is a public reusable link, a dealership-reusable link, or a per-customer session link. Rooftop mapping and written dealership authorization for each of the five rooftops are not on record. |
+| Exact artifacts | (1) Tekion's written confirmation of the link type and validity period; (2) which rooftop(s) the link belongs to; (3) dealership written approval per rooftop (reference recorded as `evidenceRef`); (4) if per-customer: Tekion's official API contract + credentials for link issuance; (5) whether the token should be rotated since it was shared in a chat transcript |
+| Where configured | Command Center → Rooftop settings → Secure credit application, or `PUT/POST /api/ops/locations/:id/credit-application/{destination,authorize,disable}` (URL write-only, never returned) |
+| Behavior until then | Production: assistant offers a finance-team follow-up. Non-production demo: labeled preview card. |
+| Code complete | Yes (vault storage, link types, per-location authorization, rotation clears authorization, `PER_CUSTOMER` fails closed behind `CreditLinkProvider`) |
 
 ## B-06 — Payment estimate tax/fee rules (optional)
 

@@ -35,3 +35,7 @@ release.json
 command-center/node_modules
 command-center/dist
 command-center/*.tsbuildinfo
+
+# Playwright output
+command-center/test-results/
+command-center/playwright-report/

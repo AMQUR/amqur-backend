@@ -103,6 +103,51 @@ describe('CapabilityService fail-closed gates', () => {
     const r = await svc.check('t1', 'l1', 'payments');
     expect(r.allowed).toBe(false);
   });
+
+  it('production never counts synthetic demo vehicles as inventory', async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      flags.resolve.mockResolvedValue({ inventory: true });
+      prisma.location.findFirst.mockResolvedValue({ inventoryFeedUrl: null });
+      prisma.vehicle.count.mockResolvedValue(0);
+      prisma.integrationConnection.findFirst.mockResolvedValue(null);
+      const r = await svc.check('t1', 'l1', 'inventory');
+      expect(r.allowed).toBe(false);
+      expect(prisma.vehicle.count).toHaveBeenCalledWith({
+        where: expect.objectContaining({ NOT: { source: 'synthetic_demo' } }),
+      });
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+  });
+
+  it.each([
+    ['appointments', { appointments: false }, 'appointments_flag_off'],
+    ['appointments', { appointments: true }, undefined],
+    ['leadCapture', { leadCapture: false }, 'lead_capture_off'],
+    ['knowledge', { knowledge: false }, 'knowledge_flag_off'],
+    ['sms', { sms: false }, 'sms_flag_off'],
+    ['savedVehicles', { savedVehicles: false }, 'saved_flag_off'],
+    ['handoff', { chat: false }, 'chat_disabled'],
+    ['handoff', { chat: true }, undefined],
+    ['service', { serviceAi: false }, 'service_flag_off'],
+    ['parts', { partsAi: false }, 'parts_flag_off'],
+    ['chat', { chat: false }, 'chat_disabled'],
+  ])('%s gate with %j → %s', async (cap, f, reason) => {
+    flags.resolve.mockResolvedValue(f);
+    const r = await svc.check('t1', 'l1', cap as never);
+    expect(r.allowed).toBe(reason === undefined);
+    if (reason) expect(r.reason).toBe(reason);
+  });
+
+  it('inventory with stale vehicles only is blocked as stale', async () => {
+    flags.resolve.mockResolvedValue({ inventory: true });
+    prisma.location.findFirst.mockResolvedValue({ inventoryFeedUrl: null });
+    prisma.vehicle.count.mockResolvedValueOnce(4).mockResolvedValueOnce(0);
+    const r = await svc.check('t1', 'l1', 'inventory');
+    expect(r.reason).toBe('inventory_stale');
+  });
 });
 
 describe('CapabilityService expanded gate coverage', () => {

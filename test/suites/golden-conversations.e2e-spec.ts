@@ -375,7 +375,7 @@ describe('golden owner-demo conversations', () => {
     });
     expect(row?.status).toBe('REQUESTED');
     expect(row?.notes ?? '').toMatch(/Cherokee/);
-    expect(row?.vin ?? null).not.toBe(DEMO_VEHICLES[3].vin); // never the sales Wrangler
+    expect(row?.vehicleVin ?? null).not.toBe(DEMO_VEHICLES[3].vin); // never the sales Wrangler
     const parts = await ctx.prisma.partsInquiry.findFirst({
       where: { tenantId },
       orderBy: { createdAt: 'desc' },
