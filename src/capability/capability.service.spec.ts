@@ -105,7 +105,6 @@ describe('CapabilityService fail-closed gates', () => {
   });
 });
 
-
 describe('CapabilityService expanded gate coverage', () => {
   const flags = { resolve: jest.fn() };
   const prisma = {
@@ -122,22 +121,20 @@ describe('CapabilityService expanded gate coverage', () => {
     prisma.integrationConnection.findFirst.mockResolvedValue(null);
   });
 
-  it('rejects chat and human handoff when chat is disabled', async () => {
+  it('blocks chat and handoff when chat is disabled', async () => {
     flags.resolve.mockResolvedValue({ chat: false });
-    expect(await service.check('tenant-a', 'roof-a', 'chat')).toMatchObject({
-      allowed: false,
-      reason: 'chat_disabled',
-    });
-    expect(await service.check('tenant-a', 'roof-a', 'handoff')).toMatchObject({
-      allowed: false,
-      reason: 'chat_disabled',
-    });
+    const chat = await service.check('tenant-a', 'roof-a', 'chat');
+    const handoff = await service.check('tenant-a', 'roof-a', 'handoff');
+    expect(chat).toMatchObject({ allowed: false, reason: 'chat_disabled' });
+    expect(handoff).toMatchObject({ allowed: false, reason: 'chat_disabled' });
   });
 
-  it('permits service and parts assistance when explicitly enabled', async () => {
+  it('allows explicitly enabled service and parts', async () => {
     flags.resolve.mockResolvedValue({ serviceAi: true, partsAi: true });
-    expect(await service.check('tenant-a', 'roof-a', 'service')).toEqual({ allowed: true });
-    expect(await service.check('tenant-a', 'roof-a', 'parts')).toEqual({ allowed: true });
+    const serviceGate = await service.check('tenant-a', 'roof-a', 'service');
+    const partsGate = await service.check('tenant-a', 'roof-a', 'parts');
+    expect(serviceGate).toEqual({ allowed: true });
+    expect(partsGate).toEqual({ allowed: true });
   });
 
   it.each([
@@ -147,66 +144,66 @@ describe('CapabilityService expanded gate coverage', () => {
     ['knowledge', 'knowledge', 'knowledge_flag_off'],
     ['sms', 'sms', 'sms_flag_off'],
   ] as const)(
-    '%s is disabled without explicit permission and enabled with it',
+    '%s requires an explicit enable flag',
     async (capability, flag, reason) => {
       flags.resolve.mockResolvedValue({ [flag]: false });
-      expect(await service.check('tenant-a', 'roof-a', capability)).toMatchObject({
-        allowed: false,
-        reason,
-      });
+      const off = await service.check('tenant-a', 'roof-a', capability);
+      expect(off).toMatchObject({ allowed: false, reason });
       flags.resolve.mockResolvedValue({ [flag]: true });
-      expect(await service.check('tenant-a', 'roof-a', capability)).toEqual({
-        allowed: true,
-      });
+      const on = await service.check('tenant-a', 'roof-a', capability);
+      expect(on).toEqual({ allowed: true });
     },
   );
 
-  it('allows a payment estimate only when pricing inventory and both flags are ready', async () => {
+  it('requires verified inventory for payments', async () => {
     flags.resolve.mockResolvedValue({
       payments: true,
       financeCalculator: true,
       inventory: true,
     });
     prisma.vehicle.count.mockResolvedValueOnce(3).mockResolvedValueOnce(2);
-    expect(await service.check('tenant-a', 'roof-a', 'payments')).toEqual({
-      allowed: true,
-    });
+    const result = await service.check('tenant-a', 'roof-a', 'payments');
+    expect(result).toEqual({ allowed: true });
     expect(prisma.vehicle.count).toHaveBeenCalledTimes(2);
   });
 
-  it('permits compare only after successfully checking the inventory dependency', async () => {
+  it('allows comparison after inventory gating succeeds', async () => {
     flags.resolve.mockResolvedValue({ vehicleCompare: true, inventory: true });
     prisma.vehicle.count.mockResolvedValueOnce(2).mockResolvedValueOnce(2);
-    expect(await service.check('tenant-a', 'roof-a', 'vehicleCompare')).toEqual({
-      allowed: true,
-    });
+    const result = await service.check('tenant-a', 'roof-a', 'vehicleCompare');
+    expect(result).toEqual({ allowed: true });
   });
 
-  it('propagates an inventory dependency rejection for vehicle compare', async () => {
+  it('propagates inventory blockers to comparison', async () => {
     flags.resolve.mockResolvedValue({ vehicleCompare: true, inventory: false });
-    expect(await service.check('tenant-a', 'roof-a', 'vehicleCompare')).toMatchObject({
+    const result = await service.check('tenant-a', 'roof-a', 'vehicleCompare');
+    expect(result).toMatchObject({
       allowed: false,
       reason: 'inventory_flag_off',
     });
     expect(prisma.vehicle.count).not.toHaveBeenCalled();
   });
 
-  it('distinguishes configured-but-empty rooftop feed from no inventory source', async () => {
+  it('reports a configured-but-empty rooftop feed', async () => {
     flags.resolve.mockResolvedValue({ inventory: true });
     prisma.location.findFirst.mockResolvedValue({
       inventoryFeedUrl: 'https://dealer.example/authorized.xml',
     });
-    expect(await service.check('tenant-a', 'roof-a', 'inventory')).toMatchObject({
+    const result = await service.check('tenant-a', 'roof-a', 'inventory');
+    expect(result).toMatchObject({
       allowed: false,
       reason: 'feed_configured_but_empty',
     });
     expect(prisma.integrationConnection.findFirst).not.toHaveBeenCalled();
   });
 
-  it('reports a configured live vAuto connection with no imported vehicles', async () => {
+  it('reports a live vAuto connection with no imported vehicles', async () => {
     flags.resolve.mockResolvedValue({ inventory: true });
-    prisma.integrationConnection.findFirst.mockResolvedValue({ id: 'connection-a' });
-    expect(await service.check('tenant-a', 'roof-a', 'inventory')).toMatchObject({
+    prisma.integrationConnection.findFirst.mockResolvedValue({
+      id: 'connection-a',
+    });
+    const result = await service.check('tenant-a', 'roof-a', 'inventory');
+    expect(result).toMatchObject({
       allowed: false,
       reason: 'vauto_enabled_but_no_vehicles',
     });
@@ -221,10 +218,11 @@ describe('CapabilityService expanded gate coverage', () => {
     });
   });
 
-  it('checks tenant-wide inventory without querying a location when location is null', async () => {
+  it('checks tenant-wide inventory when location is null', async () => {
     flags.resolve.mockResolvedValue({ inventory: true });
     prisma.vehicle.count.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
-    expect(await service.check('tenant-a', null, 'inventory')).toEqual({ allowed: true });
+    const result = await service.check('tenant-a', null, 'inventory');
+    expect(result).toEqual({ allowed: true });
     expect(prisma.location.findFirst).not.toHaveBeenCalled();
     expect(prisma.vehicle.count).toHaveBeenCalledWith({
       where: {
@@ -234,10 +232,11 @@ describe('CapabilityService expanded gate coverage', () => {
     });
   });
 
-  it('does not count fresh units from the wrong rooftop toward availability', async () => {
+  it('does not count vehicles from another rooftop', async () => {
     flags.resolve.mockResolvedValue({ inventory: true });
     prisma.vehicle.count.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
-    expect(await service.check('tenant-a', 'roof-a', 'inventory')).toMatchObject({
+    const result = await service.check('tenant-a', 'roof-a', 'inventory');
+    expect(result).toMatchObject({
       allowed: false,
       reason: 'inventory_stale',
     });
@@ -249,11 +248,13 @@ describe('CapabilityService expanded gate coverage', () => {
     }
   });
 
-  it('fails closed for an unsupported capability name', async () => {
+  it('fails closed for unknown capabilities', async () => {
     flags.resolve.mockResolvedValue({});
-    expect(await service.check('tenant-a', 'roof-a', 'unsupported' as never)).toMatchObject({
-      allowed: false,
-      reason: 'unknown',
-    });
+    const result = await service.check(
+      'tenant-a',
+      'roof-a',
+      'unsupported' as never,
+    );
+    expect(result).toMatchObject({ allowed: false, reason: 'unknown' });
   });
 });
