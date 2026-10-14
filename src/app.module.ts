@@ -41,6 +41,7 @@ import { VoiceModule } from './voice/voice.module';
 import { ChannelsModule } from './channels/channels.module';
 import { FinanceModule } from './finance/finance.module';
 import { AppointmentsModule } from './appointments/appointments.module';
+import { OperationsModule } from './operations/operations.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -107,6 +108,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     ChannelsModule,
     FinanceModule,
     AppointmentsModule,
+    OperationsModule,
   ],
 
   providers: [

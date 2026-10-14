@@ -1,0 +1,233 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import {
+  assertStaffRole,
+  CurrentUser,
+  resolveLocationScope,
+  resolveTenantId,
+} from '../common/decorators/current-user.decorator';
+import type { AuthUser } from '../common/decorators/current-user.decorator';
+import { OperationsService } from './operations.service';
+import { ConversationIdService } from '../chat/conversation-id.service';
+
+class TextDto {
+  @IsString() @MinLength(1) @MaxLength(4000) text!: string;
+}
+class TransferDto {
+  @IsString() toUserId!: string;
+}
+class ReplayDto {
+  @IsArray() @ArrayMaxSize(100) @IsString({ each: true }) ids!: string[];
+}
+class LocationOpsDto {
+  @IsOptional() @IsString() timezone?: string;
+  @IsOptional() @IsObject() storeHours?: Record<string, unknown> | null;
+  @IsOptional() @IsObject() departmentHours?: Record<string, unknown> | null;
+  @IsOptional() @IsArray() holidayHours?: unknown[];
+  @IsOptional() @IsBoolean() verifyHours?: boolean;
+  @IsOptional() @IsObject() financialPolicy?: Record<string, unknown>;
+  @IsOptional() @IsObject() creditApplication?: Record<string, unknown>;
+  @IsOptional() @IsObject() serviceAmenities?: Record<string, unknown> | null;
+}
+
+const STAFF = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] as const;
+
+@Controller('ops')
+@UseGuards(RolesGuard)
+export class OperationsController {
+  constructor(private readonly ops: OperationsService) {}
+
+  private scope(user: AuthUser, tenantId?: string, locationId?: string) {
+    assertStaffRole(user);
+    return {
+      tenantId: resolveTenantId(user, tenantId),
+      locationId: resolveLocationScope(user, locationId),
+    };
+  }
+
+  @Roles(...STAFF)
+  @Get('overview')
+  overview(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.overview(this.scope(u, t, l));
+  }
+
+  @Roles(...STAFF)
+  @Get('queues')
+  queues(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.queues(this.scope(u, t, l));
+  }
+
+  @Roles(...STAFF)
+  @Get('inbox')
+  inbox(
+    @CurrentUser() u: AuthUser,
+    @Query('q') q?: string,
+    @Query('handoff') handoff?: 'open' | 'all',
+    @Query('mine') mine?: string,
+    @Query('cursor') cursor?: string,
+    @Query('locationId') l?: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.ops.inbox(this.scope(u, t, l), {
+      q: q?.slice(0, 100),
+      handoff,
+      assignedTo: mine === 'true' ? u.sub : undefined,
+      cursor,
+    });
+  }
+
+  @Roles(...STAFF)
+  @Get('conversations/:id')
+  conversation(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    return this.ops.conversation(this.scope(u), id);
+  }
+
+  @Roles(...STAFF)
+  @Post('conversations/:id/takeover')
+  takeover(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    return this.ops.takeover(this.scope(u), id, u.sub);
+  }
+
+  @Roles(...STAFF)
+  @Post('conversations/:id/transfer')
+  transfer(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: TransferDto,
+  ) {
+    return this.ops.transfer(this.scope(u), id, u.sub, b.toUserId);
+  }
+
+  @Roles(...STAFF)
+  @Post('conversations/:id/release')
+  release(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    return this.ops.release(this.scope(u), id, u.sub);
+  }
+
+  @Roles(...STAFF)
+  @Post('conversations/:id/reply')
+  reply(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: TextDto,
+  ) {
+    return this.ops.staffReply(this.scope(u), id, u.sub, b.text);
+  }
+
+  @Roles(...STAFF)
+  @Post('conversations/:id/notes')
+  note(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: TextDto,
+  ) {
+    return this.ops.note(this.scope(u), id, u.sub, b.text);
+  }
+
+  @Roles(...STAFF)
+  @Get('search')
+  search(
+    @CurrentUser() u: AuthUser,
+    @Query('q') q: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.search(
+      this.scope(u, undefined, l),
+      (q ?? '').slice(0, 100),
+    );
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('integrations')
+  integrations(@CurrentUser() u: AuthUser, @Query('locationId') l?: string) {
+    return this.ops.integrations(this.scope(u, undefined, l));
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('outbox/dead')
+  dead(@CurrentUser() u: AuthUser) {
+    return this.ops.deadLetters(this.scope(u));
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Post('outbox/replay')
+  replay(@CurrentUser() u: AuthUser, @Body() b: ReplayDto) {
+    return this.ops.replay(this.scope(u), b.ids, u.sub);
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('locations/:id/settings')
+  settings(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    const s = this.scope(u, undefined, id);
+    return this.ops.locationSettings(s.tenantId, s.locationId ?? id);
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Patch('locations/:id/settings')
+  updateSettings(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: LocationOpsDto,
+  ) {
+    const s = this.scope(u, undefined, id);
+    return this.ops.updateLocationSettings(
+      s.tenantId,
+      s.locationId ?? id,
+      u.sub,
+      b,
+    );
+  }
+}
+
+/** Widget-facing: staff replies / system events for the current (signed) conversation. */
+@Controller('chat')
+export class WidgetLiveController {
+  constructor(
+    private readonly ops: OperationsService,
+    private readonly ids: ConversationIdService,
+  ) {}
+
+  @Get('live')
+  live(
+    @Req() req: { user?: { role?: string; tenantId?: string } },
+    @Query('conversationId') conversationId: string,
+    @Query('after') after?: string,
+  ) {
+    const user = req.user;
+    if (user?.role !== 'widget' || !user.tenantId)
+      throw new UnauthorizedException();
+    if (!this.ids.verify(user.tenantId, conversationId))
+      return { messages: [], aiPaused: false, handoffState: 'AI' };
+    return this.ops.widgetMessagesSince(user.tenantId, conversationId, after);
+  }
+}
