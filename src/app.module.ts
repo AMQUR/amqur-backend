@@ -27,7 +27,7 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { AiModule } from './ai/ai.module';
 import { SavedVehiclesModule } from './saved-vehicles/saved-vehicles.module';
 import { PartsModule } from './parts/parts.module';
-import { FollowUpModule } from './follow-up/follow-up.module';
+import { MessagingModule } from './messaging/messaging.module';
 import { CopilotModule } from './copilot/copilot.module';
 import { CapabilityModule } from './capability/capability.module';
 import { CacheModule } from './cache/cache.module';
@@ -95,7 +95,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     ObservabilityModule,
     SavedVehiclesModule,
     PartsModule,
-    FollowUpModule,
+    MessagingModule,
     CopilotModule,
     ChatModule,
     InventoryModule,

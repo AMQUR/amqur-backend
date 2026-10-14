@@ -70,6 +70,8 @@ import {
 } from './dialogue/dialogue-style';
 import { formatClock, parseIsoDate } from '../common/time/zoned-time';
 import { CrmSyncService } from '../integrations/crm/crm-sync.service';
+import { CampaignEngine } from '../messaging/campaign.engine';
+import { ConsentService } from '../messaging/consent.service';
 
 export type ChatProvenance = {
   sources: string[];
@@ -337,6 +339,8 @@ export class ChatOrchestrator {
     private readonly metrics: MetricsService,
     private readonly outbox: OutboxService,
     private readonly crmSync: CrmSyncService,
+    private readonly campaigns: CampaignEngine,
+    private readonly consent: ConsentService,
   ) {}
 
   // ───────────────────────────────────────── entry
@@ -3042,21 +3046,19 @@ export class ChatOrchestrator {
     if (p === 'confirm_handoff') return this.handleHandoff(t, 'request');
     if (p === 'text_consent') {
       if (!t.st.contact.phone) return;
-      await this.prisma.consentRecord.create({
-        data: {
-          tenantId: t.tenantId,
-          locationId: t.locationId,
-          leadId: t.st.leadId ?? null,
-          conversationExternalKey: t.s.externalKey,
-          channel: 'SMS',
-          endpoint: `+1${t.st.contact.phone.replace(/\D/g, '').slice(-10)}`,
-          purpose: 'CONVERSATIONAL',
-          granted: true,
-          wording:
-            'OK for the dealership to text you about this conversation? Msg & data rates may apply; reply STOP anytime.',
-          wordingVersion: 'sms-continuation-v1',
-          source: 'WIDGET',
-        },
+      await this.consent.record({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        leadId: t.st.leadId ?? null,
+        conversationExternalKey: t.s.externalKey,
+        channel: 'SMS',
+        endpoint: t.st.contact.phone,
+        purpose: 'CONVERSATIONAL',
+        granted: true,
+        wording:
+          'OK for the dealership to text you about this conversation? Msg & data rates may apply; reply STOP anytime.',
+        wordingVersion: 'sms-continuation-v1',
+        source: 'WIDGET',
       });
       t.st.contact.consentToText = true;
       this.signal(t, 'text_consent');
@@ -3258,7 +3260,7 @@ export class ChatOrchestrator {
         data: { leadId: lead.id },
       });
     }
-    if (isNewLead)
+    if (isNewLead) {
       void this.analytics.trackEvent(
         t.tenantId,
         t.locationId,
@@ -3266,6 +3268,13 @@ export class ChatOrchestrator {
         { stage: score.stage },
         t.s.externalKey,
       );
+      await this.campaigns.onEvent({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        trigger: 'lead.no_response',
+        subjectId: lead.id,
+      });
+    }
     // CRM writeback is capability-gated and durable (outbox) — never a fake sync.
     await this.crmSync.onLeadChanged(
       t.tenantId,

@@ -33,6 +33,8 @@ export class OutboxService {
     payload: Record<string, unknown>;
     idempotencyKey?: string;
     tx?: Prisma.TransactionClient;
+    /** Delay delivery (scheduled campaign steps, quiet-hours deferral). */
+    availableAt?: Date;
   }) {
     const db = params.tx ?? this.prisma;
     if (params.idempotencyKey) {
@@ -54,6 +56,7 @@ export class OutboxService {
           payload: params.payload as Prisma.InputJsonValue,
           idempotencyKey: params.idempotencyKey,
           status: OutboxStatus.PENDING,
+          ...(params.availableAt ? { nextAttemptAt: params.availableAt } : {}),
         },
       });
     } catch (e: unknown) {

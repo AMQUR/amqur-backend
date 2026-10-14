@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   Appointment,
@@ -34,6 +35,7 @@ import type {
 } from './scheduling-provider';
 import { CircuitBreakerService } from '../integrations/core/circuit-breaker.service';
 import { MetricsService } from '../observability/metrics.service';
+import { CampaignEngine } from '../messaging/campaign.engine';
 
 export type AppointmentRequestInput = {
   tenantId: string;
@@ -122,6 +124,7 @@ export class AppointmentService {
     private readonly registry: SchedulingProviderRegistry,
     private readonly breaker: CircuitBreakerService,
     private readonly metrics: MetricsService,
+    @Optional() private readonly campaigns?: CampaignEngine,
   ) {}
 
   async getHours(
@@ -595,6 +598,23 @@ export class AppointmentService {
       where: { id: appt.id },
       data,
     });
+    if (params.to === 'CONFIRMED' && updated.scheduledAt) {
+      await this.campaigns?.onEvent({
+        tenantId: params.tenantId,
+        locationId: updated.locationId,
+        trigger: 'appointment.confirmed.reminder',
+        subjectId: updated.id,
+        scheduledAt: updated.scheduledAt,
+      });
+    }
+    if (params.to === 'NO_SHOW') {
+      await this.campaigns?.onEvent({
+        tenantId: params.tenantId,
+        locationId: updated.locationId,
+        trigger: 'appointment.no_show',
+        subjectId: updated.id,
+      });
+    }
     await this.prisma.auditLog
       .create({
         data: {

@@ -1031,11 +1031,51 @@ model FollowUpCampaign {
   policy   Json    @default("{}")
   template String?
 
+  locationId String?
+  /// Bumped on every edit; enrollments pin the version they started with
+  version   Int       @default(1)
+  startsAt  DateTime?
+  endsAt    DateTime?
+  createdByUserId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, name])
   @@index([tenantId, enabled])
+}
+
+/// Every outbound customer message (any channel). Delivery state comes ONLY from the provider.
+model OutboundMessage {
+  id String @id @default(cuid())
+
+  tenantId String
+  locationId String?
+  conversationId String?
+  leadId String?
+  campaignId String?
+  campaignVersion Int?
+
+  /// SMS | EMAIL | WHATSAPP | VOICE
+  channel String
+  /// normalized endpoint (E.164 / lowercased email) — staff-only PII
+  endpoint String
+  purpose String
+  body String
+  /// QUEUED | SUPPRESSED | SENT | DELIVERED | UNDELIVERED | FAILED
+  status String @default("QUEUED")
+  suppressReason String?
+  provider String?
+  providerMessageId String?
+  error String?
+  idempotencyKey String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, channel, endpoint, createdAt])
+  @@index([providerMessageId])
 }
 
 /// Approved knowledge source registry (manual, upload, website, policy, FAQ).
