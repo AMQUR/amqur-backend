@@ -36,10 +36,11 @@
     "seed:local-demo": "ts-node --transpile-only scripts/seed-local-demo.ts",
     "start:local-demo": "bash scripts/start-local-demo.sh",
     "test:simulator": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=simulator",
-    "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts"
+    "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",
+    "ai:check": "ts-node --transpile-only scripts/ai-check.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/sdk": "^0.133.0",
     "@nestjs/axios": "^4.0.1",
     "@nestjs/common": "^11.2.7",
     "@nestjs/config": "^4.0.2",

@@ -20,6 +20,8 @@ export type LlmGenerateResult = {
   promptVersion?: string;
   inputTokens?: number;
   outputTokens?: number;
+  /** Metered cost in micro-USD when the owner configured per-token prices. */
+  costMicroUsd?: number;
 };
 
 export interface LlmProvider {

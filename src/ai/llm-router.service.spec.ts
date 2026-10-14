@@ -126,4 +126,99 @@ describe('LlmRouterService', () => {
       attempts: 0,
     });
   });
+
+  const withUsage = (
+    id: string,
+    tokensIn: number,
+    tokensOut: number,
+    delayMs = 0,
+  ) => ({
+    providerId: id,
+    isAvailable: () => true,
+    generate: jest.fn(async () => {
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      return {
+        text: 'ok',
+        provider: id,
+        model: 'm',
+        latencyMs: 1,
+        inputTokens: tokensIn,
+        outputTokens: tokensOut,
+      };
+    }),
+  });
+  const cfgWith = (env: Record<string, string>) => ({
+    get: (k: string) => env[k],
+  });
+  const call = (r: LlmRouterService) =>
+    r.route({ messages: [{ role: 'user', content: 'hi' }], timeoutMs: 1000 });
+
+  it('enforces the daily token budget across calls and falls back to deterministic', async () => {
+    const a = withUsage('anthropic', 600, 500);
+    const off = provider('openai', async () => ({ text: 'x' }), false);
+    const r = new LlmRouterService(
+      a as never,
+      off as never,
+      metrics as never,
+      memCache() as never,
+      cfgWith({ LLM_DAILY_TOKEN_BUDGET: '1000' }) as never,
+    );
+    expect((await call(r)).ok).toBe(true); // 1,100 tokens used — over the cap now
+    const second = await call(r);
+    expect(second).toMatchObject({ ok: false, reason: 'budget_exhausted' });
+    expect(a.generate).toHaveBeenCalledTimes(1);
+    expect((await r.status()).budgetExhausted).toBe(true);
+  });
+
+  it('defaults to a finite budget when unset (spend is never unbounded)', async () => {
+    const off = provider('openai', async () => ({ text: 'x' }), false);
+    const r = new LlmRouterService(
+      withUsage('anthropic', 1, 1) as never,
+      off as never,
+      metrics as never,
+      memCache() as never,
+      cfgWith({}) as never,
+    );
+    expect((await r.status()).dailyTokenBudget).toBe(2_000_000);
+  });
+
+  it('sheds load above the concurrency limit instead of queueing', async () => {
+    const a = withUsage('anthropic', 1, 1, 50);
+    const off = provider('openai', async () => ({ text: 'x' }), false);
+    const r = new LlmRouterService(
+      a as never,
+      off as never,
+      metrics as never,
+      memCache() as never,
+      cfgWith({ LLM_MAX_CONCURRENCY: '2' }) as never,
+    );
+    const res = await Promise.all([call(r), call(r), call(r)]);
+    expect(res.filter((x) => x.ok)).toHaveLength(2);
+    expect(res.find((x) => !x.ok)).toMatchObject({ reason: 'rate_limited' });
+  });
+
+  it('meters cost only from owner-configured prices, in micro-USD', async () => {
+    const off = provider('openai', async () => ({ text: 'x' }), false);
+    const r = new LlmRouterService(
+      withUsage('anthropic', 1000, 200) as never,
+      off as never,
+      metrics as never,
+      memCache() as never,
+      cfgWith({
+        LLM_COST_INPUT_PER_MTOK: '3',
+        LLM_COST_OUTPUT_PER_MTOK: '15',
+      }) as never,
+    );
+    const out = await call(r);
+    expect(out.ok && out.result.costMicroUsd).toBe(1000 * 3 + 200 * 15);
+    const r2 = new LlmRouterService(
+      withUsage('anthropic', 1000, 200) as never,
+      off as never,
+      metrics as never,
+      memCache() as never,
+      cfgWith({}) as never,
+    );
+    const out2 = await call(r2);
+    expect(out2.ok && out2.result.costMicroUsd).toBeUndefined();
+  });
 });

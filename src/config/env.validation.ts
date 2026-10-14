@@ -40,6 +40,12 @@ export const envValidationSchema = Joi.object({
     .optional()
     .default('anthropic'),
 
+  /** LLM spend/load controls (see llm-router.service.ts). Unset budget → 2,000,000 tokens/day. */
+  LLM_DAILY_TOKEN_BUDGET: Joi.number().integer().min(1000).optional(),
+  LLM_MAX_CONCURRENCY: Joi.number().integer().min(1).max(200).optional(),
+  LLM_COST_INPUT_PER_MTOK: Joi.number().min(0).optional(),
+  LLM_COST_OUTPUT_PER_MTOK: Joi.number().min(0).optional(),
+
   /** Comma-separated staff roles that must complete TOTP MFA (production default SUPER_ADMIN,ADMIN). */
   STAFF_MFA_REQUIRED_ROLES: Joi.string().optional().allow(''),
   MFA_ISSUER: Joi.string().optional().default('AMQUR Command Center'),

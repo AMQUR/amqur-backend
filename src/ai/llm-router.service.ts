@@ -18,7 +18,9 @@ export type LlmFailureReason =
   | 'all_circuits_open'
   | 'timeout'
   | 'provider_error'
-  | 'empty_completion';
+  | 'empty_completion'
+  | 'budget_exhausted'
+  | 'rate_limited';
 
 export type LlmRouteResult =
   | { ok: true; result: LlmGenerateResult; attempts: number }
@@ -37,10 +39,81 @@ const BREAKER_TTL_S = 120;
  * - latency / token / failure-reason metrics
  * - egress minimization: contact PII, credentials and tokens are redacted before send
  */
+/**
+ * Spend and load controls (optional env):
+ *  - LLM_DAILY_TOKEN_BUDGET   hard daily cap on input+output tokens across replicas (Redis);
+ *                             defaults to 2,000,000 so spend is never unbounded
+ *  - LLM_MAX_CONCURRENCY      in-process concurrent provider calls (excess → deterministic)
+ *  - LLM_COST_INPUT_PER_MTOK / LLM_COST_OUTPUT_PER_MTOK  USD per million tokens, from the
+ *    owner's contract/price sheet — used only for metering; no prices are hard-coded
+ */
 @Injectable()
 export class LlmRouterService {
   private readonly logger = new Logger(LlmRouterService.name);
   private readonly local = new Map<string, BreakerState>();
+  private inFlight = 0;
+  private localSpend = { day: '', tokens: 0 };
+
+  private num(k: string): number | null {
+    const v = Number(this.config.get<string>(k));
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+
+  private dailyBudget(): number {
+    return this.num('LLM_DAILY_TOKEN_BUDGET') ?? 2_000_000;
+  }
+
+  private today() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  private async spentToday(): Promise<number> {
+    const day = this.today();
+    const shared = await this.cache
+      .getJson<{ tokens: number }>(`llm:spend:${day}`)
+      .catch(() => null);
+    const local = this.localSpend.day === day ? this.localSpend.tokens : 0;
+    return Math.max(shared?.tokens ?? 0, local);
+  }
+
+  private async addSpend(tokens: number) {
+    const day = this.today();
+    if (this.localSpend.day !== day) this.localSpend = { day, tokens: 0 };
+    this.localSpend.tokens += tokens;
+    const prev = await this.spentToday();
+    await this.cache
+      .setJson(
+        `llm:spend:${day}`,
+        { tokens: Math.max(prev, this.localSpend.tokens) },
+        2 * 86_400,
+      )
+      .catch(() => undefined);
+  }
+
+  /** Configured/missing per provider, models, circuits, today's spend vs cap — never keys. */
+  async status() {
+    const budget = this.dailyBudget();
+    const used = await this.spentToday();
+    return {
+      primary: this.config.get<string>('LLM_PRIMARY_PROVIDER') ?? 'anthropic',
+      providers: (await this.health()).map((h) => ({
+        ...h,
+        model:
+          h.provider === 'anthropic'
+            ? (this.config.get<string>('ANTHROPIC_MODEL') ??
+              'claude-sonnet-5-5')
+            : (this.config.get<string>('OPENAI_MODEL') ?? 'gpt-4o-mini'),
+      })),
+      dailyTokenBudget: budget,
+      tokensUsedToday: used,
+      budgetExhausted: used >= budget,
+      maxConcurrency: this.num('LLM_MAX_CONCURRENCY'),
+      inFlight: this.inFlight,
+      costMetering:
+        this.num('LLM_COST_INPUT_PER_MTOK') !== null &&
+        this.num('LLM_COST_OUTPUT_PER_MTOK') !== null,
+    };
+  }
 
   constructor(
     private readonly anthropic: AnthropicLlmProvider,
@@ -121,6 +194,28 @@ export class LlmRouterService {
       this.metrics.increment('ai.llm.unavailable');
       return { ok: false, reason: 'no_provider_configured', attempts: 0 };
     }
+    const budget = this.dailyBudget();
+    if ((await this.spentToday()) >= budget) {
+      this.metrics.increment('ai.llm.budget_exhausted');
+      return { ok: false, reason: 'budget_exhausted', attempts: 0 };
+    }
+    const maxConc = this.num('LLM_MAX_CONCURRENCY');
+    if (maxConc !== null && this.inFlight >= maxConc) {
+      this.metrics.increment('ai.llm.rate_limited');
+      return { ok: false, reason: 'rate_limited', attempts: 0 };
+    }
+    this.inFlight += 1;
+    try {
+      return await this.routeInner(providers, params);
+    } finally {
+      this.inFlight -= 1;
+    }
+  }
+
+  private async routeInner(
+    providers: LlmProvider[],
+    params: LlmGenerateParams,
+  ): Promise<LlmRouteResult> {
     const safe: LlmGenerateParams = {
       ...params,
       system: params.system,
@@ -154,6 +249,17 @@ export class LlmRouterService {
           this.metrics.increment('ai.llm.tokens_in', result.inputTokens);
         if (result.outputTokens)
           this.metrics.increment('ai.llm.tokens_out', result.outputTokens);
+        const used = (result.inputTokens ?? 0) + (result.outputTokens ?? 0);
+        if (used) await this.addSpend(used);
+        const cin = this.num('LLM_COST_INPUT_PER_MTOK');
+        const cout = this.num('LLM_COST_OUTPUT_PER_MTOK');
+        if (cin !== null && cout !== null) {
+          const micro = Math.round(
+            (result.inputTokens ?? 0) * cin + (result.outputTokens ?? 0) * cout,
+          ); // USD per MTok × tokens = micro-USD
+          this.metrics.increment('ai.llm.cost_microusd', micro);
+          result.costMicroUsd = micro;
+        }
         return { ok: true, result, attempts };
       } catch (e: unknown) {
         lastReason =

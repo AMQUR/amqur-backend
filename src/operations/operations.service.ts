@@ -985,6 +985,11 @@ export class OperationsService {
     return this.locationSettings(tenantId, locationId);
   }
 
+  /** AI provider status for admins: configured/missing, models, circuits, spend — never keys. */
+  aiStatus() {
+    return this.llm.status();
+  }
+
   // ───────────── unified customer view (read-only, exact-match linking)
 
   /**

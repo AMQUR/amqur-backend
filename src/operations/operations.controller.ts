@@ -287,6 +287,12 @@ export class OperationsController {
     return this.ops.locationSettings(s.tenantId, s.locationId ?? id);
   }
 
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Get('ai/status')
+  aiStatus() {
+    return this.ops.aiStatus();
+  }
+
   /** Unified, read-only customer timeline within the caller's store (exact phone/email). */
   @Roles(...STAFF)
   @Get('customers/profile')
