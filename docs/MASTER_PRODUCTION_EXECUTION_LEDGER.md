@@ -63,10 +63,12 @@ No row is above `LOCAL_VERIFIED`: no vendor integration has credentials, staging
 | Command Center: inbox, takeover, reply, notes, queues (incl. OTD quotes, trade appraisal/offer), rooftop settings, credit destination, emergency controls | LOCAL_VERIFIED | CC Playwright 2/2, e2e | Staff accounts per store |
 | Five-rooftop readiness registry + scorecard (`GET /api/ops/group/readiness`) | LOCAL_VERIFIED | unit + `docs/FIVE_STORE_SCORECARD.md` | Store evidence (see scorecard) |
 | Cross-rooftop isolation (inventory, prices, conversations, credit links, admin scope, phones, hours, kill switch) | LOCAL_VERIFIED | five-rooftop-isolation e2e (12) | — |
-| Group executive dashboards (all-store metrics) | NOT_IMPLEMENTED | — | Engineering (no fabricated metrics) |
-| Unified customer profile / identity merge | NOT_IMPLEMENTED | — | Engineering |
+| Group all-store comparison (`/api/dealer-groups/:id/comparison`, CC Group page) | LOCAL_VERIFIED | five-rooftop e2e (counts = DB counts, non-members 403) | AI cost, sales attribution, SLA timing need a verified source |
+| Unified customer view (read-only, exact phone/email, never merges) | LOCAL_VERIFIED | five-rooftop e2e | Staff-approved merge/unmerge workflow NOT_IMPLEMENTED |
 | Knowledge lifecycle + hybrid retrieval | CODE_COMPLETE | operations e2e | pgvector availability on Railway unverified (absent locally); embeddings stored as JSON |
-| Spotlights, rich media, A/B experiments | NOT_IMPLEMENTED | — | Engineering |
+| Dealer spotlights (two-person approval, store scope, auto-withdraw when sold) | LOCAL_VERIFIED | spotlights e2e | — |
+| Greeting copy experiments (stable assignment, copy rules, z-test, no auto-promote) | LOCAL_VERIFIED | experiments unit + e2e | Other surfaces not yet experimentable |
+| Rich media library (walkarounds, video) | NOT_IMPLEMENTED | — | Storage + media authorization (B-13) |
 | Privacy export/deletion, retention, legal hold | LOCAL_VERIFIED | data-governance e2e | Counsel review |
 | Staff MFA, RBAC, token typing | LOCAL_VERIFIED | auth-mfa e2e | — |
 
