@@ -18,7 +18,8 @@ import {
 import { twilioSignature } from '../../src/messaging/twilio';
 
 const AUTH = 'test_auth_token_0123456789abcdef';
-const PHONE = '+13125550188';
+// Unique per run: the persistent test DB would otherwise trip the (correct) 24h frequency cap.
+const PHONE = `+1312${String(Date.now()).slice(-7)}`;
 
 describe('messaging, consent ledger, campaigns (fake Twilio)', () => {
   let ctx: E2eCtx;
@@ -224,7 +225,7 @@ describe('messaging, consent ledger, campaigns (fake Twilio)', () => {
 
   it('quiet hours defer delivery to the next allowed time in the dealership timezone', async () => {
     const tenantId = seed.alpha.tenant.id;
-    const phone = '+13125550166';
+    const phone = `+1773${String(Date.now()).slice(-7)}`;
     await ctx.app.get(ConsentService).record({
       tenantId,
       channel: 'SMS',
