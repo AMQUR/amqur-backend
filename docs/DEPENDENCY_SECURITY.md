@@ -4,7 +4,7 @@ Fresh `npm audit` on all three packages, then semver-compatible fixes only (no `
 
 | Package | Before | After | Notes |
 |---|---|---|---|
-| backend | 2 critical, 19 high, 11 moderate, 2 low | 0 critical; production tree: 3 high + 1 moderate (see below) | `@nestjs/*` aligned to 11.2.7 after the audit fix left `@nestjs/core` and `@nestjs/common` on mismatched versions (would have broken the build) |
+| backend | 2 critical, 19 high, 11 moderate, 2 low | production tree: **0** (`npm audit --omit=dev`); dev-only moderates remain (jest chain) | `@nestjs/*` aligned to 11.2.7 after the audit fix left `@nestjs/core` and `@nestjs/common` on mismatched versions (would have broken the build) |
 | backend/command-center | 1 high, 2 moderate | 0 | vite 7.3.7, vitest 4.1.11 (exact pins kept) |
 | amqur-widget | 7 high, 4 moderate, 2 low | 0 | |
 
@@ -14,7 +14,7 @@ Removed: `proxy-addr` and `handlebars` criticals; runtime highs in `@nestjs/core
 
 | Advisory | Path | Reachability | Decision |
 |---|---|---|---|
-| `deepmerge-ts` stack exhaustion (high) | `prisma` CLI → `@prisma/config` | Only when the Prisma CLI loads its own trusted config during `migrate deploy`; never on request data | Accept until a Prisma 6.x patch ships; the audit's suggested "fix" is a downgrade |
+| `deepmerge-ts` stack exhaustion (high, 3 advisories via `prisma` → `@prisma/config`) | Prisma CLI, which IS in the production image (container start runs `npx prisma migrate deploy`) | Only merges Prisma's own config files baked into the image; never request data | **Fixed 2026-10-14** with an npm `overrides` pin to `deepmerge-ts@^8` (no patched Prisma 6.x exists; Prisma 7 is a breaking major). Verified: `prisma validate`, `generate`, all 17 migrations from an empty DB, unit 421/421, e2e 135/135. `npm audit --omit=dev` → 0 vulnerabilities |
 | `csv-parse` <7.0.2 | — | Upgraded to 7.0.3; feed rows additionally drop `__proto__`/`constructor`/`prototype` keys (unit-tested) | Fixed |
 | `sprintf-js`, `js-yaml`, jest chain (moderate) | dev/test only | Not in the production image | Accept |
 
