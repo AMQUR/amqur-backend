@@ -143,7 +143,7 @@ describe('messaging, consent ledger, campaigns (fake Twilio)', () => {
     expect(q.status).toBe('QUEUED');
     if (q.status !== 'QUEUED') return;
     await ctx.prisma.outboxEvent.updateMany({
-      where: { topic: 'messaging.send' },
+      where: { topic: 'messaging.send', idempotencyKey: `msg:${q.id}` },
       data: { nextAttemptAt: new Date(0) },
     });
     await ctx.app.get(OutboxProcessorService).processBatch(500, 'msg-test');
@@ -151,7 +151,7 @@ describe('messaging, consent ledger, campaigns (fake Twilio)', () => {
       where: { id: q.id },
     });
     expect(sent.status).toBe('SENT');
-    expect(received.at(-1)).toMatchObject({
+    expect(received.find((r) => r.To === PHONE)).toMatchObject({
       To: PHONE,
       MessagingServiceSid: 'MGtest',
     });
