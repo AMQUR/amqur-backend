@@ -1,4 +1,8 @@
 import { Injectable } from '@nestjs/common';
+import type {
+  AprSource,
+  FinancialAssumptionPolicy,
+} from '../finance/financial-assumption-policy';
 
 export type FinanceEstimateInput = {
   price: number; // vehicle price
@@ -28,16 +32,22 @@ export type FinanceEstimateOutput = {
   };
 };
 
+export type PolicyEstimate = FinanceEstimateOutput & {
+  aprSource: AprSource;
+  includesTaxAndFees: boolean;
+  policyVersion: string;
+  policyMode: FinancialAssumptionPolicy['mode'];
+  disclaimer: string;
+};
+
 @Injectable()
 export class PaymentService {
   /**
-   * Educational defaults only — not dealership/lender offers.
-   * Tenant-specific APR/fees/tax must come from verified config when available.
+   * No hidden dealership assumptions here. Callers must pass a resolved
+   * FinancialAssumptionPolicy via `estimateWithPolicy` (single source of truth).
+   * Raw `estimateFinance` defaults fees/tax to ZERO — never guessed.
    */
   private DEFAULT_TERM = 72;
-  private DEFAULT_APR = 9.99;
-  private DEFAULT_FEES = 899;
-  private DEFAULT_TAX_RATE = 9.25;
   private DEFAULT_TAX_ON: 'price' | 'net' = 'price';
 
   readonly estimateDisclaimer =
@@ -51,13 +61,13 @@ export class PaymentService {
       12,
       96,
     );
-    const apr = this.clamp(input.apr ?? this.DEFAULT_APR, 0, 40);
+    const apr = this.clamp(input.apr, 0, 40);
 
     const downPayment = this.money(input.downPayment ?? 0);
     const tradeIn = this.money(input.tradeIn ?? 0);
-    const fees = this.money(input.fees ?? this.DEFAULT_FEES);
+    const fees = this.money(input.fees ?? 0);
 
-    const taxRate = this.clamp(input.taxRate ?? this.DEFAULT_TAX_RATE, 0, 15);
+    const taxRate = this.clamp(input.taxRate ?? 0, 0, 15);
     const taxOn = input.taxOn ?? this.DEFAULT_TAX_ON;
 
     const taxableBase =
@@ -94,6 +104,64 @@ export class PaymentService {
         apr,
         termMonths,
       },
+    };
+  }
+
+  /**
+   * Deterministic estimate using the ONE authoritative policy. APR precedence:
+   * verified offer (only from an approved finance provider) > customer-supplied > illustrative.
+   */
+  estimateWithPolicy(input: {
+    price: number;
+    policy: FinancialAssumptionPolicy;
+    downPayment?: number | null;
+    tradeEquity?: number | null;
+    termMonths?: number | null;
+    customerApr?: number | null;
+    verifiedOfferApr?: number | null;
+  }): PolicyEstimate {
+    const { policy } = input;
+    let aprSource: AprSource = 'ILLUSTRATIVE';
+    let apr = policy.illustrativeApr;
+    if (
+      input.verifiedOfferApr != null &&
+      Number.isFinite(input.verifiedOfferApr)
+    ) {
+      apr = input.verifiedOfferApr;
+      aprSource = 'VERIFIED_OFFER';
+    } else if (
+      input.customerApr != null &&
+      Number.isFinite(input.customerApr)
+    ) {
+      apr = input.customerApr;
+      aprSource = 'CUSTOMER';
+    }
+    const term =
+      input.termMonths && input.termMonths >= 12 && input.termMonths <= 96
+        ? Math.round(input.termMonths)
+        : policy.defaultTermMonths;
+    const includesTaxAndFees = policy.mode === 'DEALER_CONFIGURED';
+    const fees = includesTaxAndFees
+      ? (policy.docFee ?? 0) +
+        policy.otherFees.reduce((a, f) => a + f.amount, 0)
+      : 0;
+    const est = this.estimateFinance({
+      price: input.price,
+      termMonths: term,
+      apr,
+      downPayment: input.downPayment ?? 0,
+      tradeIn: input.tradeEquity ?? 0,
+      fees,
+      taxRate: includesTaxAndFees ? (policy.taxRatePercent ?? 0) : 0,
+      taxOn: policy.taxBasis ?? 'price',
+    });
+    return {
+      ...est,
+      aprSource,
+      includesTaxAndFees,
+      policyVersion: policy.version,
+      policyMode: policy.mode,
+      disclaimer: policy.disclaimer,
     };
   }
 

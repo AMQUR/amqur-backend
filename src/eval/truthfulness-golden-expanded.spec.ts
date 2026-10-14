@@ -1,7 +1,17 @@
 import { inventoryFreshnessDisclaimer } from '../chat/engines/inventory-freshness';
 import { PLATFORM_FEATURE_DEFAULTS } from '../feature-flags/feature-flags.service';
-import { IntentDetector } from '../chat/intents/intent.detector';
-import { ChatIntent } from '../chat/intents/intent.types';
+// Ported 2026-10-13 from the removed substring IntentDetector to structured multi-intent
+// understanding. Assertions check the intent is PRESENT (multi-intent) rather than "first match".
+import {
+  understandTurn,
+  TurnIntent,
+} from '../chat/understanding/turn-understanding';
+
+const intentsOf = (p: string): TurnIntent[] =>
+  understandTurn(p, {
+    timeZone: 'America/Chicago',
+    now: new Date('2026-10-13T15:00:00Z'),
+  }).intents.map((i) => i.intent);
 
 /**
  * Expanded anti-hallucination golden suite.
@@ -120,15 +130,7 @@ describe('truthfulness golden expanded', () => {
     }
     expect(prompts.length).toBeGreaterThanOrEqual(200);
     for (const p of prompts) {
-      const intent = IntentDetector.detect(p);
-      expect([
-        ChatIntent.INVENTORY_SEARCH,
-        ChatIntent.INVENTORY_AVAILABILITY,
-        ChatIntent.PAYMENT_ESTIMATE,
-        ChatIntent.GENERAL_QUESTION,
-        ChatIntent.PRICING_REQUEST,
-        ChatIntent.INTELLIGENT_QUERY,
-      ]).toContain(intent);
+      expect(intentsOf(p)).toContain('INVENTORY_SEARCH');
       // Policy: when capability blocked, reply must be from unavailable templates family
       const blockedReply = UNAVAILABLE_TEMPLATES[0];
       assertNoForbidden(blockedReply);
@@ -155,20 +157,24 @@ describe('truthfulness golden expanded', () => {
     expect(handoffs.length).toBeGreaterThanOrEqual(100);
 
     for (const p of service) {
-      expect(IntentDetector.detect(p)).toBe(ChatIntent.SERVICE_APPOINTMENT);
+      expect(intentsOf(p)).toContain('SERVICE_APPOINTMENT');
     }
     for (const p of parts) {
-      expect(IntentDetector.detect(p)).toBe(ChatIntent.PARTS_INQUIRY);
+      expect(intentsOf(p)).toContain('PARTS_INQUIRY');
     }
     for (const p of payments) {
-      expect([
-        ChatIntent.PAYMENT_ESTIMATE,
-        ChatIntent.PRICING_REQUEST,
-        ChatIntent.GENERAL_QUESTION,
-      ]).toContain(IntentDetector.detect(p));
+      expect(
+        intentsOf(p).some(
+          (i) =>
+            i === 'PAYMENT_ESTIMATE' ||
+            i === 'FINANCE_REQUEST' ||
+            i === 'KNOWLEDGE_QUESTION' ||
+            i === 'UNKNOWN',
+        ),
+      ).toBe(true);
     }
     for (const p of handoffs) {
-      expect(IntentDetector.detect(p)).toBe(ChatIntent.HUMAN_HANDOFF);
+      expect(intentsOf(p)).toContain('HUMAN_HANDOFF');
     }
 
     // Handoff copy policy matrix
@@ -194,7 +200,7 @@ describe('truthfulness golden expanded', () => {
       'is the service special $99 oil change still on',
     ];
     for (const p of prompts) {
-      IntentDetector.detect(p);
+      intentsOf(p);
       const honest =
         'I do not have verified information for that from current dealership records. I can connect you with a team member.';
       assertNoForbidden(honest);

@@ -12,6 +12,7 @@ import { WebhookInboxService } from './core/webhook-inbox.service';
 import { InventoryFeedModule } from '../inventory-feed/inventory-feed.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NormalizedInventoryHttpProvider } from './normalized-inventory/normalized-inventory-http.provider';
+import { CrmSyncService } from './crm/crm-sync.service';
 
 @Module({
   imports: [InventoryFeedModule, InventoryModule],
@@ -27,6 +28,7 @@ import { NormalizedInventoryHttpProvider } from './normalized-inventory/normaliz
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
     TekionCrmWritebackService,
+    CrmSyncService,
   ],
   exports: [
     SecretVaultService,
@@ -39,6 +41,7 @@ import { NormalizedInventoryHttpProvider } from './normalized-inventory/normaliz
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
     TekionCrmWritebackService,
+    CrmSyncService,
   ],
 })
 export class IntegrationsModule {}

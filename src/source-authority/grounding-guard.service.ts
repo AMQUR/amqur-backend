@@ -128,6 +128,20 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
 const INJECTION_PRICE_PATTERN =
   /\b(ignore (?:previous|all)|system prompt|disregard (?:instructions|rules))[\s\S]{0,80}\$[\d,]+/i;
 
+/**
+ * Claim types present in a SERVER-AUTHORED draft. Those were produced from tool evidence,
+ * so the polish step may keep them; only claims the LLM *adds* are stripped.
+ */
+export function detectClaimTypes(text: string): ClaimType[] {
+  const out: ClaimType[] = [];
+  for (const { claimType, pattern } of CLAIM_PATTERNS) {
+    if (pattern.test(text) && !out.includes(claimType)) out.push(claimType);
+  }
+  if (/\$\d/.test(text) && !out.includes(ClaimType.PRICE))
+    out.push(ClaimType.PRICE);
+  return out;
+}
+
 @Injectable()
 export class GroundingGuardService {
   sanitizeCustomerReply(params: {

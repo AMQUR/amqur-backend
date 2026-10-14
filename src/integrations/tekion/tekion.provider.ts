@@ -12,117 +12,95 @@ import type {
   ServiceAppointmentRequest,
   ServiceAppointmentResult,
 } from '../core/dms.provider';
+import {
+  NO_TEKION_CAPABILITIES,
+  TekionCapabilities,
+} from './tekion.capabilities';
+
+export class TekionNotAuthorizedError extends Error {
+  constructor(operation: string) {
+    super(`tekion_not_authorized:${operation}`);
+  }
+}
 
 /**
- * Tekion adapter skeleton + mock.
+ * Tekion adapter boundary.
  *
- * LIVE credentials and official partner API specs are REQUIRED before
- * enabling IntegrationConnection.liveReady / enabled. This class never
- * invents Tekion endpoints or claims live success.
+ * The HTTP client is intentionally NOT implemented: AMQUR has no official Tekion partner API
+ * specification or credentials in this repository, and endpoints must never be guessed or
+ * reverse-engineered. Every write/read therefore fails closed with TekionNotAuthorizedError,
+ * health reports `awaiting_vendor_credentials`, and no caller can mistake this for success.
+ *
+ * Activation path (docs/TEKION_INTEGRATION.md): implement `TekionHttpClient` strictly from the
+ * official spec, store credentials via SecretVault, set IntegrationConnection.config
+ * {apiBaseUrl, environment, dealerId, storeId, contractVerifiedAt, capabilities}, run the
+ * contract suite against the Tekion sandbox, then enable per capability.
  */
 @Injectable()
 export class TekionProvider implements CrmProvider, DmsProvider {
   readonly providerId = 'tekion';
   private readonly logger = new Logger(TekionProvider.name);
-  private readonly mockLeads = new Map<string, CrmLeadResult>();
-  private readonly mockCustomers = new Map<string, CrmCustomer>();
 
-  /** Live HTTP client is intentionally absent until partner docs + credentials. */
+  /** True only when an official HTTP client exists AND is configured. Never true today. */
   isLiveConfigured(): boolean {
     return false;
   }
 
-  async healthCheck(): Promise<{ ok: boolean; detail?: string }> {
-    if (!this.isLiveConfigured()) {
-      return {
-        ok: true,
-        detail:
-          'mock_mode — live Tekion disabled until credentials + contract verified',
-      };
-    }
+  capabilities(): TekionCapabilities {
+    return { ...NO_TEKION_CAPABILITIES };
+  }
+
+  async healthCheck(): Promise<{
+    ok: boolean;
+    detail?: string;
+    status: 'awaiting_vendor_credentials' | 'healthy' | 'degraded' | 'down';
+  }> {
     return {
       ok: false,
-      detail: 'live client not implemented without official specs',
+      status: 'awaiting_vendor_credentials',
+      detail:
+        'Tekion partner credentials and official API contract not provided — integration disabled.',
     };
   }
 
-  async findCustomer(params: {
+  async findCustomer(_p: {
     tenantId: string;
     email?: string | null;
     phone?: string | null;
   }): Promise<CrmCustomer | null> {
-    const key =
-      params.email?.toLowerCase().trim() ||
-      params.phone?.replace(/\D/g, '') ||
-      '';
-    if (!key) return null;
-    return this.mockCustomers.get(`${params.tenantId}:${key}`) ?? null;
+    throw new TekionNotAuthorizedError('crmCustomerRead');
   }
 
-  async upsertCustomer(params: CrmLeadInput): Promise<CrmCustomer> {
-    const key =
-      params.email?.toLowerCase().trim() ||
-      params.phone?.replace(/\D/g, '') ||
-      params.idempotencyKey;
-    const existing = await this.findCustomer(params);
-    if (existing) return existing;
-    const customer: CrmCustomer = {
-      externalId: `mock-tekion-cust-${key}`,
-      firstName: params.firstName,
-      lastName: params.lastName,
-      email: params.email,
-      phone: params.phone,
-      source: 'tekion_mock',
-    };
-    this.mockCustomers.set(`${params.tenantId}:${key}`, customer);
-    return customer;
+  async upsertCustomer(_p: CrmLeadInput): Promise<CrmCustomer> {
+    throw new TekionNotAuthorizedError('crmCustomerUpsert');
   }
 
-  async createOrUpdateLead(params: CrmLeadInput): Promise<CrmLeadResult> {
-    const existing = this.mockLeads.get(params.idempotencyKey);
-    if (existing) {
-      return { ...existing, duplicated: true };
-    }
-    const customer = await this.upsertCustomer(params);
-    const result: CrmLeadResult = {
-      externalLeadId: `mock-tekion-lead-${params.idempotencyKey}`,
-      externalCustomerId: customer.externalId,
-      duplicated: false,
-      provider: this.providerId,
-    };
-    this.mockLeads.set(params.idempotencyKey, result);
-    this.logger.log(
-      `Tekion mock lead upsert tenant=${params.tenantId} idem=${params.idempotencyKey}`,
-    );
-    return result;
+  async createOrUpdateLead(_p: CrmLeadInput): Promise<CrmLeadResult> {
+    throw new TekionNotAuthorizedError('crmLeadCreateOrUpdate');
   }
 
-  async appendActivity(params: CrmActivityInput): Promise<{ ok: boolean }> {
-    this.logger.debug(
-      `Tekion mock activity tenant=${params.tenantId} idem=${params.idempotencyKey}`,
-    );
-    return { ok: true };
+  async appendActivity(_p: CrmActivityInput): Promise<{ ok: boolean }> {
+    throw new TekionNotAuthorizedError('crmActivityAppend');
   }
 
-  async getRepairOrderStatus(_params: {
+  async getRepairOrderStatus(_p: {
     tenantId: string;
     externalId?: string;
     vin?: string;
   }): Promise<RepairOrderStatus | null> {
-    // Never invent RO status
+    // Never invent RO status.
     return null;
   }
 
   async requestServiceAppointment(
-    params: ServiceAppointmentRequest,
+    _p: ServiceAppointmentRequest,
   ): Promise<ServiceAppointmentResult> {
-    // Without live Tekion confirmation, remain REQUESTED only
     return {
       externalId: null,
       status: 'REQUESTED',
       confirmed: false,
       message:
-        'Service appointment preference recorded. Confirmation requires live Tekion scheduling — not yet configured.',
+        'Tekion scheduling not authorized — AMQUR keeps this as a request only.',
       provider: this.providerId,
     };
   }

@@ -27,26 +27,41 @@ export class AnthropicLlmProvider implements LlmProvider {
       throw new Error('Anthropic LLM unavailable');
     }
     const model =
-      this.config.get<string>('ANTHROPIC_MODEL') ??
-      'claude-3-5-sonnet-20241022';
+      this.config.get<string>('ANTHROPIC_MODEL') ?? 'claude-sonnet-5-5';
     const started = Date.now();
     const system =
       params.system ??
       'You polish dealership assistant drafts. Never invent inventory, prices, appointments, or policies.';
-    const msg = await this.client.messages.create({
-      model,
-      max_tokens: params.maxTokens ?? 1024,
-      system,
-      messages: params.messages
-        .filter((m) => m.role !== 'system')
-        .map((m) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-        })),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      params.timeoutMs ?? 12_000,
+    );
+    let msg: Awaited<ReturnType<Anthropic['messages']['create']>> & {
+      content: Array<{ type: string; text?: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
+    };
+    try {
+      msg = (await this.client.messages.create(
+        {
+          model,
+          max_tokens: params.maxTokens ?? 1024,
+          system,
+          messages: params.messages
+            .filter((m) => m.role !== 'system')
+            .map((m) => ({
+              role: m.role as 'user' | 'assistant',
+              content: m.content,
+            })),
+        },
+        { signal: controller.signal, maxRetries: 0 },
+      )) as typeof msg;
+    } finally {
+      clearTimeout(timer);
+    }
     const text = msg.content
       .filter((b) => b.type === 'text')
-      .map((b) => (b.type === 'text' ? b.text : ''))
+      .map((b) => b.text ?? '')
       .join('\n');
     return {
       text,
@@ -54,6 +69,8 @@ export class AnthropicLlmProvider implements LlmProvider {
       model,
       latencyMs: Date.now() - started,
       promptVersion: params.promptVersion,
+      inputTokens: msg.usage?.input_tokens,
+      outputTokens: msg.usage?.output_tokens,
     };
   }
 }

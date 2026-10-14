@@ -47,3 +47,24 @@ export function assertStaffRole(user: AuthUser): void {
     throw new ForbiddenException('Widget tokens cannot access staff APIs');
   }
 }
+
+/**
+ * Location scope for staff queries. Staff/managers bound to a location (JWT locationId)
+ * may only see that rooftop; tenant-wide roles may filter by any location in their tenant.
+ */
+export function resolveLocationScope(
+  user: AuthUser,
+  requestedLocationId?: string | null,
+): string | null {
+  const bound =
+    (user.role === 'STAFF' || user.role === 'MANAGER') && user.locationId
+      ? user.locationId
+      : null;
+  if (bound) {
+    if (requestedLocationId && requestedLocationId !== bound) {
+      throw new ForbiddenException('Location access denied');
+    }
+    return bound;
+  }
+  return requestedLocationId ?? null;
+}

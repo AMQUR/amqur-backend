@@ -36,16 +36,20 @@ export class AnalyticsService {
     properties?: Record<string, unknown> | null,
     conversationExternalKey?: string | null,
   ) {
-    return this.prisma.analyticsEvent.create({
-      data: {
-        tenantId,
-        locationId: locationId ?? null,
-        eventType,
-        properties: this.stripPii(properties ?? undefined) as
-          | Prisma.InputJsonValue
-          | undefined,
-        conversationExternalKey: conversationExternalKey ?? null,
-      },
-    });
+    // Non-critical by design: analytics failures must never break a customer turn or
+    // surface as unhandled rejections from fire-and-forget callers.
+    return this.prisma.analyticsEvent
+      .create({
+        data: {
+          tenantId,
+          locationId: locationId ?? null,
+          eventType,
+          properties: this.stripPii(properties ?? undefined) as
+            | Prisma.InputJsonValue
+            | undefined,
+          conversationExternalKey: conversationExternalKey ?? null,
+        },
+      })
+      .catch(() => null);
   }
 }

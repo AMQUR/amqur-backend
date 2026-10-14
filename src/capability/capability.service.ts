@@ -10,7 +10,11 @@ export type CapabilityName =
   | 'parts'
   | 'handoff'
   | 'vehicleCompare'
-  | 'savedVehicles';
+  | 'savedVehicles'
+  | 'appointments'
+  | 'leadCapture'
+  | 'knowledge'
+  | 'sms';
 
 export type CapabilityResult = {
   allowed: boolean;
@@ -130,6 +134,43 @@ export class CapabilityService {
           return unavailable(
             'saved_flag_off',
             'Saving vehicles is not enabled for this dealership.',
+          );
+        }
+        return { allowed: true };
+
+      case 'appointments':
+        // Appointment REQUESTS (never confirmations) — explicit opt-in per dealership.
+        if (f.appointments !== true) {
+          return unavailable(
+            'appointments_flag_off',
+            'I can’t take appointment requests here yet. I can connect you with a team member instead.',
+          );
+        }
+        return { allowed: true };
+
+      case 'leadCapture':
+        if (f.leadCapture !== true) {
+          return unavailable(
+            'lead_capture_off',
+            'I can’t record contact requests here right now. Please call the dealership.',
+          );
+        }
+        return { allowed: true };
+
+      case 'knowledge':
+        if (f.knowledge !== true) {
+          return unavailable(
+            'knowledge_flag_off',
+            'I don’t have the dealership’s policy documents available here.',
+          );
+        }
+        return { allowed: true };
+
+      case 'sms':
+        if (f.sms !== true) {
+          return unavailable(
+            'sms_flag_off',
+            'Texting isn’t available from this chat yet.',
           );
         }
         return { allowed: true };

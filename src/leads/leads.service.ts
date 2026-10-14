@@ -124,4 +124,96 @@ export class LeadsService {
       },
     });
   }
+
+  /**
+   * Journey-aware lead upsert (critical write — callers await). Populates only fields the
+   * customer actually provided; never overwrites known values with blanks.
+   */
+  async upsertJourneyLead(p: {
+    tenantId: string;
+    locationId?: string | null;
+    conversationId: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    email?: string;
+    interestedVin?: string;
+    interestedStock?: string;
+    budget?: number;
+    desiredPayment?: number;
+    financingNeeded?: boolean;
+    leaseVsPurchase?: string;
+    tradeInInterest?: boolean;
+    purchaseTimeline?: string;
+    languagePreference?: string;
+    preferredContact?: string;
+    consentToText?: boolean;
+    consentToEmail?: boolean;
+    utmSource?: string;
+    utmMedium?: string;
+    utmCampaign?: string;
+    source?: string;
+    score: number;
+    stage: 'cold' | 'warm' | 'hot';
+    scoreReasons: unknown;
+    scoreVersion: string;
+    nextBestAction?: string;
+  }) {
+    const stage = {
+      cold: LeadStage.COLD,
+      warm: LeadStage.WARM,
+      hot: LeadStage.HOT,
+    }[p.stage];
+    const set = <T>(v: T | undefined | null) =>
+      v === undefined || v === null || v === '' ? undefined : v;
+    const data = {
+      firstName: set(p.firstName),
+      lastName: set(p.lastName),
+      phone: set(p.phone),
+      email: set(p.email?.toLowerCase()),
+      interestedVin: set(p.interestedVin),
+      interestedStock: set(p.interestedStock),
+      budget: set(p.budget),
+      desiredPayment: set(p.desiredPayment),
+      financingNeeded: set(p.financingNeeded),
+      leaseVsPurchase: set(p.leaseVsPurchase),
+      tradeInInterest: set(p.tradeInInterest),
+      purchaseTimeline: set(p.purchaseTimeline),
+      languagePreference: set(p.languagePreference),
+      preferredContact: set(p.preferredContact),
+      consentToText: set(p.consentToText),
+      consentToEmail: set(p.consentToEmail),
+      utmSource: set(p.utmSource),
+      utmMedium: set(p.utmMedium),
+      utmCampaign: set(p.utmCampaign),
+      score: p.score,
+      stage,
+      scoreReasons: p.scoreReasons as Prisma.InputJsonValue,
+      scoreVersion: p.scoreVersion,
+      nextBestAction: set(p.nextBestAction),
+    };
+    const existing = await this.prisma.lead.findFirst({
+      where: {
+        tenantId: p.tenantId,
+        conversationId: p.conversationId,
+        status: {
+          in: [LeadStatus.OPEN, LeadStatus.CONTACTED, LeadStatus.QUALIFIED],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (existing) {
+      return this.prisma.lead.update({ where: { id: existing.id }, data });
+    }
+    return this.prisma.lead.create({
+      data: {
+        ...data,
+        tenantId: p.tenantId,
+        locationId: p.locationId ?? null,
+        conversationId: p.conversationId,
+        source: p.source ?? 'widget',
+        status: LeadStatus.OPEN,
+      },
+    });
+  }
 }

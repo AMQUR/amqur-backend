@@ -18,6 +18,8 @@ export type LlmGenerateResult = {
   model: string;
   latencyMs: number;
   promptVersion?: string;
+  inputTokens?: number;
+  outputTokens?: number;
 };
 
 export interface LlmProvider {

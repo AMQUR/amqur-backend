@@ -4,6 +4,7 @@ import { TruthResolverService } from './truth-resolver.service';
 import { ProvenanceService } from './provenance.service';
 import { FreshnessService } from './freshness.service';
 import { GroundingGuardService } from './grounding-guard.service';
+import { ClaimEvidenceService } from './claim-evidence';
 
 @Global()
 @Module({
@@ -13,6 +14,7 @@ import { GroundingGuardService } from './grounding-guard.service';
     ProvenanceService,
     FreshnessService,
     GroundingGuardService,
+    ClaimEvidenceService,
   ],
   exports: [
     SourceAuthorityService,
@@ -20,6 +22,7 @@ import { GroundingGuardService } from './grounding-guard.service';
     ProvenanceService,
     FreshnessService,
     GroundingGuardService,
+    ClaimEvidenceService,
   ],
 })
 export class SourceAuthorityModule {}
