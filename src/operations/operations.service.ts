@@ -985,6 +985,134 @@ export class OperationsService {
     return this.locationSettings(tenantId, locationId);
   }
 
+  // ───────────── unified customer view (read-only, exact-match linking)
+
+  /**
+   * One customer's timeline inside ONE tenant (and the caller's location scope), linked only
+   * by an exact normalized phone (last 10 digits) or exact lowercase email. Nothing is merged:
+   * records stay separate and every linked record states which key linked it. Different
+   * leads sharing a key are surfaced as `possibleDuplicates` for staff review.
+   */
+  async customerProfile(scope: Scope, q: { phone?: string; email?: string }) {
+    const digits = (q.phone ?? '').replace(/\D/g, '').slice(-10);
+    const email = (q.email ?? '').trim().toLowerCase();
+    if (digits.length !== 10 && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+      throw new BadRequestException('Provide a 10-digit phone or a full email');
+    const base = { tenantId: scope.tenantId, ...this.loc(scope) };
+    const leadOr = [
+      ...(digits.length === 10 ? [{ phone: { endsWith: digits } }] : []),
+      ...(email ? [{ email: { equals: email } }] : []),
+    ];
+    const contactOr = [
+      ...(digits.length === 10
+        ? [{ customerPhone: { endsWith: digits } }]
+        : []),
+      ...(email ? [{ customerEmail: { equals: email } }] : []),
+    ];
+    const [leads, appointments, quotes, trades, finance, parts] =
+      await Promise.all([
+        this.prisma.lead.findMany({
+          where: { ...base, OR: leadOr },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            phone: true,
+            email: true,
+            stage: true,
+            status: true,
+            conversationId: true,
+            interestedVin: true,
+            createdAt: true,
+          },
+        }),
+        this.prisma.appointment.findMany({
+          where: { ...base, OR: contactOr },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        this.prisma.priceQuoteRequest.findMany({
+          where: { ...base, OR: contactOr },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        this.prisma.tradeRequest.findMany({
+          where: { ...base, OR: contactOr },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        this.prisma.financeRequest.findMany({
+          where: { ...base, OR: contactOr },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+        this.prisma.partsInquiry.findMany({
+          where: { ...base, OR: contactOr },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+      ]);
+    const names = new Set(
+      leads
+        .map((l) =>
+          `${l.firstName ?? ''} ${l.lastName ?? ''}`.trim().toLowerCase(),
+        )
+        .filter(Boolean),
+    );
+    const timeline = [
+      ...leads.map((x) => ({
+        at: x.createdAt,
+        kind: 'lead',
+        id: x.id,
+        summary: `${x.stage} lead${x.interestedVin ? ` · ${x.interestedVin}` : ''}`,
+      })),
+      ...appointments.map((x) => ({
+        at: x.createdAt,
+        kind: 'appointment',
+        id: x.id,
+        summary: `${x.type} ${x.status}`,
+      })),
+      ...quotes.map((x) => ({
+        at: x.createdAt,
+        kind: 'otd_quote',
+        id: x.id,
+        summary: `${x.vehicleLabel ?? x.vehicleVin} · ${x.paymentMethod} · ${x.status}`,
+      })),
+      ...trades.map((x) => ({
+        at: x.createdAt,
+        kind: 'trade',
+        id: x.id,
+        summary: `${[x.year, x.make, x.model].filter(Boolean).join(' ')} · ${x.status}`,
+      })),
+      ...finance.map((x) => ({
+        at: x.createdAt,
+        kind: 'finance',
+        id: x.id,
+        summary: `credit ${x.creditLinkState.toLowerCase()}`,
+      })),
+      ...parts.map((x) => ({
+        at: x.createdAt,
+        kind: 'parts',
+        id: x.id,
+        summary: `${x.suspectedPart ?? x.partNumber ?? 'parts'} · ${x.status}`,
+      })),
+    ].sort((a, b) => b.at.getTime() - a.at.getTime());
+    return {
+      linkedBy: {
+        phoneLast10: digits.length === 10 ? digits : null,
+        email: email || null,
+      },
+      leads,
+      timeline,
+      // Same contact key under different names: staff decide; the system never auto-merges.
+      possibleDuplicates: names.size > 1 ? leads.map((l) => l.id) : [],
+      mergePolicy:
+        'No automatic merges. Records are linked for viewing only by exact phone/email within this store.',
+    };
+  }
+
   // ───────────── emergency AI controls (no redeploy)
 
   /**

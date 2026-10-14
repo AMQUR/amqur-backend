@@ -287,6 +287,17 @@ export class OperationsController {
     return this.ops.locationSettings(s.tenantId, s.locationId ?? id);
   }
 
+  /** Unified, read-only customer timeline within the caller's store (exact phone/email). */
+  @Roles(...STAFF)
+  @Get('customers/profile')
+  customerProfile(
+    @CurrentUser() u: AuthUser,
+    @Query('phone') phone?: string,
+    @Query('email') email?: string,
+  ) {
+    return this.ops.customerProfile(this.scope(u), { phone, email });
+  }
+
   /** Emergency kill switch — managers can stop the AI for their rooftop instantly. */
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
   @Post('locations/:id/ai-control')

@@ -393,4 +393,81 @@ describe('five-rooftop isolation matrix', () => {
     });
     expect(audits).toBe(2);
   });
+
+  it('group comparison: members see all five stores with DB-true counts; non-members are refused', async () => {
+    const g = await ctx.prisma.dealerGroup.upsert({
+      where: { slug: 'iso-dial' },
+      create: { slug: 'iso-dial', name: 'Iso Dial (sim)' },
+      update: {},
+    });
+    for (const k of Object.keys(STORES) as Key[])
+      await ctx.prisma.tenant.update({
+        where: { id: ids[k].tenantId },
+        data: { dealerGroupId: g.id },
+      });
+    const northAdmin = await ctx.prisma.user.findFirst({
+      where: { tenantId: ids.north.tenantId, email: 'admin@iso-north.test' },
+    });
+    await ctx.prisma.dealerGroupMembership.upsert({
+      where: {
+        dealerGroupId_userId: { dealerGroupId: g.id, userId: northAdmin!.id },
+      },
+      create: {
+        dealerGroupId: g.id,
+        userId: northAdmin!.id,
+        role: 'GROUP_VIEWER',
+      },
+      update: {},
+    });
+    const r = await http()
+      .get(`/api/dealer-groups/${g.id}/comparison?days=30`)
+      .set('Authorization', `Bearer ${ids.north.staff}`);
+    expect(r.status).toBe(200);
+    const body = unwrap<{
+      stores: Array<{
+        tenant: { id: string };
+        counts: Record<string, number>;
+        inventory: { syntheticFixturesPresent: boolean };
+      }>;
+    }>(r.body);
+    expect(body.stores).toHaveLength(5);
+    const south = body.stores.find((x) => x.tenant.id === ids.south.tenantId)!;
+    const since = new Date(Date.now() - 30 * 86_400_000);
+    expect(south.counts.appointmentRequests).toBe(
+      await ctx.prisma.appointment.count({
+        where: { tenantId: ids.south.tenantId, createdAt: { gte: since } },
+      }),
+    );
+    expect(south.counts.appointmentsConfirmed).toBe(0);
+    expect(south.inventory.syntheticFixturesPresent).toBe(true);
+    // Aggregate only — no customer records leak through the group report.
+    expect(JSON.stringify(body)).not.toMatch(/Jordan|5550177|@iso-/);
+    const denied = await http()
+      .get(`/api/dealer-groups/${g.id}/comparison`)
+      .set('Authorization', `Bearer ${ids.chevy.staff}`);
+    expect(denied.status).toBe(403);
+  });
+
+  it('customer profile links by exact phone inside one store only, never merges', async () => {
+    const r = await http()
+      .get('/api/ops/customers/profile?phone=(312)%20555-0177')
+      .set('Authorization', `Bearer ${ids.north.staff}`);
+    expect(r.status).toBe(200);
+    const p = unwrap<{
+      timeline: Array<{ kind: string }>;
+      leads: Array<{ lastName: string | null }>;
+      mergePolicy: string;
+    }>(r.body);
+    expect(p.timeline.some((x) => x.kind === 'appointment')).toBe(true);
+    expect(JSON.stringify(p)).not.toMatch(/south/i);
+    expect(p.mergePolicy).toMatch(/No automatic merges/);
+    // Weak keys are refused (no fuzzy identity matching).
+    expect(
+      (
+        await http()
+          .get('/api/ops/customers/profile?phone=0177')
+          .set('Authorization', `Bearer ${ids.north.staff}`)
+      ).status,
+    ).toBe(400);
+  });
 });

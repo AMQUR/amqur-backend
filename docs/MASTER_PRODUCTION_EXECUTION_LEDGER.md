@@ -1,0 +1,84 @@
+# Master production execution ledger
+
+Last updated: 2026-10-14. Branch `feat/production-completion-2026-10` (backend PR AMQUR/amqur-backend#28, widget PR AMQUR/amqur-widget#21). Nothing here is deployed to staging or production by this work.
+
+Statuses: `NOT_IMPLEMENTED` · `IN_PROGRESS` · `CODE_COMPLETE` (built, unit-tested) · `LOCAL_VERIFIED` (proven on the disposable Postgres/Redis stack through the real HTTP API) · `INTEGRATION_VERIFIED` (proven against the real vendor) · `STAGING_VERIFIED` · `PRODUCTION_VERIFIED` · `EXTERNAL_DEPENDENCY_BLOCKED` · `RELEASE_BLOCKED`.
+
+No row is above `LOCAL_VERIFIED`: no vendor integration has credentials, staging could not be reached (Railway CLI session expired; engineering does not log in on the owner's behalf), and no production approval exists.
+
+## Customer conversation
+
+| Capability | Status | Module | Evidence | Remaining blocker |
+|---|---|---|---|---|
+| Natural small talk, greetings, identity honesty | LOCAL_VERIFIED | `chat/dialogue/social.ts`, `turn-understanding.ts` | conversation-acts spec, golden suite, simulator | Live-model polish untested (no API key) |
+| Text normalization (slang, typos, voice splits) | LOCAL_VERIFIED | `chat/understanding/normalize.ts` | normalize.spec, simulator | — |
+| Multi-intent, references, corrections, department switching | LOCAL_VERIFIED | orchestrator, journey store | golden E, simulator cross-department + 20–50 turn sessions | — |
+| Spanish / mixed language | LOCAL_VERIFIED (deterministic) | understanding + `tr()` | simulator, hold-out | Native-speaker review not done |
+| LLM language polish with grounding guard | CODE_COMPLETE | `ai/llm-router.service.ts`, grounding guard | router unit tests | EXTERNAL_DEPENDENCY_BLOCKED: no provider key in any environment we can reach |
+| Emergency AI off / deterministic-only switch | LOCAL_VERIFIED | `ops/locations/:id/ai-control` | five-rooftop e2e | — |
+
+## Sales
+
+| Capability | Status | Module | Evidence | Remaining blocker |
+|---|---|---|---|---|
+| Inventory search, filters, carousel (exact result set) | LOCAL_VERIFIED on SIMULATED data | `chat/engines/inventory.engine.ts` | golden, simulator, isolation | Live feed (B-02) |
+| Production never serves synthetic inventory/hours | LOCAL_VERIFIED | `InventoryEngine.liveOnly`, capability, hours | golden "invisible to production reads", unit | — |
+| Inventory pipeline (XML/CSV/JSON/HTTPS, SSRF guard, anomaly rejection) | CODE_COMPLETE | `inventory-feed/*` | unit (+ CSV prototype-pollution hardening) | SFTP adapter not built; vendor feed authorization (B-02) |
+| Compare, ranking ("two nicest") | LOCAL_VERIFIED | orchestrator | golden B | — |
+| Payment estimates (single policy, adjustments, targets) | LOCAL_VERIFIED | `financial-assumption-policy.ts`, `payment.service.ts` | independent-oracle checks on every simulated turn | Dealer-verified tax/fee rules (B-06) |
+| Out-the-door quote (verified inputs only, else staff request) | LOCAL_VERIFIED (request path) | `finance/otd-quote.ts`, `price-quote.service.ts` | golden D, simulator | Verified tax/fee/government charges per store; Illinois doc-fee cap value needs official confirmation |
+| Trade-in appraisal (estimate vs appraisal vs offer, manager approval, expiry) | LOCAL_VERIFIED (human appraisal path) | `trade/appraisal.service.ts` | trade-appraisal e2e | Valuation provider licensing (all candidates NOT_LICENSED) |
+
+## Finance
+
+| Capability | Status | Module | Evidence | Remaining blocker |
+|---|---|---|---|---|
+| Secure credit-application handoff (encrypted destination, link types, per-store authorization, rotation, preview) | LOCAL_VERIFIED | `finance/credit-*` | golden C/H, isolation (store-bound links, signature splicing) | Tekion link type + per-store written approval (B-05) |
+| Click tracking (offered/clicked; completion only from provider) | LOCAL_VERIFIED | `CreditLinkController` | golden, simulator DB invariants | Provider completion callback not available |
+| Per-customer link issuance | CODE_COMPLETE (interface only, fails closed) | `CreditLinkProvider` | unit | Official Tekion contract |
+
+## Service and parts
+
+| Capability | Status | Module | Evidence | Remaining blocker |
+|---|---|---|---|---|
+| Service appointment REQUESTS (tz/DST/holidays, symptoms, own-vehicle separation) | LOCAL_VERIFIED | `appointments/*`, orchestrator | journeys, golden E, simulator | Live scheduler + verified hours (B-01, B-03) |
+| Provider-confirmed booking | CODE_COMPLETE (fails closed) | `scheduling-provider.registry.ts` | unit | Tekion scheduling contract |
+| Parts inquiry (VIN, fitment never claimed) | LOCAL_VERIFIED | `parts/*` | journeys, simulator | Licensed catalog / Tekion parts |
+| RO status | CODE_COMPLETE (fails closed) | orchestrator | ai-eval | Tekion RO contract |
+
+## Integrations
+
+| Capability | Status | Remaining blocker |
+|---|---|---|
+| Tekion CRM/DMS adapter | CODE_COMPLETE, fails closed; HTTP client intentionally absent | Official Tekion APC spec, sandbox, credentials, dealer/store IDs (B-01) |
+| vAuto / normalized feed | CODE_COMPLETE | Feed authorization per store (B-02) |
+| Twilio SMS + consent ledger + campaigns | CODE_COMPLETE | Registered sender, A2P, consent wording approval (B-07) |
+| Email, WhatsApp, voice | NOT_IMPLEMENTED (adapters) — vendor not chosen | B-08, B-09; WhatsApp Business access |
+| Human handoff delivery (CRM webhook) | CODE_COMPLETE | Verified destination (B-04) |
+
+## Staff, management, data
+
+| Capability | Status | Evidence | Remaining blocker |
+|---|---|---|---|
+| Command Center: inbox, takeover, reply, notes, queues (incl. OTD quotes, trade appraisal/offer), rooftop settings, credit destination, emergency controls | LOCAL_VERIFIED | CC Playwright 2/2, e2e | Staff accounts per store |
+| Five-rooftop readiness registry + scorecard (`GET /api/ops/group/readiness`) | LOCAL_VERIFIED | unit + `docs/FIVE_STORE_SCORECARD.md` | Store evidence (see scorecard) |
+| Cross-rooftop isolation (inventory, prices, conversations, credit links, admin scope, phones, hours, kill switch) | LOCAL_VERIFIED | five-rooftop-isolation e2e (12) | — |
+| Group executive dashboards (all-store metrics) | NOT_IMPLEMENTED | — | Engineering (no fabricated metrics) |
+| Unified customer profile / identity merge | NOT_IMPLEMENTED | — | Engineering |
+| Knowledge lifecycle + hybrid retrieval | CODE_COMPLETE | operations e2e | pgvector availability on Railway unverified (absent locally); embeddings stored as JSON |
+| Spotlights, rich media, A/B experiments | NOT_IMPLEMENTED | — | Engineering |
+| Privacy export/deletion, retention, legal hold | LOCAL_VERIFIED | data-governance e2e | Counsel review |
+| Staff MFA, RBAC, token typing | LOCAL_VERIFIED | auth-mfa e2e | — |
+
+## Quality, security, operations
+
+| Item | Status | Evidence |
+|---|---|---|
+| Customer simulator (1,670 scenarios / ~5,100 turns per run; P0/P1 gates; DB invariants) | LOCAL_VERIFIED | `test/simulator`, `test/evidence/simulator-latest.json` |
+| Independent hold-out phrasings | LOCAL_VERIFIED | first blind run 49/54 (90.7%) recorded; 54/54 after fixes |
+| Live-model evaluation | EXTERNAL_DEPENDENCY_BLOCKED | No provider key |
+| Dependency vulnerabilities | Criticals 0; runtime highs fixed; see `docs/DEPENDENCY_SECURITY.md` |
+| Signature malleability (credit/upload links) | Fixed + exhaustive test |
+| Load (local, LLM off) | p95 ≤ 37 ms up to 300 concurrent shoppers, 0 errors; soak 168 s 0 errors |
+| Staging deploy, backups, restore drill, monitoring DSN | RELEASE_BLOCKED (Railway access; B-11, B-12) |
+| Website installation (5 stores) | RELEASE_BLOCKED (B-10) |

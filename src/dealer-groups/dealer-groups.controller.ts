@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Query, Post } from '@nestjs/common';
 import { DealerGroupsService } from './dealer-groups.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -31,6 +31,21 @@ export class DealerGroupsController {
       dealerGroupId: id,
       actorUserId: user.sub,
       isSuperAdmin: user.role === 'SUPER_ADMIN',
+    });
+  }
+
+  @Get(':id/comparison')
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  comparison(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Query('days') days?: string,
+  ) {
+    return this.groups.comparison({
+      dealerGroupId: id,
+      actorUserId: user.sub,
+      isSuperAdmin: user.role === 'SUPER_ADMIN',
+      days: Number(days ?? 7),
     });
   }
 
