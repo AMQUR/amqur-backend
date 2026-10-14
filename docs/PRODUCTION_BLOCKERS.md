@@ -129,6 +129,26 @@ Required: named employee testers and rollback owner (canary), then the signed pr
 
 Production now **fails to boot** without `CORS_ORIGINS` and `INTEGRATION_ENCRYPTION_KEY` (intentional). Confirm on the production service before the next production deploy, together with a distinct `WIDGET_TOKEN_SECRET`, `CONVERSATION_ID_SECRET`, `CREDIT_LINK_SIGNING_SECRET`, and `STAFF_MFA_REQUIRED_ROLES` (defaults to `SUPER_ADMIN,ADMIN`).
 
+## B-16 — pgvector availability (semantic knowledge search)
+
+Embeddings are stored as JSON arrays; the local Postgres 16 image has no `vector` extension and Railway Postgres could not be checked (B-19). Needed: confirm `CREATE EXTENSION vector` is permitted on staging/production Postgres; then an additive migration moves embeddings to `vector` with an index. Keyword + JSON-embedding hybrid retrieval works meanwhile.
+
+## B-17 — Trade-in valuation licensing
+
+All candidate providers (vAuto, Manheim MMR, CARFAX History-Based Value, KBB, Black Book, ACV/ClearCar) are `NOT_LICENSED`; CARFAX history access is not valuation rights. Needed: chosen provider, API contract, and written **consumer-display** rights. Until then customers see a value only when a manager issues an offer in the Command Center.
+
+## B-18 — Legal review of pricing and fee handling (Illinois)
+
+Doc-fee cap and its inclusion in advertised prices, tax basis, and OTD disclosure wording need dealership counsel sign-off. Public sources found disagree on the current Illinois doc-fee cap and none is official, so no cap is hard-coded; staff enter verified values. Federal context: FTC CARS Rule vacated (5th Cir., 2025-01-27); FTC Act Section 5 still applies.
+
+## B-19 — Railway access for staging verification
+
+Railway CLI session expired (`invalid_grant`). Needed: owner re-login or a scoped project token to verify staging deploys, backups (B-11), monitoring (B-12) and pgvector (B-16).
+
+## B-20 — Website identity/provider confirmation for three stores
+
+dialnissan.com, infinitichicago.com and dialjeep.com returned HTTP 403 to a read-only homepage check (bot protection, not bypassed). Provider, origins and public identity must come from the dealership or provider (see `docs/EXTERNAL_REQUESTS.md` §4).
+
 ---
 
 ## Deliberately deferred (vendor not yet chosen)
