@@ -113,7 +113,7 @@ export class ClaudeConversationService {
       .route({
         system,
         messages: [{ role: 'user', content: user }],
-        maxTokens: 320,
+        maxTokens: 450,
         timeoutMs: 8000,
         promptVersion: POLISH_PROMPT_VERSION,
         tenantId: params.tenantId,

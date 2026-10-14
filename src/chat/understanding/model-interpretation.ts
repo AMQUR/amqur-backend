@@ -126,6 +126,23 @@ export function isWeakUnderstanding(u: TurnUnderstanding): boolean {
 }
 
 /**
+ * Short, context-dependent questions ("how much is it", "can I do that tomorrow?") where the
+ * rules produced only a low-confidence guess: worth a second opinion from the model. Clear,
+ * high-confidence rule matches are never second-guessed.
+ */
+export function isContextAmbiguous(
+  u: TurnUnderstanding,
+  message: string,
+  ctx: { hasContext: boolean },
+): boolean {
+  if (!ctx.hasContext) return false;
+  const words = message.trim().split(/\s+/).length;
+  const refers = /\b(it|this|that|those|them|one|there)\b/i.test(message);
+  const top = Math.max(0, ...u.intents.map((i) => i.confidence));
+  return words <= 10 && refers && top < 0.8;
+}
+
+/**
  * Merge model proposals into the deterministic result. Model intents need ≥ 0.7 confidence
  * and are capped at 0.85 so any deterministic signal of the same kind still wins; the
  * model's entities fill gaps only — they never overwrite what the customer's text yielded.
@@ -174,12 +191,15 @@ export function mergeInterpretation(
     const i = u.intents.findIndex((y) => y.intent === x);
     return i < 0 ? 100 : i;
   };
-  intents.sort((a, b) =>
-    a.evidence === 'model' && b.evidence !== 'model'
-      ? 1
-      : b.evidence === 'model' && a.evidence !== 'model'
-        ? -1
-        : order(a.intent) - order(b.intent),
+  // A confident model reading outranks a weak rule guess; it never outranks a confident rule.
+  const detTop = Math.max(
+    0,
+    ...intents.filter((i) => i.evidence !== 'model').map((i) => i.confidence),
+  );
+  const rank = (i: { evidence: string; confidence: number }) =>
+    i.evidence === 'model' ? (i.confidence > detTop ? 0 : 2) : 1;
+  intents.sort(
+    (a, b) => rank(a) - rank(b) || order(a.intent) - order(b.intent),
   );
   return { ...u, intents, primary: intents[0].intent, entities: e };
 }

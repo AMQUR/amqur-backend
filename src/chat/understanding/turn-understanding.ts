@@ -108,6 +108,23 @@ export type TurnEntities = {
   bringQuestion?: boolean;
   /** Customer says the assistant is not answering ("you keep dodging my question"). */
   notAnswered?: boolean;
+  /** "How much is it?" about the selected/shown vehicle — the selling price, not a payment. */
+  priceQuestion?: boolean;
+  /** "How long has it been on your lot?" */
+  lotAgeQuestion?: boolean;
+  /** "Who is your manager?" — an identity question, not a callback request. */
+  managerQuestion?: boolean;
+  /** Short conversational follow-ups that refer to the previous assistant message. */
+  followUp?:
+    | 'what_do_you_mean'
+    | 'why'
+    | 'hold_on'
+    | 'show_me'
+    | 'send_it'
+    | 'that_one'
+    | 'who_is_that';
+  /** Expressed interest without naming anything ("yes I'm interested"). */
+  interest?: boolean;
   /** Visit time described loosely ("after work", "in the evening") — needs an exact time. */
   looseTime?: 'after_work' | 'morning' | 'afternoon' | 'evening' | 'lunch';
   /** "go back to the Wrangler" — resume an earlier vehicle instead of searching again. */
@@ -1692,9 +1709,21 @@ export function understandTurn(
       !intents.some((i) => i.intent === 'INVENTORY_SEARCH')
     )
       add('SHOPPING_START', 0.88, 'open shopping intent');
-    if (e.social.includes('identity'))
+    if (
+      e.social.includes('identity') ||
+      e.social.includes('name_question') ||
+      e.social.includes('origin_question')
+    ) {
       add('SMALL_TALK', 0.95, 'identity question');
-    else if (
+      // A question about who we are is never a handoff, a search or a knowledge lookup.
+      for (let i = intents.length - 1; i >= 0; i -= 1)
+        if (
+          ['HUMAN_HANDOFF', 'KNOWLEDGE_QUESTION', 'INVENTORY_SEARCH'].includes(
+            intents[i].intent,
+          )
+        )
+          intents.splice(i, 1);
+    } else if (
       e.social.some((a) => a !== 'shopping_start') &&
       (pure || !intents.length || e.social.includes('how_are_you'))
     )
@@ -1900,6 +1929,141 @@ export function understandTurn(
       )
         intents.splice(i, 1);
   }
+
+  // ── selected-vehicle facts: price and time on the lot
+  const aboutShown = ctx.hasSelectedVehicle || ctx.hasVisibleVehicles;
+  if (
+    aboutShown &&
+    /\b(?:how much (?:is|for|does|do|would|will)? ?(?:it|this|that|this one|that one|the \w+|they)?|what(?:'s| is| are) (?:the |its |your )?(?:price|asking price|sticker|cost)|price on (?:it|this|that)|how much)\b/.test(
+      t,
+    ) &&
+    !/\b(month|monthly|payment|per mo|out[- ]the[- ]door|otd|tax|taxes|fees|all in|down|trade|apr|rate|insurance|oil change|service|repair|part)\b/.test(
+      t,
+    )
+  ) {
+    e.priceQuestion = true;
+    add('VEHICLE_QUESTION', 0.9, 'price of selected vehicle');
+  }
+  if (
+    /\bhow long (?:has|have|did) (?:it|this|that|the \w+|this (?:car|truck|suv|one)|that (?:car|truck|suv|one)|you(?:'ve)? had (?:it|this|that))\b.*\b(?:lot|stock|inventory|sitting|there|had)\b|\b(?:days|time) (?:on|in) (?:the |your )?(?:lot|stock|inventory)\b|\bhow long (?:has|have) (?:it|this|that)? ?been (?:on|in|at|sitting)\b|\bhow old is (?:the |this |that )?(?:listing|inventory)\b/.test(
+      t,
+    )
+  ) {
+    e.lotAgeQuestion = true;
+    add('VEHICLE_QUESTION', 0.9, 'time on lot');
+  }
+  // ── "who is your manager?" — answer it; a callback is offered, not forced
+  if (
+    /\bwho(?:'s| is| are) (?:your |the )?(?:sales |service |general |finance )?(?:manager|managers|boss|owner|gm|person in charge)\b|\b(?:manager|gm|boss)'?s name\b|\bwho(?:'s| is) in charge\b|\bqui[eé]n es (?:el|su) (?:gerente|encargado)\b/.test(
+      t,
+    )
+  ) {
+    e.managerQuestion = true;
+    add('KNOWLEDGE_QUESTION', 0.92, 'manager identity');
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (intents[i].intent === 'HUMAN_HANDOFF') intents.splice(i, 1);
+  }
+  // ── interest / short referring follow-ups
+  if (
+    /\b(?:i'?m|i am|am|yes|yeah|yep|very|super|definitely|really)?\s*(?:interested|intrested|intersted|interesed)\b/.test(
+      t,
+    )
+  ) {
+    e.interest = true;
+    if (
+      ctx.hasVisibleVehicles &&
+      /\b(?:that one|this one|it|that|this|the one)\b/.test(t)
+    )
+      add('SELECT_VEHICLE', 0.88, 'interested in the shown vehicle');
+    // "yes I'm interested" with nothing named = a yes to whatever was just asked
+    if (
+      !intents.some((i) => !['UNKNOWN', 'SMALL_TALK'].includes(i.intent)) &&
+      !e.vehicle?.model
+    )
+      add('AFFIRM', 0.85, 'interested = yes');
+  }
+  if (
+    /^\s*(?:what do you mean|meaning\?|huh\??|what\??|come again|i don'?t (?:get|understand)(?: it)?|qu[eé] quiere decir)\s*[?.!]*\s*$/.test(
+      t,
+    )
+  )
+    e.followUp = 'what_do_you_mean';
+  else if (/^\s*(?:why|why\?|how come|por qu[eé])\s*[?.!]*\s*$/.test(t))
+    e.followUp = 'why';
+  else if (
+    /^\s*(?:hold on|hang on|one (?:sec|second|moment|min(?:ute)?)|wait|give me a (?:sec|second|minute)|un momento)\b.{0,15}$/.test(
+      t,
+    )
+  )
+    e.followUp = 'hold_on';
+  else if (
+    /^\s*(?:show me|let me see|lemme see|show me (?:it|them|those|that)|let'?s see (?:it|them))\s*[!.]*\s*$/.test(
+      t,
+    )
+  )
+    e.followUp = 'show_me';
+  else if (
+    /^\s*(?:send it|send (?:it|that|me that) (?:over|please)?|go ahead and send it|yes send it)\s*[!.]*\s*$/.test(
+      t,
+    )
+  )
+    e.followUp = 'send_it';
+  else if (
+    /^\s*(?:that one|this one|the first one|the red one|yes that one|that one please)\s*[!.]*\s*$/.test(
+      t,
+    )
+  )
+    e.followUp = 'that_one';
+
+  if (
+    /^\s*(?:who(?:'s| is) that|who(?:'s| is) (?:he|she|they)|who would that be)\s*[?.!]*\s*$/.test(
+      t,
+    )
+  )
+    e.followUp = 'who_is_that';
+  // Bare payment-method answers: "cash", "finance", "financing", "lease"
+  if (/^\s*(?:cash|all cash|paying cash|cash buyer)\s*[.!]*\s*$/.test(t)) {
+    e.leaseOrPurchase = 'cash';
+    if (ctx.hasSelectedVehicle || ctx.hasVisibleVehicles)
+      add('OTD_QUOTE', 0.85, 'bare cash answer');
+  } else if (
+    /^\s*(?:finance|financing|finance it|loan|lease|leasing)\s*[.!]*\s*$/.test(
+      t,
+    )
+  ) {
+    if (/lease/.test(t)) e.leaseOrPurchase = 'lease';
+    add('FINANCE_REQUEST', 0.85, 'bare finance answer');
+  }
+  // "what about tomorrow?" / "how about Friday?" while shopping is a visit time
+  if (
+    e.when &&
+    /^\s*(?:what|how) about\b/.test(t) &&
+    (ctx.hasSelectedVehicle ||
+      ctx.hasVisibleVehicles ||
+      ctx.activeDepartment === 'sales' ||
+      ctx.activeDepartment === 'service') &&
+    !intents.some((i) => /APPOINTMENT/.test(i.intent))
+  )
+    add(
+      ctx.activeDepartment === 'service'
+        ? 'SERVICE_APPOINTMENT'
+        : 'SALES_APPOINTMENT',
+      0.82,
+      'what about <day>',
+    );
+
+  // ── "how can I get started?" with a vehicle in view is a purchase start
+  if (
+    /\bhow (?:can|do) (?:i|we) (?:get started|start|begin)\b|\bwhat(?:'s| is| are) (?:the )?next steps?\b|\bwhere do (?:i|we) (?:start|begin)\b/.test(
+      t,
+    ) &&
+    !intents.some((i) => i.intent === 'CREDIT_APPLICATION')
+  )
+    add(
+      'PURCHASE_START',
+      ctx.hasSelectedVehicle ? 0.9 : 0.8,
+      'getting started',
+    );
 
   // A generic "open question" fallback yields to any specific intent found above.
   if (intents.some((i) => i.evidence !== 'open question'))

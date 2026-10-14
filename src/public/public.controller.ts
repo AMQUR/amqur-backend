@@ -21,7 +21,13 @@ export class PublicController {
    * whenever hours are not staff-verified — the widget then shows no open/closed badge.
    */
   @Public()
-  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Throttle({
+    // Production: 60/min per tenant+IP. Test/load lab: raised for parallel browser engines.
+    default: {
+      limit: process.env.NODE_ENV === 'test' ? 5_000 : 60,
+      ttl: 60_000,
+    },
+  })
   @Get('store-status')
   async storeStatus(
     @Query('tenantSlug') tenantSlug: string,

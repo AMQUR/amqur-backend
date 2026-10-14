@@ -25,7 +25,9 @@ export type SocialAct =
   | 'compliment' // "you're helpful", "cool"
   | 'laughter'
   | 'apology' // "sorry, typo"
-  | 'shopping_start'; // "I want to buy a car" (no vehicle spec yet)
+  | 'shopping_start' // "I want to buy a car" (no vehicle spec yet)
+  | 'name_question' // "what's your name?"
+  | 'origin_question'; // "why are you texting me?", "I never contacted you"
 
 export type SocialResult = { acts: SocialAct[]; strength: number };
 
@@ -44,7 +46,7 @@ const ASK_BACK =
 const WELLBEING =
   /^\s*(?:i'?m |im |i am |doing |pretty |all |not |been )?(?:good|great|fine|well|ok|okay|alright|all right|not bad|pretty good|doing well|doing good|doing great|wonderful|fantastic|excellent|tired|busy|so so|meh|bien|muy bien|todo bien)\b/;
 const GREETING =
-  /^\s*(hi|hii+|hello|hey+|heya|hiya|howdy|yo|good (?:morning|afternoon|evening|day)|morning|evening|hola|buenas(?: tardes| noches| d[ií]as)?|buenos d[ií]as|greetings)\b/;
+  /^\s*(hi|hii+|hello|hey+|heya|hiya|howdy|yo|ello|helo|hullo|hallo|hai|sup|wassup|whats up|what'?s up|good (?:morning|afternoon|evening|day)|morning|evening|hola|buenas(?: tardes| noches| d[ií]as)?|buenos d[ií]as|greetings)\b/;
 const THANKS =
   /\b(thanks|thank you|thx|ty|appreciate (?:it|that|you)|gracias|much appreciated)\b/;
 const FAREWELL =
@@ -53,6 +55,10 @@ const BROWSING =
   /\b(just (?:looking|browsing|checking (?:things )?out)|looking around|browsing|window shopping|not (?:ready|buying) (?:yet|today|right now)|no rush|just curious|solo (?:estoy )?mirando)\b/;
 const IDENTITY =
   /\b(?:is this|are you|am i talking to) (?:an? )?(?:actual |real )?(?:person|human) or (?:an? )?(?:ai|bot|robot|machine)|is this (?:an? )?(?:ai|bot|robot|chatbot)|are you chatgpt|am i (?:talking|chatting|speaking) (?:to|with) (?:an? )?(?:robot|machine|computer|bot|ai|human|person|real person)|is there (?:an? )?(?:real |actual )?(?:human|person) (?:on the other end|there|on this|behind this|reading this)|(are you (?:a )?(?:bot|robot|real|human|person|ai|a real person|an ai|a computer|chatgpt|automated)|is this (?:a )?(?:bot|real person|human|ai)|am i (?:talking|chatting) (?:to|with) (?:a )?(?:bot|human|person|real person|ai)|who am i (?:talking|chatting) (?:to|with)|what are you|eres (?:un )?(?:robot|bot|humano|persona))\b/;
+const NAME_Q =
+  /\b(?:what(?:'s| is) (?:your|ur) name|who (?:are|r) (?:you|u)|do you have a name|what (?:do|should) i call you|what are you called|c[oó]mo te llamas|cu[aá]l es (?:tu|su) nombre)\b/;
+const ORIGIN_Q =
+  /\b(?:why (?:are|r) (?:you|u) (?:texting|messaging|contacting|calling|emailing|writing to) me|why did (?:you|u) (?:text|message|contact|call|email) me|who (?:is this|texted me)|how did (?:you|u) get my (?:number|email|info)|i (?:never|didn'?t|did not) (?:contact(?:ed)?|text(?:ed)?|message(?:d)?|call(?:ed)?|reach(?:ed)? out to|wr(?:ote|ite) to|sign(?:ed)? up) (?:you|u|for this|for anything)?|stop (?:texting|messaging) me|por qu[eé] me (?:escribe|manda mensajes)|yo no (?:le|te) contact[eé])\b/;
 const COMPLIMENT =
   /^\s*(cool|nice|awesome|great|sweet|neat|perfect|love it|good to know|that'?s (?:great|helpful|awesome|cool|nice)|you'?re (?:helpful|great|awesome|good)|very helpful|so helpful)\s*[!.]*\s*$/;
 const LAUGH = /^\s*(lol|haha+|hehe+|lmao|jaja+)\b/;
@@ -84,6 +90,8 @@ export function classifySocial(message: string): SocialResult {
   if (LAUGH.test(t)) acts.push('laughter');
   if (APOLOGY.test(t) && words <= 6) acts.push('apology');
   if (SHOPPING_START.test(t)) acts.push('shopping_start');
+  if (NAME_Q.test(t)) acts.push('name_question');
+  if (ORIGIN_Q.test(t)) acts.push('origin_question');
   // Strength: remove the social phrases and see how much substance is left.
   let rest = t;
   for (const re of [
@@ -97,6 +105,8 @@ export function classifySocial(message: string): SocialResult {
     COMPLIMENT,
     LAUGH,
     APOLOGY,
+    NAME_Q,
+    ORIGIN_Q,
   ])
     rest = rest.replace(new RegExp(re.source, 'g'), ' ');
   if (wellbeing) rest = rest.replace(WELLBEING, ' ');

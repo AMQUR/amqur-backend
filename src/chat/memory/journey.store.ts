@@ -6,6 +6,25 @@ import type { LeadSignal } from '../../leads/lead-scoring';
 
 export type Department = 'sales' | 'service' | 'parts' | 'finance';
 
+/** What the assistant just offered/asked — gives "yes", "no", "why", "send it" a meaning. */
+export type OfferKind =
+  | 'payment'
+  | 'otd'
+  | 'visit'
+  | 'credit'
+  | 'handoff'
+  | 'similar'
+  | 'show_vehicles'
+  | 'pick_vehicle'
+  | 'discovery'
+  | 'contact'
+  | 'zip'
+  | 'date'
+  | 'service'
+  | 'adjust_payment'
+  | 'choice'
+  | 'other';
+
 export type JourneyState = {
   v: 2;
   language?: 'en' | 'es';
@@ -49,6 +68,17 @@ export type JourneyState = {
   };
   /** How many times in a row the assistant could not help — varies the fallback wording. */
   fallbacks?: number;
+  /**
+   * The assistant's last question and what a "yes" to it would mean. Valid only for the very
+   * next turn (`turn`); after that a bare "yes" no longer triggers anything.
+   */
+  lastOffer?: {
+    kind: OfferKind;
+    text: string;
+    vin?: string;
+    department?: Department | null;
+    turn: number;
+  };
   compareVins: string[];
   savedVins: string[];
   payment: {

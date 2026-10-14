@@ -3,6 +3,7 @@ import { EscalationUrgency } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   JourneyState,
+  OfferKind,
   JourneyStore,
   TurnSession,
 } from './memory/journey.store';
@@ -44,8 +45,10 @@ import {
 } from '../capability/capability.service';
 import { KnowledgeRetrievalService } from '../knowledge/knowledge-retrieval.service';
 import { factsPreserved } from './dialogue/facts-preserved';
+import { mergePublicBranding } from '../common/types/public-branding';
 import { generalAnswer } from './dialogue/general-knowledge';
 import {
+  isContextAmbiguous,
   isWeakUnderstanding,
   mergeInterpretation,
 } from './understanding/model-interpretation';
@@ -249,7 +252,69 @@ export type ChatResponse = {
   };
 };
 
-type Question = { key: PendingQuestion; text: string; priority: number };
+type Question = {
+  key: PendingQuestion;
+  text: string;
+  priority: number;
+  /** What a "yes" means; inferred from the key/text when not given. */
+  offer?: OfferKind;
+};
+
+/** What the chosen follow-up question offers, so the next short reply can be interpreted. */
+function offerFor(q: Question): OfferKind {
+  if (q.offer) return q.offer;
+  const byKey: Partial<Record<PendingQuestion, OfferKind>> = {
+    confirm_credit_link: 'credit',
+    confirm_handoff: 'handoff',
+    appointment_date: 'date',
+    appointment_time: 'date',
+    contact_name: 'contact',
+    contact_method: 'contact',
+    otd_zip: 'zip',
+    vehicle_choice: 'pick_vehicle',
+    service_need: 'service',
+    service_vehicle: 'service',
+    payment_method: 'other',
+  };
+  if (byKey[q.key]) return byKey[q.key]!;
+  const x = q.text.toLowerCase();
+  if (
+    /adjust the down payment|adjust .*term|another down payment|different down payment/.test(
+      x,
+    ) &&
+    !/, or /.test(x)
+  )
+    return 'adjust_payment';
+  if (
+    /model you have your eye on|anything specific|something in mind|what are you looking for|narrow it down/.test(
+      x,
+    )
+  )
+    return 'discovery';
+  // "A or B?" — a bare "yes" doesn't pick one.
+  if (
+    /\?\s*$/.test(x) &&
+    /\b(?:or|o)\b (?:the |a |an )?[a-z-]+/.test(x) &&
+    !/\bor (?:not|something|anything)\b/.test(x)
+  )
+    return 'choice';
+  if (/per month|a month|payments? (?:might|would|look)|monthly/.test(x))
+    return 'payment';
+  if (/out-the-door|out the door/.test(x)) return 'otd';
+  if (/credit application/.test(x)) return 'credit';
+  if (/test[- ]drive|come in|come by|stop by|set up a time|visit/.test(x))
+    return 'visit';
+  if (/similar|other options|show you/.test(x)) return 'similar';
+  if (/someone from the team|a person|reach out|confirm it for you/.test(x))
+    return 'handoff';
+  if (
+    /model you have your eye on|anything specific|something in mind|what are you looking for|narrow it down/.test(
+      x,
+    )
+  )
+    return 'discovery';
+  return 'other';
+}
 
 type Turn = {
   s: TurnSession;
@@ -344,9 +409,11 @@ function vehicleLabel(
   return [
     // Named paint colors keep their casing ("Silver Zynith"); plain ones read naturally ("black").
     withColor && v.color
-      ? /\s/.test(v.color.trim())
-        ? v.color.trim()
-        : v.color.toLowerCase()
+      ? /^(black|white|red|blue|gray|grey|silver|green|yellow|orange|brown|beige|gold|tan|maroon|purple)$/i.test(
+          v.color.trim(),
+        )
+        ? v.color.trim().toLowerCase()
+        : v.color.trim()
       : null,
     v.year,
     v.make,
@@ -541,7 +608,10 @@ export class ChatOrchestrator {
     // Model-assisted understanding only when the rules found nothing specific to act on.
     let modelInterpreted = false;
     if (
-      isWeakUnderstanding(u) &&
+      (isWeakUnderstanding(u) ||
+        isContextAmbiguous(u, rawMessage, {
+          hasContext: !!st.selectedVin || st.visibleVins.length > 0,
+        })) &&
       !u.entities.sensitive?.length &&
       this.llm.isEnabled() &&
       !(await this.capabilities.flags(tenantId, s.locationId)).llmDisabled
@@ -645,6 +715,17 @@ export class ChatOrchestrator {
     const intents = this.planIntents(t, input);
     if (!intents.some((i) => i === 'UNKNOWN' || i === 'KNOWLEDGE_QUESTION'))
       st.fallbacks = 0;
+    if (await this.handleFollowUp(t)) {
+      for (const i of [
+        'UNKNOWN',
+        'SMALL_TALK',
+        'GREETING',
+        'AFFIRM',
+        'KNOWLEDGE_QUESTION',
+        'SELECT_VEHICLE',
+      ] as const)
+        t.handled.add(i);
+    }
     if (u.entities.notAnswered) {
       this.handleNotAnswered(t);
       t.handled.add('UNKNOWN');
@@ -1058,6 +1139,23 @@ export class ChatOrchestrator {
       return visible[idx] ? { v: visible[idx] } : {};
     }
     const want = e.vehicle;
+    // Named paint colors that only exist on the cars shown ("the Earl one", "the Hydro Blue").
+    if (!want?.color && visible.length > 1) {
+      const msg = ` ${t.message.toLowerCase().replace(/[^a-z0-9 ]/g, ' ')} `;
+      const byPaint = visible.filter((v) => {
+        const c = (v.color ?? '').toLowerCase().trim();
+        return c.length >= 3 && msg.includes(` ${c} `);
+      });
+      const byWord = byPaint.length
+        ? byPaint
+        : visible.filter((v) =>
+            (v.color ?? '')
+              .toLowerCase()
+              .split(/\s+/)
+              .some((w) => w.length >= 4 && msg.includes(` ${w} `)),
+          );
+      if (byWord.length === 1) return { v: byWord[0] };
+    }
     if (want?.color)
       cands = cands.filter((v) =>
         (v.color ?? '').toLowerCase().includes(want.color!),
@@ -2642,7 +2740,12 @@ export class ChatOrchestrator {
           'Cuando la complete, el equipo de finanzas revisará los siguientes pasos — aplicar no es una aprobación.',
         ),
       );
-      if (t.st.selectedVin && !t.st.appointment)
+      // Only offer a drive on a car that's actually on the lot.
+      if (
+        t.st.selectedVin &&
+        !t.st.appointment &&
+        t.st.selectedStatus === 'AVAILABLE'
+      )
         this.ask(
           t,
           'none',
@@ -2932,7 +3035,12 @@ export class ChatOrchestrator {
     );
     const greeted = !!st.social?.greeted;
     st.social = { ...st.social, greeted: true };
-    if (taskIntents.length && !acts.includes('identity')) {
+    if (
+      taskIntents.length &&
+      !acts.includes('identity') &&
+      !acts.includes('name_question') &&
+      !acts.includes('origin_question')
+    ) {
       // Light touch: a short opener, then the real answer.
       if (acts.includes('greeting') || acts.includes('how_are_you'))
         t.socialPrefix = acts.includes('how_are_you')
@@ -2948,6 +3056,9 @@ export class ChatOrchestrator {
         t.socialPrefix = tr(L, "You're welcome!", '¡Con gusto!');
       return;
     }
+    if (acts.includes('name_question')) return this.handleWhoWeAre(t, 'name');
+    if (acts.includes('origin_question'))
+      return this.handleWhoWeAre(t, 'origin');
     if (acts.includes('identity')) return void t.answers.push(line('identity'));
     if (acts.includes('farewell')) return void t.answers.push(line('farewell'));
     if (acts.includes('how_are_you')) {
@@ -4102,6 +4213,40 @@ export class ChatOrchestrator {
   private async handleVehicleQuestion(t: Turn) {
     const ref = await this.resolveVehicleReference(t);
     const v = ref.v;
+    if (!v && t.u.entities.priceQuestion && t.st.visibleVins.length > 1) {
+      const shown = (
+        await this.inventory.getVehiclesByVin(t.tenantId, t.st.visibleVins)
+      ).slice(0, 4);
+      if (shown.length) {
+        t.sources.add('inventory_feed');
+        const demo = shown.some((x) => x.simulated)
+          ? tr(t.lang, ' (demo figures)', ' (cifras de demostración)')
+          : '';
+        t.answers.push(
+          tr(t.lang, 'Here’s what they’re listed at', 'Estos son sus precios') +
+            demo +
+            ': ' +
+            shown
+              .map(
+                (x) =>
+                  `${vehicleLabel(x, true)} — ${x.price ? money(x.price) : tr(t.lang, 'no price on file', 'sin precio registrado')}`,
+              )
+              .join('; ') +
+            '.',
+        );
+        this.ask(
+          t,
+          'vehicle_choice',
+          tr(
+            t.lang,
+            'Which one should we look at more closely?',
+            '¿Cuál vemos más de cerca?',
+          ),
+          3,
+        );
+        return;
+      }
+    }
     if (!v) {
       this.ask(
         t,
@@ -4117,6 +4262,109 @@ export class ChatOrchestrator {
     }
     await this.attachVehicleEvidence(t, [v]);
     const m = t.message.toLowerCase();
+    if (t.u.entities.priceQuestion) {
+      // Selling price straight from inventory; never confused with MSRP, payment or OTD.
+      t.st.selectedVin = v.vin;
+      t.st.selectedLabel = vehicleLabel(v, true);
+      t.st.selectedStock = v.stock ?? undefined;
+      t.st.selectedStatus = v.status ?? undefined;
+      t.sources.add('inventory_feed');
+      if (!v.price) {
+        t.answers.push(
+          tr(
+            t.lang,
+            `There’s no advertised price on file for the ${t.st.selectedLabel}, so I won’t guess one — the sales team can give you the number.`,
+            `No hay un precio anunciado para el ${t.st.selectedLabel}, así que no voy a adivinar — el equipo de ventas le da la cifra.`,
+          ),
+        );
+        this.ask(
+          t,
+          'confirm_handoff',
+          tr(
+            t.lang,
+            'Want me to have them reach out?',
+            '¿Quiere que le contacten?',
+          ),
+          4,
+        );
+        return;
+      }
+      const label = v.simulated
+        ? tr(
+            t.lang,
+            ' (demo figure — simulated inventory)',
+            ' (cifra de demostración — inventario simulado)',
+          )
+        : '';
+      const msrp =
+        v.msrp && v.msrp > v.price
+          ? tr(
+              t.lang,
+              ` MSRP is ${money(v.msrp)}.`,
+              ` El MSRP es ${money(v.msrp)}.`,
+            )
+          : '';
+      const transit =
+        v.status === 'IN_TRANSIT'
+          ? tr(
+              t.lang,
+              ' It’s marked in transit, so it isn’t on the lot yet.',
+              ' Aparece en tránsito, así que aún no está en el lote.',
+            )
+          : '';
+      t.answers.push(
+        tr(
+          t.lang,
+          `The ${t.st.selectedLabel} is listed at ${money(v.price)}${label}.${msrp}${transit} That’s the selling price before taxes and fees.`,
+          `El ${t.st.selectedLabel} tiene un precio de ${money(v.price)}${label}.${msrp}${transit} Es el precio de venta antes de impuestos y cargos.`,
+        ),
+      );
+      this.ask(
+        t,
+        'none',
+        tr(
+          t.lang,
+          'Want a monthly estimate, or the out-the-door number?',
+          '¿Quiere un pago mensual estimado o el precio final?',
+        ),
+        4,
+      );
+      return;
+    }
+    if (t.u.entities.lotAgeQuestion) {
+      t.sources.add('inventory_feed');
+      const lbl = vehicleLabel(v, true);
+      t.answers.push(
+        v.status === 'IN_TRANSIT'
+          ? tr(
+              t.lang,
+              `The ${lbl} isn’t on the lot yet — it’s marked in transit. I don’t have a verified arrival date, so I won’t guess one.`,
+              `El ${lbl} aún no está en el lote — aparece en tránsito. No tengo una fecha de llegada verificada, así que no voy a adivinar.`,
+            )
+          : v.status === 'AVAILABLE'
+            ? tr(
+                t.lang,
+                `It’s showing as in stock, but the listing doesn’t include the date it arrived, so I can’t say how long it’s been here — the sales team can tell you.`,
+                `Aparece en inventario, pero el anuncio no incluye la fecha en que llegó, así que no puedo decir cuánto tiempo lleva — el equipo de ventas se lo dice.`,
+              )
+            : tr(
+                t.lang,
+                `The ${lbl} isn’t showing as available right now.`,
+                `El ${lbl} no aparece disponible en este momento.`,
+              ),
+      );
+      this.ask(
+        t,
+        'confirm_handoff',
+        tr(
+          t.lang,
+          'Want me to have someone from sales confirm the details?',
+          '¿Quiere que alguien de ventas le confirme los detalles?',
+        ),
+        6,
+      );
+      return;
+    }
     // "Why should I buy this one?" — a pitch built only from the listing, then a fit question.
     if (
       /\bwhy (?:should|would) i\b|\bwhat makes\b|\bworth it\b|\bsell me\b/.test(
@@ -4326,6 +4574,7 @@ export class ChatOrchestrator {
   }
 
   private async handleKnowledge(t: Turn) {
+    if (t.u.entities.managerQuestion) return this.handleManagerQuestion(t);
     const kc = await this.cap(t, 'knowledge');
     const ctx: string[] = [];
     if (kc.allowed) {
@@ -4432,6 +4681,7 @@ export class ChatOrchestrator {
     let answer = await this.llm.answerIntelligentQuestion(t.message, ctx, {
       language: t.lang,
       tenantId: t.tenantId,
+      assistantName: await this.assistantName(t),
       onModelAnswer: () => {
         fromModel = true;
       },
@@ -4652,10 +4902,120 @@ export class ChatOrchestrator {
       );
       return;
     }
-    if (t.st.department === 'service')
-      return this.handleAppointment(t, 'SERVICE');
-    if (t.st.selectedVin && t.st.payment.lastEstimate)
-      return this.handleAppointment(t, 'TEST_DRIVE');
+    // "Yes" means yes to the question we JUST asked — nothing else. No offer → no action.
+    const offer = this.freshOffer(t);
+    switch (offer?.kind) {
+      case 'payment':
+        return this.handlePayment(t);
+      case 'otd':
+        return this.handleOtd(t);
+      case 'credit':
+        return this.handleCreditApp(t);
+      case 'handoff':
+        return this.handleHandoff(t, 'request');
+      case 'visit':
+        return this.handleAppointment(
+          t,
+          t.st.selectedVin ? 'TEST_DRIVE' : 'SALES',
+        );
+      case 'similar':
+      case 'show_vehicles':
+        return this.handleSearch(t);
+      case 'service':
+        return this.handleAppointment(t, 'SERVICE');
+      case 'discovery':
+        this.ask(
+          t,
+          'none',
+          tr(
+            t.lang,
+            'Great — what are you thinking? A model, a type like SUV or truck, or a budget is plenty to start.',
+            'Perfecto — ¿qué tiene en mente? Un modelo, un tipo como SUV o camioneta, o un presupuesto es suficiente.',
+          ),
+          2,
+        );
+        return;
+      case 'pick_vehicle':
+        if (t.st.visibleVins.length === 1) return this.handleSelect(t);
+        break;
+      case 'adjust_payment':
+        this.ask(
+          t,
+          'none',
+          tr(
+            t.lang,
+            'Sure — what down payment or term should I try? For example “$5,000 down” or “60 months”.',
+            'Claro — ¿qué enganche o plazo pruebo? Por ejemplo “5,000 de enganche” o “60 meses”.',
+          ),
+          2,
+        );
+        return;
+    }
+    // Several cars on screen and none picked: "yes" means "one of these" — ask which.
+    if (!t.st.selectedVin && t.st.visibleVins.length > 1) {
+      this.ask(
+        t,
+        'vehicle_choice',
+        tr(
+          t.lang,
+          'Which one caught your eye? The color or trim is enough.',
+          '¿Cuál le llamó la atención? El color o la versión es suficiente.',
+        ),
+        2,
+      );
+      return;
+    }
+    if (t.u.entities.interest) {
+      if (!t.st.selectedVin && t.st.visibleVins.length === 1)
+        return this.handleSelect(t);
+      if (t.st.selectedLabel) {
+        t.answers.push(
+          tr(
+            t.lang,
+            `Great — the ${t.st.selectedLabel} it is.`,
+            `Perfecto — el ${t.st.selectedLabel}.`,
+          ),
+        );
+        this.ask(
+          t,
+          'none',
+          this.salesNextStep(t) ??
+            tr(
+              t.lang,
+              'Want the price, a monthly estimate, or to set up a time to see it?',
+              '¿Quiere el precio, un pago mensual estimado o una cita para verlo?',
+            ),
+          3,
+        );
+        return;
+      }
+    }
+    if (offer?.kind === 'choice') {
+      this.ask(
+        t,
+        'none',
+        tr(
+          t.lang,
+          `Happy to — which one? ${offer.text}`,
+          `Con gusto — ¿cuál? ${offer.text}`,
+        ),
+        2,
+      );
+      return;
+    }
+    if (t.st.selectedLabel) {
+      this.ask(
+        t,
+        'none',
+        tr(
+          t.lang,
+          `Sure. On the ${t.st.selectedLabel}, I can run a monthly estimate, start an out-the-door quote, or set up a time to see it — which sounds good?`,
+          `Claro. Con el ${t.st.selectedLabel} puedo calcular un pago mensual, pedir el precio final o una cita para verlo — ¿qué prefiere?`,
+        ),
+        3,
+      );
+      return;
+    }
     t.narration.push(tr(t.lang, 'Sounds good.', 'Muy bien.'));
     this.ask(
       t,
@@ -4939,6 +5299,215 @@ export class ChatOrchestrator {
         2,
       );
     }
+  }
+
+  /** The offer from the immediately preceding assistant turn, if still current. */
+  private freshOffer(t: Turn) {
+    const o = t.st.lastOffer;
+    return o && o.turn === t.st.turnCount ? o : undefined;
+  }
+
+  /** Tenant/location display name for the assistant (configured branding, never hard-coded). */
+  private async assistantName(t: Turn): Promise<string> {
+    const [tenant, loc] = await Promise.all([
+      this.prisma.tenant.findUnique({
+        where: { id: t.tenantId },
+        select: { publicConfig: true },
+      }),
+      t.locationId
+        ? this.prisma.location.findFirst({
+            where: { id: t.locationId, tenantId: t.tenantId },
+            select: { publicConfig: true },
+          })
+        : null,
+    ]);
+    return mergePublicBranding(tenant?.publicConfig, loc?.publicConfig)
+      .assistantDisplayName;
+  }
+
+  /** "What is your name?" / "Why are you texting me?" — answered from facts, no sales push. */
+  private async handleWhoWeAre(t: Turn, act: 'name' | 'origin') {
+    const name = await this.assistantName(t);
+    if (act === 'name') {
+      t.answers.push(
+        tr(
+          t.lang,
+          `I’m ${name}, the dealership’s AI assistant on its website — not a person, but I can bring one in anytime.`,
+          `Soy ${name}, el asistente de IA de la agencia en su sitio web — no una persona, pero puedo conectarle con alguien cuando quiera.`,
+        ),
+      );
+      return;
+    }
+    // Only an actual SMS conversation would make "texting" true.
+    const channel = await this.prisma.conversation
+      .findFirst({
+        where: { id: t.s.conversationId, tenantId: t.tenantId },
+        select: { channel: true },
+      })
+      .catch(() => null);
+    const sms = /sms|text/i.test(String(channel?.channel ?? ''));
+    const never = /\b(?:never|didn'?t|did not)\b/i.test(t.message);
+    t.answers.push(
+      sms
+        ? tr(
+            t.lang,
+            'You’re right to ask. This conversation is by text with the dealership. If you’d rather not get messages, reply STOP and they’ll end.',
+            'Con razón pregunta. Esta conversación es por mensaje de texto con la agencia. Si prefiere no recibir mensajes, responda STOP.',
+          )
+        : never
+          ? tr(
+              t.lang,
+              `You’re right — you didn’t reach out to us, and I haven’t sent you anything. I’m ${name}, the chat on the dealership’s website; I only see what’s typed in this window. No pressure at all — if you need anything, I’m here.`,
+              `Tiene razón — usted no nos contactó y yo no le he enviado nada. Soy ${name}, el chat del sitio web de la agencia; solo veo lo que se escribe en esta ventana. Sin presión — si necesita algo, aquí estoy.`,
+            )
+          : tr(
+              t.lang,
+              `I’m not texting you — this is ${name}, the chat window on the dealership’s website. I haven’t sent anything to your phone or email; I only see what’s typed here.`,
+              `No le estoy enviando mensajes de texto — soy ${name}, el chat del sitio web de la agencia. No he enviado nada a su teléfono ni correo; solo veo lo que se escribe aquí.`,
+            ),
+    );
+  }
+
+  /** "Who is your manager?" — answer from verified staff data or say plainly it isn't on file. */
+  private async handleManagerQuestion(t: Turn) {
+    t.answers.push(
+      tr(
+        t.lang,
+        'I don’t have the managers’ names in what I can verify, so I won’t guess. I can ask a manager to reach out to you, though.',
+        'No tengo los nombres de los gerentes en la información que puedo verificar, así que no voy a adivinar. Sí puedo pedir que un gerente le contacte.',
+      ),
+    );
+    this.ask(
+      t,
+      'confirm_handoff',
+      tr(t.lang, 'Want me to do that?', '¿Quiere que lo haga?'),
+      3,
+    );
+  }
+
+  /** Short replies that only make sense against the previous assistant message. */
+  private async handleFollowUp(t: Turn): Promise<boolean> {
+    const f = t.u.entities.followUp;
+    if (!f) return false;
+    const offer = this.freshOffer(t) ?? t.st.lastOffer;
+    switch (f) {
+      case 'who_is_that':
+        t.answers.push(
+          offer?.kind === 'handoff' ||
+            /team|manager|someone/i.test(offer?.text ?? '')
+            ? tr(
+                t.lang,
+                'Someone on the dealership’s team — I don’t have individual names I can verify here, so I won’t guess.',
+                'Alguien del equipo de la agencia — no tengo nombres que pueda verificar, así que no voy a adivinar.',
+              )
+            : tr(
+                t.lang,
+                'Sorry — who do you mean?',
+                'Perdón — ¿a quién se refiere?',
+              ),
+        );
+        return true;
+      case 'hold_on':
+        t.answers.push(
+          tr(
+            t.lang,
+            'Take your time — I’ll be right here.',
+            'Tómese su tiempo — aquí estoy.',
+          ),
+        );
+        return true;
+      case 'what_do_you_mean':
+        t.answers.push(
+          offer?.text
+            ? tr(
+                t.lang,
+                `Sorry — let me put it simply. I was asking: ${offer.text}`,
+                `Perdón — se lo digo más simple. Le preguntaba: ${offer.text}`,
+              )
+            : tr(
+                t.lang,
+                'Sorry, that wasn’t clear. What can I help you with?',
+                'Perdón, no fui claro. ¿En qué le ayudo?',
+              ),
+        );
+        return true;
+      case 'why': {
+        const WHY: Partial<Record<OfferKind, [string, string]>> = {
+          zip: [
+            'The registration ZIP decides which sales tax and registration fees apply — that’s what turns the price into an out-the-door number.',
+            'El código postal de registro define qué impuestos y cargos aplican — así se calcula el precio final.',
+          ],
+          contact: [
+            'So the team can reach you about this — I only share it with this dealership.',
+            'Para que el equipo le contacte sobre esto — solo lo comparto con esta agencia.',
+          ],
+          date: [
+            'So I can put in the visit request for a time that works for you — the team then confirms it.',
+            'Para pedir la visita en un horario que le funcione — luego el equipo la confirma.',
+          ],
+          payment: [
+            'Just so you can see a ballpark monthly number — it’s an estimate, not an offer.',
+            'Solo para que vea un pago mensual aproximado — es un estimado, no una oferta.',
+          ],
+          credit: [
+            'It’s the only way to see real financing terms — the lender sets the rate after reviewing it.',
+            'Es la única forma de ver términos reales — el prestamista define la tasa al revisarla.',
+          ],
+        };
+        const w = offer ? WHY[offer.kind] : undefined;
+        t.answers.push(
+          w
+            ? t.lang === 'es'
+              ? w[1]
+              : w[0]
+            : tr(
+                t.lang,
+                'Fair question — what part would you like me to explain?',
+                'Buena pregunta — ¿qué parte quiere que le explique?',
+              ),
+        );
+        return true;
+      }
+      case 'send_it':
+        if (offer?.kind === 'credit') {
+          await this.handleCreditApp(t);
+          return true;
+        }
+        if (offer?.kind === 'otd') {
+          await this.handleOtd(t);
+          return true;
+        }
+        t.answers.push(
+          tr(
+            t.lang,
+            'Happy to — what would you like me to send?',
+            'Con gusto — ¿qué le envío?',
+          ),
+        );
+        return true;
+      case 'show_me':
+        if (offer?.kind === 'payment') await this.handlePayment(t);
+        else if (t.st.selectedVin) await this.handleResume(t);
+        else await this.handleSearch(t);
+        return true;
+      case 'that_one':
+        if (t.st.visibleVins.length === 1 || t.u.entities.vehicle) {
+          await this.handleSelect(t);
+        } else {
+          this.ask(
+            t,
+            'vehicle_choice',
+            tr(
+              t.lang,
+              'Which one — the color or trim is enough.',
+              '¿Cuál — el color o la versión es suficiente.',
+            ),
+            2,
+          );
+        }
+        return true;
+    }
+    return false;
   }
 
   /** "Let's go back to the Jeep" — restore the shopping vehicle and recap where we were. */
@@ -5398,6 +5967,15 @@ export class ChatOrchestrator {
     }
     if (q && q.key !== 'none')
       st.lastAsked = { key: q.key, turn: st.turnCount + 1 };
+    st.lastOffer = q
+      ? {
+          kind: offerFor(q),
+          text: q.text,
+          vin: st.selectedVin,
+          department: st.department ?? null,
+          turn: st.turnCount + 1,
+        }
+      : undefined;
     st.pending = q?.key ?? silentPending ?? 'none';
     const ack = chooseAcknowledgement({
       sentiment: t.u.sentiment,
@@ -5449,6 +6027,7 @@ export class ChatOrchestrator {
         userMessage: redactCreditSensitive(t.message),
         language: t.lang,
         tenantId: t.tenantId,
+        assistantName: await this.assistantName(t),
       });
       if (polished && polished !== draft) {
         const g = this.grounding.sanitizeCustomerReply({
@@ -5457,7 +6036,12 @@ export class ChatOrchestrator {
           allowedClaimTypes: detectClaimTypes(draft),
         });
         // Cards carry the numbers; the sentence must still say exactly the same ones.
-        if (!g.sanitized && !factsPreserved(draft, polished)) {
+        // A rewrite cut off mid-sentence (token limit) is never sent.
+        const truncated = !/[.!?…)"”’]\s*$/.test(polished.trim());
+        if (!g.sanitized && truncated) {
+          this.metrics.increment('chat.polish.truncated');
+          t.languageModel = 'discarded';
+        } else if (!g.sanitized && !factsPreserved(draft, polished)) {
           this.metrics.increment('chat.polish.facts_changed');
           t.languageModel = 'discarded';
         } else if (g.sanitized) {
@@ -5473,6 +6057,25 @@ export class ChatOrchestrator {
     }
     if (ack) st.recentOpeners = [...st.recentOpeners, ack].slice(-4);
     st.lastReplySig = signature(reply);
+    // A question that lives inside the reply text ("Want to adjust the down payment or term?")
+    // is still what a following "yes" answers.
+    if (!st.lastOffer || st.lastOffer.kind === 'other') {
+      const asked = reply
+        .split(/(?<=[.!?])\s+/)
+        .reverse()
+        .find((x) => /\?\s*$/.test(x));
+      if (asked) {
+        const kind = offerFor({ key: 'none', text: asked, priority: 9 });
+        if (kind !== 'other' || !st.lastOffer)
+          st.lastOffer = {
+            kind,
+            text: asked,
+            vin: st.selectedVin,
+            department: st.department ?? null,
+            turn: st.turnCount + 1,
+          };
+      }
+    }
     st.turnCount += 1;
 
     const handoffState = t.conversationExtra.handoffState;
