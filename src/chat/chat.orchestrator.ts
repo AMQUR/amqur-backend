@@ -74,6 +74,9 @@ import {
   parseIsoDate,
 } from '../common/time/zoned-time';
 import { CrmSyncService } from '../integrations/crm/crm-sync.service';
+import { PriceQuoteService } from '../finance/price-quote.service';
+import { estimateOutTheDoor, OtdLine } from '../finance/otd-quote';
+import { seedOf, socialLine, vary } from './dialogue/social';
 import { CampaignEngine } from '../messaging/campaign.engine';
 import { ConsentService } from '../messaging/consent.service';
 
@@ -101,6 +104,26 @@ export type ChatCard =
       label: string;
       url: string;
       providerName: string | null;
+      /** Customer-facing CTA, e.g. "Apply for Financing". */
+      cta: string;
+      /** Short reassurance shown under the CTA. */
+      note: string;
+      /** Non-production demo preview — card is labeled; click never reaches the vendor. */
+      preview: boolean;
+    }
+  | {
+      kind: 'otd_quote';
+      id: string;
+      vin: string;
+      vehicleLabel: string;
+      status: 'estimate' | 'requested';
+      paymentMethod: 'CASH' | 'FINANCE' | 'LEASE' | 'UNDECIDED';
+      lines: OtdLine[];
+      total: number | null;
+      assumptions: string[];
+      missingInputs: string[];
+      /** Always true: a preliminary figure, never a written dealer offer. */
+      preliminary: true;
     }
   | { kind: 'finance_request'; id: string; status: string }
   | { kind: 'trade'; id: string; summary: string; appraisalVerified: false }
@@ -151,7 +174,8 @@ export type JourneySummary = {
   trade?: { summary: string; requestId?: string } | null;
   appointment?: { id: string; label: string; status: string } | null;
   creditApplication?: { state: string } | null;
-  service?: { need?: string } | null;
+  otdQuote?: { status: string; total: number | null } | null;
+  service?: { need?: string; vehicle?: string } | null;
   parts?: { need?: string; status?: string } | null;
   handoff?: { state: string } | null;
 };
@@ -222,6 +246,8 @@ type Turn = {
   toolCount: number;
   urgent: boolean;
   quickReplies: string[];
+  /** Social opener for this turn ("Hi there!") — replaces the generic acknowledgement. */
+  socialPrefix?: string;
   isCorrection: boolean;
   capCache: Map<CapabilityName, Promise<CapabilityResult>>;
   hours?: HoursProfile | null;
@@ -345,6 +371,7 @@ export class ChatOrchestrator {
     private readonly crmSync: CrmSyncService,
     private readonly campaigns: CampaignEngine,
     private readonly consent: ConsentService,
+    private readonly quotes: PriceQuoteService,
   ) {}
 
   // ───────────────────────────────────────── entry
@@ -441,6 +468,10 @@ export class ChatOrchestrator {
         ),
       activeDepartment: st.department ?? null,
       timeZone: (await this.locationTz(tenantId, s.locationId)) ?? hoursTz,
+      knownModels: st.visibleModels ?? [],
+      hasPaymentEstimate: !!st.payment.lastEstimate,
+      hasCriteria: Object.keys(st.criteria ?? {}).length > 0,
+      creditOffered: !!st.finance?.creditLinkOffered,
     });
 
     const t: Turn = {
@@ -572,6 +603,11 @@ export class ChatOrchestrator {
       this.signal(t, 'timeline_soon');
     }
     if (
+      e.ownVehicle &&
+      (hasIntent(u, 'SERVICE_APPOINTMENT') || st.department === 'service')
+    )
+      st.service = { ...st.service, vehicle: e.ownVehicle };
+    if (
       hasIntent(u, 'SERVICE_APPOINTMENT') ||
       hasIntent(u, 'SERVICE_AMENITY_QUESTION')
     )
@@ -585,7 +621,14 @@ export class ChatOrchestrator {
     else if (
       hasIntent(u, 'INVENTORY_SEARCH') ||
       hasIntent(u, 'SALES_APPOINTMENT') ||
-      hasIntent(u, 'TRADE_IN')
+      hasIntent(u, 'TRADE_IN') ||
+      (hasIntent(u, 'SELECT_VEHICLE') &&
+        !(st.pending === 'parts_vin' && e.vin) &&
+        !e.ownVehicle) ||
+      hasIntent(u, 'COMPARE') ||
+      hasIntent(u, 'OTD_QUOTE') ||
+      hasIntent(u, 'SHOPPING_START') ||
+      (hasIntent(u, 'PAYMENT_ESTIMATE') && st.department !== 'finance')
     )
       st.department = 'sales';
   }
@@ -700,6 +743,12 @@ export class ChatOrchestrator {
         return this.handleDecline(t);
       case 'GREETING':
         return this.handleGreeting(t);
+      case 'SMALL_TALK':
+        return this.handleSocial(t);
+      case 'SHOPPING_START':
+        return this.handleShoppingStart(t);
+      case 'OTD_QUOTE':
+        return this.handleOtd(t);
       case 'LANGUAGE_SWITCH':
         t.answers.push(
           tr(
@@ -768,6 +817,73 @@ export class ChatOrchestrator {
     return [c.firstName, c.lastName].filter(Boolean).join(' ') || null;
   }
 
+  /** Stable per-turn seed so phrasing varies across turns but is reproducible in tests. */
+  private seed(t: Turn, salt = '') {
+    return seedOf(t.s.externalKey, t.st.turnCount, salt);
+  }
+
+  private pick(t: Turn, options: string[], salt = '') {
+    return vary(options, t.st.recentOpeners, this.seed(t, salt));
+  }
+
+  /** Remember models on screen so "that Wrangler" later refers to them. */
+  private rememberModels(t: Turn, vehicles: InventoryVehicle[]) {
+    const models = vehicles
+      .map((v) => (v.model ?? '').toLowerCase())
+      .filter(Boolean);
+    t.st.visibleModels = [
+      ...new Set([...(t.st.visibleModels ?? []), ...models]),
+    ].slice(-12);
+  }
+
+  /** One-time, plain-language note that the demo runs on simulated inventory. */
+  private noteSimulated(t: Turn, vehicles: InventoryVehicle[]) {
+    if (!vehicles.some((v) => v.simulated) || t.st.social?.demoNoted) return;
+    t.st.social = { ...t.st.social, demoNoted: true };
+    t.narration.push(
+      tr(
+        t.lang,
+        '(Heads up: this demo runs on simulated vehicles, not the dealership’s live inventory.)',
+        '(Nota: esta demostración usa vehículos simulados, no el inventario real de la agencia.)',
+      ),
+    );
+  }
+
+  /**
+   * ONE useful next step for the sales journey — chosen from what the customer has NOT done
+   * yet, so we never repeat the same menu after every reply.
+   */
+  private salesNextStep(t: Turn, label?: string): string | null {
+    const st = t.st;
+    const it = label
+      ? tr(t.lang, `the ${label}`, `el ${label}`)
+      : tr(t.lang, 'it', 'eso');
+    if (!st.payment.lastEstimate)
+      return this.pick(
+        t,
+        t.lang === 'es'
+          ? [`¿Quiere ver cómo quedarían los pagos de ${it}?`]
+          : [
+              `Want to see what payments might look like on ${it}?`,
+              `Curious what ${it} would run per month?`,
+            ],
+        'next-pay',
+      );
+    if (!st.otd?.requestId)
+      return tr(
+        t.lang,
+        'Would an out-the-door price help, or would you rather see it in person first?',
+        '¿Le sirve un precio final, o prefiere verlo en persona primero?',
+      );
+    if (!st.appointment)
+      return tr(
+        t.lang,
+        'Would you like to come take it for a test drive?',
+        '¿Le gustaría venir a manejarlo?',
+      );
+    return null;
+  }
+
   private async capBlocked(t: Turn, c: CapabilityName): Promise<boolean> {
     const r = await this.cap(t, c);
     if (r.allowed) return false;
@@ -831,7 +947,39 @@ export class ChatOrchestrator {
         (v.trim ?? '').toLowerCase().includes(want.trim!.toLowerCase()),
       );
     if (cands.length === 1) return { v: cands[0] };
-    if (cands.length > 1) return { ambiguous: cands.slice(0, 3) };
+    // Several match, but one is the vehicle they already chose → that's the one they mean.
+    const chosen = cands.find((c) => c.vin === t.st.selectedVin);
+    if (cands.length > 1 && chosen && !want?.color && !ord)
+      return { v: chosen };
+    if (cands.length > 1) {
+      if (e.rank) return { v: this.rankVehicles(cands, e.rank)[0] };
+      return { ambiguous: cands.slice(0, 3) };
+    }
+    if (want?.model) {
+      // "back to the Wrangler" when the Wrangler is no longer on screen: the selected vehicle
+      // if it matches, otherwise the one verified vehicle of that model (never a guess).
+      if (
+        t.st.selectedVin &&
+        (t.st.selectedLabel ?? '')
+          .toLowerCase()
+          .includes(want.model.toLowerCase())
+      ) {
+        const v = await this.inventory.getVehicleByVin(
+          t.tenantId,
+          t.st.selectedVin,
+        );
+        if (v) return { v };
+      }
+      const found = await this.inventory.searchVehicles({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        model: want.model,
+        limit: 4,
+      });
+      if (found.length === 1) return { v: found[0] };
+      if (found.length > 1) return { ambiguous: found.slice(0, 3) };
+      return {};
+    }
     if (t.st.selectedVin) {
       const v = await this.inventory.getVehicleByVin(
         t.tenantId,
@@ -841,6 +989,22 @@ export class ChatOrchestrator {
     }
     if (visible.length === 1) return { v: visible[0] };
     return {};
+  }
+
+  private rankVehicles(
+    vs: InventoryVehicle[],
+    rank: NonNullable<TurnUnderstanding['entities']['rank']>,
+  ) {
+    const by = rank.by;
+    return [...vs].sort((a, b) =>
+      by === 'price_asc'
+        ? (a.price ?? Infinity) - (b.price ?? Infinity)
+        : by === 'year_desc'
+          ? (b.year ?? 0) - (a.year ?? 0)
+          : by === 'miles_asc'
+            ? (a.mileage ?? Infinity) - (b.mileage ?? Infinity)
+            : (b.price ?? 0) - (a.price ?? 0),
+    );
   }
 
   private async attachVehicleEvidence(t: Turn, vehicles: InventoryVehicle[]) {
@@ -1209,6 +1373,7 @@ export class ChatOrchestrator {
     const v = ref.v;
     t.st.selectedVin = v.vin;
     t.st.selectedLabel = vehicleLabel(v, true);
+    this.rememberModels(t, [v]);
     this.signal(t, 'vehicle_selected');
     void this.analytics.trackEvent(
       t.tenantId,
@@ -1266,23 +1431,38 @@ export class ChatOrchestrator {
         ].includes(i.intent),
       )
     ) {
+      const resumed = t.u.entities.resume;
       t.narration.push(
-        tr(
-          t.lang,
-          `Got it — the ${vehicleLabel(v, true)}.`,
-          `Entendido — el ${vehicleLabel(v)}.`,
-        ),
+        resumed
+          ? tr(
+              t.lang,
+              `Sure — back to the ${vehicleLabel(v, true)}.`,
+              `Claro — volvamos al ${vehicleLabel(v)}.`,
+            )
+          : this.pick(
+              t,
+              t.lang === 'es'
+                ? [`Buena elección — el ${vehicleLabel(v)}.`]
+                : [
+                    `Good pick — the ${vehicleLabel(v, true)}.`,
+                    `The ${vehicleLabel(v, true)} — nice choice.`,
+                    `Got it, the ${vehicleLabel(v, true)}.`,
+                  ],
+              'select',
+            ),
       );
-      this.ask(
-        t,
-        'none',
-        tr(
-          t.lang,
-          'Want me to estimate a payment or set up a time to see it?',
-          '¿Le calculo un pago estimado o agendamos una visita para verlo?',
-        ),
-        8,
-      );
+      if (resumed && t.st.payment.lastEstimate?.vin === v.vin) {
+        const le = t.st.payment.lastEstimate;
+        t.narration.push(
+          tr(
+            t.lang,
+            `Last estimate we ran was about ${money(le.monthly)}/month with ${money(le.downPayment)} down over ${le.termMonths} months.`,
+            `El último estimado fue de unos ${money(le.monthly)}/mes con ${money(le.downPayment)} de enganche a ${le.termMonths} meses.`,
+          ),
+        );
+      }
+      const next = this.salesNextStep(t);
+      if (next) this.ask(t, 'none', next, 8);
     }
   }
 
@@ -1392,23 +1572,59 @@ export class ChatOrchestrator {
         { count: 0 },
         t.s.externalKey,
       );
+      const kind = await this.inventory.sourceKind(t.tenantId, t.locationId);
+      const what =
+        vehicleLabel(
+          {
+            make: c.model ? undefined : c.make,
+            model: c.model,
+            color: c.color,
+          },
+          true,
+        ) || tr(t.lang, 'a match', 'una coincidencia');
+      // Never imply that a miss in a demo/fixture dataset says anything about real stock.
       t.answers.push(
-        tr(
-          t.lang,
-          "I'm not finding anything in the dealership's current inventory that matches that.",
-          'No encuentro nada en el inventario actual de la agencia que coincida.',
-        ),
+        kind === 'synthetic'
+          ? tr(
+              t.lang,
+              `I don't see ${/^[aeiou]/i.test(what) ? 'an' : 'a'} ${what} in this demo's simulated inventory — that says nothing about the dealership's real stock.`,
+              `No veo ${what} en el inventario simulado de esta demostración — eso no refleja el inventario real de la agencia.`,
+            )
+          : tr(
+              t.lang,
+              `I don't see ${/^[aeiou]/i.test(what) ? 'an' : 'a'} ${what} I can verify in this store's current inventory.`,
+              `No veo ${what} que pueda verificar en el inventario actual de esta tienda.`,
+            ),
       );
-      this.ask(
-        t,
-        'none',
-        tr(
-          t.lang,
-          'Want me to widen the search, or have someone let you know when one comes in?',
-          '¿Amplío la búsqueda o le aviso cuando llegue uno?',
-        ),
-        7,
-      );
+      // Offer genuinely similar vehicles that DO exist (same body style / make), never invented ones.
+      const sim = await this.inventory.alternatives(t.tenantId, t.locationId, {
+        make: c.model ? c.make : undefined,
+        bodyType: c.bodyType ?? (c.model ? 'SUV' : undefined),
+        price: c.maxPrice,
+      });
+      if (sim.length) {
+        this.ask(
+          t,
+          'none',
+          tr(
+            t.lang,
+            `Want me to show you similar ${c.bodyType ? `${c.bodyType}s` : 'vehicles'} that are in stock, or have the team check incoming vehicles?`,
+            `¿Le muestro vehículos similares en existencia, o pido al equipo que revise los que vienen en camino?`,
+          ),
+          7,
+        );
+      } else {
+        this.ask(
+          t,
+          'none',
+          tr(
+            t.lang,
+            'Want me to have the team check incoming vehicles for you?',
+            '¿Quiere que el equipo revise los vehículos que vienen en camino?',
+          ),
+          7,
+        );
+      }
       t.sources.add('inventory_db');
       return;
     }
@@ -1421,7 +1637,12 @@ export class ChatOrchestrator {
       t.s.externalKey,
     );
     const shown = vehicles.slice(0, 6);
+    const sameAsShown =
+      !relaxedNote &&
+      shown.length === t.st.visibleVins.length &&
+      shown.every((v) => t.st.visibleVins.includes(v.vin));
     t.st.visibleVins = shown.map((v) => v.vin);
+    this.rememberModels(t, shown);
     t.vehicles = await this.withPaymentEstimates(t, shown);
     t.type = 'vehicle_carousel';
     await this.attachVehicleEvidence(t, shown);
@@ -1430,7 +1651,15 @@ export class ChatOrchestrator {
         e.field === 'inventory_availability' && e.freshnessState !== 'fresh',
     );
     if (relaxedNote) t.narration.push(relaxedNote);
-    else if (monthlyMiss) {
+    else if (sameAsShown && shown.length > 1) {
+      t.narration.push(
+        tr(
+          t.lang,
+          `Those ${shown.length} are everything I can verify in stock for that right now.`,
+          `Esos ${shown.length} son todos los que puedo verificar en existencia ahora.`,
+        ),
+      );
+    } else if (monthlyMiss) {
       t.narration.push(
         tr(
           t.lang,
@@ -1440,22 +1669,51 @@ export class ChatOrchestrator {
       );
     } else {
       const what =
-        vehicleLabel({ make: c.make, model: c.model, color: c.color }, true) ||
-        tr(t.lang, 'vehicles', 'vehículos');
+        vehicleLabel(
+          {
+            model: c.model,
+            make: c.model ? undefined : c.make,
+            color: c.color,
+          },
+          true,
+        ) || tr(t.lang, 'vehicle', 'vehículo');
+      const plural = /s$/.test(what) ? what : `${what}s`;
+      const under = c.maxPrice
+        ? tr(
+            t.lang,
+            ` under ${money(c.maxPrice)}`,
+            ` por menos de ${money(c.maxPrice)}`,
+          )
+        : '';
       t.narration.push(
         shown.length === 1
-          ? tr(
-              t.lang,
-              `I found one ${what} that fits.`,
-              `Encontré un ${what} que coincide.`,
+          ? this.pick(
+              t,
+              t.lang === 'es'
+                ? [
+                    `Encontré un ${what} que puedo verificar en existencia${under}.`,
+                  ]
+                : [
+                    `Here's the one ${what} I can verify in stock right now${under}.`,
+                    `I found one ${what}${under} — take a look.`,
+                  ],
+              'found1',
             )
-          : tr(
-              t.lang,
-              `I found ${shown.length} ${what}${shown.length > 1 && !/s$/.test(what) ? 's' : ''} that fit${c.maxPrice ? ` under ${money(c.maxPrice)}` : ''}.`,
-              `Encontré ${shown.length} opciones que coinciden${c.maxPrice ? ` por menos de ${money(c.maxPrice)}` : ''}.`,
+          : this.pick(
+              t,
+              t.lang === 'es'
+                ? [
+                    `Encontré ${shown.length} opciones${under}. Dígame cuál le llama la atención.`,
+                  ]
+                : [
+                    `I found ${shown.length} ${plural}${under} worth a look. Tell me which one catches your eye.`,
+                    `Here are ${shown.length} ${plural}${under} in stock right now — take a look.`,
+                  ],
+              'foundN',
             ),
       );
     }
+    this.noteSimulated(t, shown);
     if (stale) {
       t.narration.push(
         tr(
@@ -1471,24 +1729,16 @@ export class ChatOrchestrator {
     if (shown.length === 1) {
       t.st.selectedVin = shown[0].vin;
       t.st.selectedLabel = vehicleLabel(shown[0], true);
+      const next = this.salesNextStep(t);
+      if (next) this.ask(t, 'none', next, 9);
+    } else if (shown.length > 3 && !c.maxPrice && !t.st.payment.maxMonthly) {
       this.ask(
         t,
         'none',
         tr(
           t.lang,
-          'Want a payment estimate or a time to see it?',
-          '¿Le calculo un pago o agendamos una visita?',
-        ),
-        9,
-      );
-    } else {
-      this.ask(
-        t,
-        'none',
-        tr(
-          t.lang,
-          'Want me to narrow these down by a feature, or estimate a payment on one?',
-          '¿Los filtro por alguna característica o le calculo un pago en alguno?',
+          'Is there a budget or a must-have feature I should narrow these down by?',
+          '¿Hay un presupuesto o una característica indispensable para filtrarlos?',
         ),
         9,
       );
@@ -1587,6 +1837,15 @@ export class ChatOrchestrator {
 
   private async handlePayment(t: Turn) {
     if (await this.capBlocked(t, 'payments')) return;
+    // Comparing a few vehicles and no single one picked → estimate each, same assumptions.
+    if (
+      !t.st.selectedVin &&
+      t.st.compareVins.length >= 2 &&
+      !t.u.entities.vehicle?.model &&
+      !t.u.entities.vin
+    ) {
+      return this.handleMultiPayment(t, t.st.compareVins.slice(0, 3));
+    }
     let v: InventoryVehicle | undefined;
     if (t.st.selectedVin)
       v =
@@ -1594,6 +1853,15 @@ export class ChatOrchestrator {
         undefined;
     if (!v) {
       const ref = await this.resolveVehicleReference(t);
+      if (
+        !ref.v &&
+        !t.u.entities.vehicle?.model &&
+        t.st.visibleVins.length >= 2 &&
+        t.st.visibleVins.length <= 3
+      ) {
+        // A few on screen: estimate each with the same assumptions instead of quizzing.
+        return this.handleMultiPayment(t, t.st.visibleVins);
+      }
       if (ref.ambiguous?.length || (!ref.v && t.st.visibleVins.length > 1)) {
         this.ask(
           t,
@@ -1662,6 +1930,7 @@ export class ChatOrchestrator {
             'Illustrative rate — not a lender or dealer offer.',
           ),
     );
+    const prevEstimate = t.st.payment.lastEstimate;
     t.st.payment.lastEstimate = {
       vin: v.vin,
       monthly: est.monthlyPayment,
@@ -1682,58 +1951,106 @@ export class ChatOrchestrator {
       t.s.externalKey,
     );
     const down = est.breakdown.downPayment;
-    const lead =
+    const prev = prevEstimate;
+    const adjusting = !!prev && prev.vin === v.vin;
+    const downText =
       down > 0
-        ? tr(
-            t.lang,
-            `With ${money(down)} down`,
-            `Con ${money(down)} de enganche`,
-          )
-        : tr(t.lang, 'With nothing down', 'Sin enganche');
-    t.narration.push(
-      tr(
-        t.lang,
-        `${lead} over ${est.breakdown.termMonths} months, the ${vehicleLabel(v)} at ${money(v.price)} works out to about ${money(est.monthlyPayment)}/month.`,
-        `${lead} a ${est.breakdown.termMonths} meses, el ${vehicleLabel(v)} de ${money(v.price)} queda en unos ${money(est.monthlyPayment)}/mes.`,
-      ),
-    );
-    const aprText =
-      est.aprSource === 'CUSTOMER'
-        ? tr(
-            t.lang,
-            `That uses the ${est.breakdown.apr}% rate you mentioned,`,
-            `Eso usa la tasa de ${est.breakdown.apr}% que mencionó,`,
-          )
-        : tr(
-            t.lang,
-            `That uses an example ${est.breakdown.apr}% rate (not your actual rate),`,
-            `Eso usa una tasa de ejemplo de ${est.breakdown.apr}% (no su tasa real),`,
-          );
-    const taxText = est.includesTaxAndFees
-      ? tr(
-          t.lang,
-          'and includes the dealership’s listed taxes and fees',
-          'e incluye los impuestos y cargos publicados por la agencia',
+        ? tr(t.lang, `${money(down)} down`, `${money(down)} de enganche`)
+        : tr(t.lang, 'nothing down', 'cero enganche');
+    const lead = adjusting
+      ? this.pick(
+          t,
+          t.lang === 'es'
+            ? [
+                `Con ${downText} a ${est.breakdown.termMonths} meses, baja a unos ${money(est.monthlyPayment)} al mes.`,
+              ]
+            : [
+                `With ${downText} over ${est.breakdown.termMonths} months, that comes to about ${money(est.monthlyPayment)} a month.`,
+                `At ${downText} and ${est.breakdown.termMonths} months, you'd be around ${money(est.monthlyPayment)} a month.`,
+              ],
+          'pay-adj',
         )
       : tr(
           t.lang,
-          'and leaves out taxes and fees',
-          'y no incluye impuestos ni cargos',
+          `For the ${vehicleLabel(v)} at ${money(v.price)}, you're looking at roughly ${money(est.monthlyPayment)} a month with ${downText} over ${est.breakdown.termMonths} months.`,
+          `Para el ${vehicleLabel(v)} de ${money(v.price)}, serían unos ${money(est.monthlyPayment)} al mes con ${downText} a ${est.breakdown.termMonths} meses.`,
         );
+    if (adjusting && prev && prev.monthly !== est.monthlyPayment) {
+      const diff = Math.round(prev.monthly - est.monthlyPayment);
+      t.narration.push(
+        `${lead} ${
+          diff > 0
+            ? tr(
+                t.lang,
+                `That's about ${money(diff)} less than before.`,
+                `Unos ${money(diff)} menos que antes.`,
+              )
+            : tr(
+                t.lang,
+                `That's about ${money(-diff)} more than before.`,
+                `Unos ${money(-diff)} más que antes.`,
+              )
+        }`,
+      );
+    } else t.narration.push(lead);
+    // ONE concise disclosure in the reply; the card carries the detailed terms.
     t.narration.push(
-      `${aprText} ${taxText}${t.st.trade?.requestId ? tr(t.lang, ', before any trade value', ', antes del valor de su vehículo a cuenta') : ''}${tr(t.lang, ' — the dealership can confirm exact numbers.', ' — la agencia puede confirmar los números exactos.')}`,
+      est.aprSource === 'CUSTOMER'
+        ? tr(
+            t.lang,
+            `That's at the ${est.breakdown.apr}% rate you mentioned${est.includesTaxAndFees ? '' : ', before taxes and fees'} — an estimate, not a financing offer.`,
+            `Con la tasa de ${est.breakdown.apr}% que mencionó${est.includesTaxAndFees ? '' : ', sin impuestos ni cargos'} — es un estimado, no una oferta de financiamiento.`,
+          )
+        : tr(
+            t.lang,
+            `That uses an example ${est.breakdown.apr}% rate${est.includesTaxAndFees ? '' : ' and leaves out taxes and fees'} — an estimate, not a financing offer.`,
+            `Usa una tasa de ejemplo de ${est.breakdown.apr}%${est.includesTaxAndFees ? '' : ' y no incluye impuestos ni cargos'} — es un estimado, no una oferta de financiamiento.`,
+          ),
     );
-    if (
-      t.st.payment.maxMonthly &&
-      est.monthlyPayment > t.st.payment.maxMonthly
-    ) {
+    if (/\b(with (?:my|the|a) trade|trade(?:-| )in value)\b/i.test(t.message))
       t.narration.push(
         tr(
           t.lang,
-          `That's above your ${money(t.st.payment.maxMonthly)}/month target.`,
-          `Eso está por encima de su meta de ${money(t.st.payment.maxMonthly)}/mes.`,
+          "I haven't included a trade value — that needs an appraisal from the team before it can count toward the numbers.",
+          'No incluí el valor de su vehículo a cuenta — necesita una valuación del equipo primero.',
         ),
       );
+    if (t.st.payment.maxMonthly) {
+      const target = t.st.payment.maxMonthly;
+      if (est.monthlyPayment > target) {
+        // Deterministic: the down payment that would reach the target at the same term/rate.
+        const need = this.payments.estimateWithPolicy({
+          price: v.price,
+          policy,
+          downPayment: 0,
+          termMonths: est.breakdown.termMonths,
+          customerApr: t.st.payment.customerApr,
+        });
+        const perDollar = need.monthlyPayment / Math.max(1, v.price);
+        const downNeeded =
+          Math.ceil((v.price - target / Math.max(perDollar, 1e-9)) / 500) * 500;
+        t.narration.push(
+          downNeeded > down && downNeeded < v.price
+            ? tr(
+                t.lang,
+                `To land under ${money(target)} a month at that term, you'd need roughly ${money(downNeeded)} down — or a longer term.`,
+                `Para quedar por debajo de ${money(target)} al mes a ese plazo, necesitaría unos ${money(downNeeded)} de enganche — o un plazo más largo.`,
+              )
+            : tr(
+                t.lang,
+                `That's above your ${money(target)} a month target.`,
+                `Eso está por encima de su meta de ${money(target)} al mes.`,
+              ),
+        );
+      } else {
+        t.narration.push(
+          tr(
+            t.lang,
+            `That keeps you under your ${money(target)} target.`,
+            `Así queda por debajo de su meta de ${money(target)}.`,
+          ),
+        );
+      }
     }
     t.cards.push({
       kind: 'payment',
@@ -1770,7 +2087,10 @@ export class ChatOrchestrator {
         desiredPayment: t.st.payment.maxMonthly ?? null,
         downPayment: t.st.payment.downPayment ?? null,
         termMonths: t.st.payment.termMonths ?? null,
-        leaseOrPurchase: t.st.payment.leaseOrPurchase ?? null,
+        leaseOrPurchase:
+          t.st.payment.leaseOrPurchase === 'cash'
+            ? null
+            : (t.st.payment.leaseOrPurchase ?? null),
         customerApr: t.st.payment.customerApr ?? null,
         tradeInterest: !!t.st.trade?.requestId,
       });
@@ -1779,10 +2099,73 @@ export class ChatOrchestrator {
     this.ask(
       t,
       'none',
+      adjusting
+        ? tr(
+            t.lang,
+            'Want to try another down payment or term, or see the out-the-door price?',
+            '¿Probamos otro enganche o plazo, o le muestro el precio final?',
+          )
+        : tr(
+            t.lang,
+            'Want to adjust the down payment or term?',
+            '¿Quiere ajustar el enganche o el plazo?',
+          ),
+      9,
+    );
+  }
+
+  /** Same assumptions across the vehicles being compared — consistent, deterministic. */
+  private async handleMultiPayment(t: Turn, vins: string[]) {
+    const vs = (await this.inventory.getVehiclesByVin(t.tenantId, vins)).filter(
+      (v) => v.price && (v.status === 'AVAILABLE' || v.status === 'IN_TRANSIT'),
+    );
+    if (!vs.length) return;
+    t.toolCount += 1;
+    const withEst = await this.withPaymentEstimates(t, vs);
+    t.vehicles = withEst;
+    t.type = vs.length > 1 ? 'vehicle_compare' : 'vehicle_carousel';
+    await this.attachVehicleEvidence(t, vs);
+    t.sources.add('payment_calculator');
+    const pa = (
+      withEst[0] as InventoryVehicle & {
+        paymentAssumptions?: {
+          apr: number;
+          termMonths: number;
+          downPayment: number;
+          includesTaxAndFees: boolean;
+        };
+      }
+    ).paymentAssumptions;
+    const parts = withEst.map(
+      (v) =>
+        `${money(v.estimatedPayment ?? 0)}${tr(t.lang, '/mo for the ', '/mes el ')}${[v.year, v.model, v.trim].filter(Boolean).join(' ')}`,
+    );
+    const down = pa?.downPayment ?? 0;
+    t.narration.push(
       tr(
         t.lang,
-        'Want me to set up a time to see it?',
-        '¿Quiere agendar una visita para verlo?',
+        `With ${down ? `${money(down)} down` : 'nothing down'} over ${pa?.termMonths ?? 72} months: ${parts.join('; ')}.`,
+        `Con ${down ? `${money(down)} de enganche` : 'cero enganche'} a ${pa?.termMonths ?? 72} meses: ${parts.join('; ')}.`,
+      ),
+    );
+    t.narration.push(
+      tr(
+        t.lang,
+        `Those use an example ${pa?.apr ?? ''}% rate${pa?.includesTaxAndFees ? '' : ' and leave out taxes and fees'} — estimates, not financing offers.`,
+        `Usan una tasa de ejemplo de ${pa?.apr ?? ''}%${pa?.includesTaxAndFees ? '' : ' sin impuestos ni cargos'} — son estimados, no ofertas.`,
+      ),
+    );
+    this.signal(t, 'payment_estimate');
+    t.facts.push(
+      `Payment estimates (computed, not offers): ${withEst.map((v) => `${v.vin} ${money(v.estimatedPayment ?? 0)}/mo`).join('; ')}`,
+    );
+    this.ask(
+      t,
+      'none',
+      tr(
+        t.lang,
+        'Want to focus on one of these?',
+        '¿Quiere enfocarse en uno de estos?',
       ),
       9,
     );
@@ -1799,7 +2182,10 @@ export class ChatOrchestrator {
       desiredPayment: t.st.payment.maxMonthly ?? null,
       downPayment: t.st.payment.downPayment ?? null,
       termMonths: t.st.payment.termMonths ?? null,
-      leaseOrPurchase: t.st.payment.leaseOrPurchase ?? null,
+      leaseOrPurchase:
+        t.st.payment.leaseOrPurchase === 'cash'
+          ? null
+          : (t.st.payment.leaseOrPurchase ?? null),
       customerApr: t.st.payment.customerApr ?? null,
       tradeInterest: !!t.st.trade?.requestId,
       customer: {
@@ -1825,7 +2211,15 @@ export class ChatOrchestrator {
         'Approval only from the dealership finance team or lender.',
       ),
     );
-    if (
+    if (t.u.entities.approvalQuestion && t.st.finance?.creditLinkOffered) {
+      t.answers.push(
+        tr(
+          t.lang,
+          "No — filling out the application isn't an approval. The dealership's finance team and its lenders review it and follow up with any actual offer and terms.",
+          'No — llenar la solicitud no es una aprobación. El equipo de finanzas y sus prestamistas la revisan y le comunican cualquier oferta real y sus términos.',
+        ),
+      );
+    } else if (
       /\b(approved|approve|rate|my rate|credit score|bad credit)\b/i.test(
         t.message,
       )
@@ -1841,13 +2235,27 @@ export class ChatOrchestrator {
     if (!t.handled.has('CREDIT_APPLICATION')) {
       const res = await this.credit.resolve(t.tenantId, t.locationId);
       if (res.available && !t.st.finance?.creditLinkOffered) {
+        if (
+          /\bcan i finance\b|\bfinance (?:it|this|that|one|the)\b/i.test(
+            t.message,
+          )
+        )
+          t.answers.push(
+            tr(
+              t.lang,
+              t.st.selectedLabel
+                ? `Yes — you can finance the ${t.st.selectedLabel} through the dealership.`
+                : 'Yes — the dealership offers financing.',
+              'Sí — puede financiarlo con la agencia.',
+            ),
+          );
         this.ask(
           t,
           'confirm_credit_link',
           tr(
             t.lang,
-            "Want me to send the dealership's secure credit application? You'd fill it out on their site and we can keep going here.",
-            '¿Le envío la solicitud de crédito segura de la agencia? La llenaría en su sitio y seguimos aquí.',
+            "Want me to pull up the dealership's secure credit application? It opens in a new tab, so your financial details stay out of this chat.",
+            '¿Le muestro la solicitud de crédito segura de la agencia? Se abre en otra pestaña, así sus datos financieros no pasan por este chat.',
           ),
           4,
         );
@@ -1889,8 +2297,8 @@ export class ChatOrchestrator {
       t.answers.push(
         tr(
           t.lang,
-          "The dealership hasn't set up an online credit application in this chat yet.",
-          'La agencia aún no ha configurado una solicitud de crédito en línea en este chat.',
+          "I don't have the dealership's online credit application set up in this chat yet, and I don't want to send you anywhere unofficial.",
+          'Aún no tengo la solicitud de crédito en línea de la agencia en este chat, y no quiero enviarle a un sitio no oficial.',
         ),
       );
       this.ask(
@@ -1905,29 +2313,389 @@ export class ChatOrchestrator {
       );
       return;
     }
+    const again = !!t.st.finance?.creditLinkOffered;
     await this.credit.markOffered(t.tenantId, fr.id, t.locationId);
     t.st.finance.creditLinkOffered = true;
     this.signal(t, 'credit_link_offered');
     const url = this.credit.trackedPath(fr.id, t.tenantId);
+    const provider = res.config.providerName;
     t.cards.push({
       kind: 'credit_application',
-      label: res.config.label,
+      label: tr(
+        t.lang,
+        'Secure Credit Application',
+        'Solicitud de crédito segura',
+      ),
       url,
-      providerName: res.config.providerName,
+      providerName: provider,
+      cta: tr(t.lang, 'Apply for Financing', 'Solicitar financiamiento'),
+      note: tr(
+        t.lang,
+        'Opens securely in a new tab.',
+        'Se abre de forma segura en otra pestaña.',
+      ),
+      preview: res.preview,
     });
     t.sources.add('credit_application_config');
+    const via = provider
+      ? tr(
+          t.lang,
+          ` It opens through ${provider}`,
+          ` Se abre a través de ${provider}`,
+        )
+      : tr(t.lang, ' It opens in a new tab', ' Se abre en otra pestaña');
     t.narration.push(
-      tr(
-        t.lang,
-        "Here's the dealership's secure credit application. You'll complete it on their site, and we can keep going here afterward.",
-        'Aquí está la solicitud de crédito segura de la agencia. La completa en su sitio y después seguimos aquí.',
-      ),
+      again
+        ? tr(
+            t.lang,
+            `Yes — it's completely online. Tap Apply for Financing and it opens in a new tab.`,
+            'Sí — es completamente en línea. Toque Solicitar financiamiento y se abre en otra pestaña.',
+          )
+        : tr(
+            t.lang,
+            `Of course. Here's the dealership's secure credit application.${via}, so your sensitive financial information stays out of this chat.`,
+            `Claro. Aquí está la solicitud de crédito segura de la agencia.${via}, así su información financiera no pasa por este chat.`,
+          ),
     );
-    t.narration.push(
-      tr(
+    if (res.preview)
+      t.narration.push(
+        tr(
+          t.lang,
+          `(Demo preview: the live ${provider ?? 'provider'} link stays off until ${provider ?? 'the provider'} and the dealership confirm it for this store.)`,
+          `(Vista previa: el enlace real de ${provider ?? 'el proveedor'} sigue apagado hasta que ${provider ?? 'el proveedor'} y la agencia lo confirmen.)`,
+        ),
+      );
+    if (!again) {
+      t.narration.push(
+        tr(
+          t.lang,
+          'Once you’ve completed it, the finance team can review the next steps — applying isn’t an approval.',
+          'Cuando la complete, el equipo de finanzas revisará los siguientes pasos — aplicar no es una aprobación.',
+        ),
+      );
+      if (t.st.selectedVin && !t.st.appointment)
+        this.ask(
+          t,
+          'none',
+          tr(
+            t.lang,
+            'I can also help you set up a test drive in the meantime, if you’d like.',
+            'Mientras tanto también le puedo ayudar a agendar una prueba de manejo.',
+          ),
+          9,
+        );
+    }
+  }
+
+  // ───────────────────────────────────────── out-the-door
+
+  private async handleOtd(t: Turn) {
+    const st = t.st;
+    const e = t.u.entities;
+    if (e.leaseOrPurchase === 'cash')
+      st.otd = { ...st.otd, paymentMethod: 'CASH' };
+    else if (e.leaseOrPurchase === 'lease')
+      st.otd = { ...st.otd, paymentMethod: 'LEASE' };
+    if (e.zip) st.otd = { ...st.otd, zip: e.zip };
+    let v: InventoryVehicle | null = null;
+    if (st.selectedVin)
+      v = await this.inventory.getVehicleByVin(t.tenantId, st.selectedVin);
+    if (!v) {
+      const ref = await this.resolveVehicleReference(t);
+      v = ref.v ?? null;
+    }
+    if (!v) {
+      this.ask(
+        t,
+        'vehicle_choice',
+        tr(
+          t.lang,
+          'Happy to get you an out-the-door number — which vehicle is it for?',
+          'Con gusto le consigo el precio final — ¿para qué vehículo es?',
+        ),
+        3,
+      );
+      return;
+    }
+    if (!(v.status === 'AVAILABLE' || v.status === 'IN_TRANSIT')) {
+      t.answers.push(
+        tr(
+          t.lang,
+          `The ${vehicleLabel(v)} isn't showing as available anymore, so I can't quote it.`,
+          `El ${vehicleLabel(v)} ya no aparece disponible, así que no puedo cotizarlo.`,
+        ),
+      );
+      return;
+    }
+    st.selectedVin = v.vin;
+    st.selectedLabel = vehicleLabel(v, true);
+    t.toolCount += 1;
+    await this.attachVehicleEvidence(t, [v]);
+    const policy = await this.getPolicy(t);
+    const est = estimateOutTheDoor({ price: v.price, policy });
+    const method =
+      st.otd?.paymentMethod ??
+      (st.payment.leaseOrPurchase === 'lease'
+        ? 'LEASE'
+        : st.finance?.requestId
+          ? 'FINANCE'
+          : 'UNDECIDED');
+    const label = vehicleLabel(v, true);
+    if (!(await this.cap(t, 'leadCapture')).allowed) {
+      // Without lead capture we can still show a verified estimate, but can't route a request.
+      if (!est.computable) {
+        t.answers.push(
+          tr(
+            t.lang,
+            "I can't put together an exact out-the-door total from here — the sales team can give you one.",
+            'No puedo armar un precio final exacto desde aquí — el equipo de ventas se lo puede dar.',
+          ),
+        );
+        return;
+      }
+    }
+    const quote = await this.quotes.upsertForConversation({
+      tenantId: t.tenantId,
+      locationId: t.locationId,
+      conversationId: t.s.conversationId,
+      vehicleVin: v.vin,
+      vehicleLabel: label,
+      paymentMethod: method,
+      registrationZip: st.otd?.zip ?? null,
+      estimateShown: est.computable
+        ? {
+            lines: est.lines,
+            total: est.total,
+            assumptions: est.assumptions,
+            policyVersion: est.policyVersion,
+          }
+        : null,
+      missingInputs: est.computable ? [] : est.missingInputs,
+      customer: {
+        name: this.customerName(t),
+        phone: st.contact.phone,
+        email: st.contact.email,
+      },
+    });
+    const first = !st.otd?.requestId;
+    st.otd = {
+      ...st.otd,
+      requestId: quote.id,
+      vin: v.vin,
+      paymentMethod: method,
+      estimated: est.computable,
+    };
+    this.signal(t, 'quote_requested');
+    void this.analytics.trackEvent(
+      t.tenantId,
+      t.locationId,
+      'otd_quote_requested',
+      { computable: est.computable, method },
+      t.s.externalKey,
+    );
+    t.sources.add('dealer_pricing_policy');
+    t.cards.push({
+      kind: 'otd_quote',
+      id: quote.id,
+      vin: v.vin,
+      vehicleLabel: label,
+      status: est.computable ? 'estimate' : 'requested',
+      paymentMethod: method,
+      lines: est.computable ? est.lines : [],
+      total: est.computable ? est.total : null,
+      assumptions: est.computable ? est.assumptions : [],
+      missingInputs: est.computable ? [] : est.missingInputs,
+      preliminary: true,
+    });
+    if (method === 'CASH' && t.u.entities.leaseOrPurchase === 'cash')
+      t.answers.push(
+        tr(
+          t.lang,
+          'Paying cash works — no credit application needed for a quote.',
+          'Pagar de contado está perfecto — no necesita solicitud de crédito para una cotización.',
+        ),
+      );
+    if (est.computable) {
+      t.narration.push(
+        tr(
+          t.lang,
+          `Here's a preliminary out-the-door estimate for the ${label}: about ${money(est.total)}, itemized below using the dealership's verified tax and fees for ${est.jurisdiction} registration.`,
+          `Este es un estimado preliminar del precio final del ${label}: unos ${money(est.total)}, desglosado con los impuestos y cargos verificados de la agencia para registro en ${est.jurisdiction}.`,
+        ),
+      );
+      t.narration.push(
+        tr(
+          t.lang,
+          "It's not a written offer — the team will confirm it in writing.",
+          'No es una oferta por escrito — el equipo la confirmará por escrito.',
+        ),
+      );
+      t.facts.push(
+        `OTD estimate (verified inputs only): ${money(est.total)} for ${v.vin}`,
+      );
+    } else {
+      t.narration.push(
+        first
+          ? tr(
+              t.lang,
+              `I can help get you an exact out-the-door quote on the ${label}. I just need the dealership to confirm a couple of details — taxes and registration fees aren't something I'll guess — so I've sent the request to the sales team.`,
+              `Le ayudo a obtener un precio final exacto del ${label}. Solo necesito que la agencia confirme algunos detalles — no voy a adivinar impuestos ni cargos de registro — así que envié la solicitud al equipo de ventas.`,
+            )
+          : tr(
+              t.lang,
+              "Got it — I've updated your quote request so the team has that.",
+              'Listo — actualicé su solicitud de cotización.',
+            ),
+      );
+      if (!st.otd?.zip)
+        this.ask(
+          t,
+          'otd_zip',
+          tr(
+            t.lang,
+            "What ZIP code would you register it in? That's what sets the taxes and fees.",
+            '¿En qué código postal lo registraría? Eso define impuestos y cargos.',
+          ),
+          4,
+        );
+    }
+    if (
+      method !== 'CASH' &&
+      !st.finance?.creditLinkOffered &&
+      !t.handled.has('CREDIT_APPLICATION') &&
+      first
+    ) {
+      const res = await this.credit.resolve(t.tenantId, t.locationId);
+      if (res.available)
+        this.ask(
+          t,
+          'confirm_credit_link',
+          tr(
+            t.lang,
+            'If you plan to finance, I can also pull up the secure credit application — totally optional.',
+            'Si piensa financiar, también le puedo mostrar la solicitud de crédito segura — es opcional.',
+          ),
+          6,
+        );
+    }
+  }
+
+  // ───────────────────────────────────────── conversation
+
+  /**
+   * Social turns ("hi", "how are you", "pretty good, you?", "thanks", "just looking",
+   * "are you a bot?"). Pure social messages get a warm, varied, honest reply with no sales
+   * menu; social words attached to a real request only set a brief opener.
+   */
+  private handleSocial(t: Turn) {
+    const st = t.st;
+    const acts = t.u.entities.social ?? [];
+    const strength = t.u.entities.socialStrength ?? 0;
+    const L = t.lang;
+    const recent = [
+      ...st.recentOpeners,
+      ...(st.lastReplySig ? [st.lastReplySig] : []),
+    ];
+    const line = (k: Parameters<typeof socialLine>[0]) =>
+      socialLine(k, L, recent, this.seed(t, k));
+    const taskIntents = t.u.intents.filter(
+      (i) =>
+        !['SMALL_TALK', 'GREETING', 'AFFIRM', 'DECLINE', 'UNKNOWN'].includes(
+          i.intent,
+        ),
+    );
+    const greeted = !!st.social?.greeted;
+    st.social = { ...st.social, greeted: true };
+    if (taskIntents.length && !acts.includes('identity')) {
+      // Light touch: a short opener, then the real answer.
+      if (acts.includes('greeting') || acts.includes('how_are_you'))
+        t.socialPrefix = acts.includes('how_are_you')
+          ? tr(L, 'Doing well, thanks!', '¡Muy bien, gracias!')
+          : greeted
+            ? undefined
+            : this.pick(
+                t,
+                L === 'es' ? ['¡Hola!'] : ['Hi there!', 'Hey!', 'Hi!'],
+                'hi',
+              );
+      else if (acts.includes('thanks'))
+        t.socialPrefix = tr(L, "You're welcome!", '¡Con gusto!');
+      return;
+    }
+    if (acts.includes('identity')) return void t.answers.push(line('identity'));
+    if (acts.includes('farewell')) return void t.answers.push(line('farewell'));
+    if (acts.includes('how_are_you')) {
+      st.social.askedHowAreYou = true;
+      const hi =
+        acts.includes('greeting') && !greeted ? tr(L, 'Hey! ', '¡Hola! ') : '';
+      // Already asked about their day → don't ask again; move the conversation forward.
+      return void t.answers.push(
+        `${hi}${line(greeted ? 'wellbeingAskBack' : 'howAreYou')}`,
+      );
+    }
+    if (acts.includes('reply_wellbeing_ask_back'))
+      return void t.answers.push(line('wellbeingAskBack'));
+    if (acts.includes('reply_wellbeing')) {
+      const low =
+        /\b(tired|busy|meh|so so|not (?:good|great)|rough|long day|cansad)/i.test(
+          t.message,
+        );
+      return void t.answers.push(
+        line(low ? 'wellbeingLow' : 'wellbeingPositive'),
+      );
+    }
+    if (acts.includes('browsing')) {
+      st.social.browsing = true;
+      return void t.answers.push(line('browsing'));
+    }
+    if (acts.includes('thanks')) {
+      t.answers.push(line('thanks'));
+      // Only when they were in the middle of something does a gentle pointer help.
+      if (
+        strength >= 0.6 &&
+        st.selectedVin &&
+        !st.appointment &&
+        !st.payment.lastEstimate
+      )
+        this.ask(t, 'none', this.salesNextStep(t) ?? '', 9);
+      return;
+    }
+    if (acts.includes('greeting')) {
+      if (st.department === 'service' || st.department === 'parts')
+        return this.handleGreeting(t);
+      return void t.answers.push(
+        greeted
+          ? `${line('greetingAgain')} ${tr(L, 'What can I help with?', '¿En qué le ayudo?')}`
+          : line('greetingFirst'),
+      );
+    }
+    if (acts.includes('compliment'))
+      return void t.answers.push(line('compliment'));
+    if (acts.includes('laughter')) return void t.answers.push(line('laughter'));
+    if (acts.includes('apology')) return void t.answers.push(line('apology'));
+  }
+
+  /** "I want to buy a car" — discovery, not a menu. */
+  private handleShoppingStart(t: Turn) {
+    const st = t.st;
+    st.department = 'sales';
+    st.social = { ...st.social, browsing: false };
+    if (st.criteria.model && st.visibleVins.length) {
+      t.answers.push(
+        tr(
+          t.lang,
+          `Still thinking about the ${st.criteria.model}, or open to other ideas?`,
+          `¿Sigue pensando en el ${st.criteria.model}, o abierto a otras ideas?`,
+        ),
+      );
+      return;
+    }
+    t.answers.push(
+      socialLine(
+        'shoppingStart',
         t.lang,
-        "Please don't share your Social Security or bank details in this chat.",
-        'Por favor no comparta su Seguro Social ni datos bancarios en este chat.',
+        st.recentOpeners,
+        this.seed(t, 'shop'),
       ),
     );
   }
@@ -2235,6 +3003,35 @@ export class ChatOrchestrator {
     if (type === 'SERVICE') {
       const need = t.u.entities.serviceNeed ?? st.service?.need;
       st.service = { ...st.service, need };
+      // Keep the shopper's sales vehicle untouched; ask which car is being serviced.
+      // Only when we'd be asking something anyway: a fully specified request ("oil change
+      // Friday morning") is saved first and the vehicle is collected afterwards.
+      if (
+        !st.service.vehicle &&
+        !st.service.vin &&
+        !t.u.entities.vin &&
+        !t.u.entities.when?.date &&
+        !st.parts?.inquiryId
+      ) {
+        st.draftAppointment = { type, serviceNeed: need };
+        this.ask(
+          t,
+          'service_vehicle',
+          need
+            ? tr(
+                t.lang,
+                `I can help with that. What vehicle are we scheduling the ${need} for? Year, make and model is plenty.`,
+                `Con gusto. ¿Para qué vehículo es el ${need}? Año, marca y modelo es suficiente.`,
+              )
+            : tr(
+                t.lang,
+                'I can help with that. What vehicle are we scheduling service for?',
+                'Con gusto. ¿Para qué vehículo es el servicio?',
+              ),
+          2,
+        );
+        return;
+      }
       if (!need && !t.u.entities.partNeed && !st.parts?.inquiryId) {
         st.draftAppointment = { type };
         this.ask(
@@ -2307,14 +3104,23 @@ export class ChatOrchestrator {
         type === 'SERVICE'
           ? (st.service?.need ?? st.parts?.need ?? null)
           : null,
+
       customer: {
         name: this.customerName(t),
         phone: st.contact.phone,
         email: st.contact.email,
       },
-      notes: st.parts?.inquiryId
-        ? `Installation for parts inquiry ${st.parts.inquiryId}`
-        : null,
+      notes:
+        [
+          type === 'SERVICE' && st.service?.vehicle
+            ? `Customer vehicle: ${[st.service.vehicle.year, st.service.vehicle.make, st.service.vehicle.model].filter(Boolean).join(' ')}`
+            : null,
+          st.parts?.inquiryId
+            ? `Installation for parts inquiry ${st.parts.inquiryId}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' | ') || null,
       source: 'chat',
     });
     if (res.status === 'saved' && st.parts?.inquiryId && type === 'SERVICE') {
@@ -2560,9 +3366,15 @@ export class ChatOrchestrator {
       need: e.partNeed ?? st.parts?.need,
       vin,
       partNumber: e.partNumber ?? st.parts?.partNumber,
-      vehicle: e.vehicle?.model
-        ? { year: e.vehicle.year, make: e.vehicle.make, model: e.vehicle.model }
-        : st.parts?.vehicle,
+      vehicle: e.ownVehicle
+        ? e.ownVehicle
+        : e.vehicle?.model
+          ? {
+              year: e.vehicle.year,
+              make: e.vehicle.make,
+              model: e.vehicle.model,
+            }
+          : (st.parts?.vehicle ?? st.service?.vehicle),
     };
     t.toolCount += 1;
     const isNewInquiry = !st.parts.inquiryId;
@@ -2754,12 +3566,21 @@ export class ChatOrchestrator {
               `Cerrado ahora — abre el ${dateLabel(open.nextOpen.date, 'es')} a las ${formatClock(open.nextOpen.open, 'es')}.`,
             )
           : '';
+    const demo = hours.synthetic
+      ? tr(
+          t.lang,
+          'These are simulated demo hours, not the store’s real hours — ',
+          'Estos son horarios simulados de demostración, no los reales — ',
+        )
+      : '';
     t.answers.push(
-      `${deptName ? `${deptName}: ` : ''}${summary}. ${now}`.trim(),
+      `${demo}${deptName ? `${deptName}: ` : ''}${summary}. ${now}`.trim(),
     );
     t.cards.push({
       kind: 'hours',
-      summary,
+      summary: hours.synthetic
+        ? `${tr(t.lang, 'Demo hours', 'Horario demo')} · ${summary}`
+        : summary,
       openNow: open.known ? open.open : null,
       timezone: hours.timezone,
     });
@@ -2907,13 +3728,23 @@ export class ChatOrchestrator {
 
   private async handleCompare(t: Turn) {
     if (await this.capBlocked(t, 'vehicleCompare')) return;
-    const vins = [
-      ...new Set([
-        ...(t.st.selectedVin ? [t.st.selectedVin] : []),
-        ...t.st.compareVins,
-        ...t.st.visibleVins,
-      ]),
-    ].slice(0, 3);
+    const rank = t.u.entities.rank;
+    let vins: string[];
+    if (rank && t.st.visibleVins.length >= 2) {
+      // "compare the two nicest ones" → rank what's on screen by verified data only.
+      const visible = await this.loadVisible(t);
+      vins = this.rankVehicles(visible, rank)
+        .slice(0, Math.min(rank.count ?? 2, 3))
+        .map((v) => v.vin);
+    } else {
+      vins = [
+        ...new Set([
+          ...(t.st.selectedVin ? [t.st.selectedVin] : []),
+          ...t.st.compareVins,
+          ...t.st.visibleVins,
+        ]),
+      ].slice(0, 3);
+    }
     if (vins.length < 2) {
       this.ask(
         t,
@@ -2929,16 +3760,68 @@ export class ChatOrchestrator {
     }
     const vs = await this.inventory.getVehiclesByVin(t.tenantId, vins);
     t.st.compareVins = vs.map((v) => v.vin);
+    // Comparing means no single vehicle is chosen yet — payments then cover each of them.
+    if (rank) t.st.selectedVin = undefined;
     t.vehicles = await this.withPaymentEstimates(t, vs);
     t.type = 'vehicle_compare';
     await this.attachVehicleEvidence(t, vs);
     this.signal(t, 'vehicle_compare');
+    const [a, b] = vs;
+    const name = (v: InventoryVehicle) =>
+      [v.year, v.model, v.trim].filter(Boolean).join(' ');
+    const diffs: string[] = [];
+    if (a && b && a.price && b.price && a.price !== b.price) {
+      const hi = a.price > b.price ? a : b;
+      const lo = hi === a ? b : a;
+      diffs.push(
+        tr(
+          t.lang,
+          `the ${name(hi)} is ${money(hi.price! - lo.price!)} more than the ${name(lo)}`,
+          `el ${name(hi)} cuesta ${money(hi.price! - lo.price!)} más que el ${name(lo)}`,
+        ),
+      );
+    }
+    if (
+      a &&
+      b &&
+      a.mileage != null &&
+      b.mileage != null &&
+      Math.abs(a.mileage - b.mileage) > 1000
+    ) {
+      const less = a.mileage < b.mileage ? a : b;
+      diffs.push(
+        tr(
+          t.lang,
+          `the ${name(less)} has ${Math.abs(a.mileage - b.mileage).toLocaleString('en-US')} fewer miles`,
+          `el ${name(less)} tiene ${Math.abs(a.mileage - b.mileage).toLocaleString('es-US')} millas menos`,
+        ),
+      );
+    }
     t.narration.push(
+      diffs.length
+        ? tr(
+            t.lang,
+            `Here they are side by side. The big differences: ${diffs.join(', and ')}.`,
+            `Aquí están lado a lado. Las diferencias principales: ${diffs.join(', y ')}.`,
+          )
+        : tr(
+            t.lang,
+            "Here they are side by side — I've highlighted where they actually differ.",
+            'Aquí están lado a lado — resalté dónde realmente difieren.',
+          ),
+    );
+    t.facts.push(
+      `Compared: ${vs.map((v) => `${vehicleLabel(v)} ${v.price ? money(v.price) : 'no price'}`).join(' vs ')}`,
+    );
+    this.ask(
+      t,
+      'none',
       tr(
         t.lang,
-        "Here they are side by side — I've highlighted where they actually differ. Missing details just weren't in the listing.",
-        'Aquí están lado a lado. Los datos que faltan no venían en el anuncio.',
+        'Anything specific you want to weigh between them — price, miles, features?',
+        '¿Algo en particular que quiera comparar — precio, millas, equipamiento?',
       ),
+      9,
     );
   }
 
@@ -2977,6 +3860,26 @@ export class ChatOrchestrator {
       }
     }
     t.toolCount += 1;
+    if (!ctx.length && !this.llm.isEnabled()) {
+      t.answers.push(
+        tr(
+          t.lang,
+          'That’s not something I have in the dealership’s information, so I’d rather not guess.',
+          'Eso no lo tengo en la información de la agencia, y prefiero no adivinar.',
+        ),
+      );
+      this.ask(
+        t,
+        'confirm_handoff',
+        tr(
+          t.lang,
+          'Want me to have someone from the team confirm it for you?',
+          '¿Quiere que alguien del equipo se lo confirme?',
+        ),
+        6,
+      );
+      return;
+    }
     const answer = await this.llm.answerIntelligentQuestion(t.message, ctx, {
       language: t.lang,
     });
@@ -3163,10 +4066,19 @@ export class ChatOrchestrator {
   private handleDecline(t: Turn) {
     t.st.pending = 'none';
     t.answers.push(
-      tr(
-        t.lang,
-        "No problem — I'm here if you need anything else.",
-        'Sin problema — aquí estoy si necesita algo más.',
+      this.pick(
+        t,
+        t.lang === 'es'
+          ? [
+              'Sin problema — aquí estoy si necesita algo más.',
+              'Está bien. Cuando quiera, seguimos.',
+            ]
+          : [
+              "No problem — I'm here if you need anything else.",
+              'All good. Just say the word whenever you want to pick it back up.',
+              "That's fine — no pressure at all.",
+            ],
+        'decline',
       ),
     );
   }
@@ -3207,37 +4119,45 @@ export class ChatOrchestrator {
         5,
       );
     } else {
-      this.ask(
-        t,
-        'none',
-        tr(
+      t.answers.push(
+        socialLine(
+          'greetingFirst',
           t.lang,
-          'Are you shopping for a vehicle, or looking for service or parts?',
-          '¿Busca un vehículo, o servicio o refacciones?',
+          t.st.recentOpeners,
+          this.seed(t, 'greet'),
         ),
-        5,
       );
     }
   }
 
   private handleUnknown(t: Turn) {
-    if (t.answers.length || t.narration.length) return;
-    this.ask(
-      t,
-      'none',
-      t.st.department === 'service'
+    if (t.answers.length || t.narration.length || t.questions.length) return;
+    const st = t.st;
+    // Ask ONE clarifying question grounded in where the conversation is — never a menu.
+    const text =
+      st.department === 'service'
         ? tr(
             t.lang,
-            'Want me to request a service appointment, or check hours?',
-            '¿Solicito una cita de servicio o le doy el horario?',
+            "Sorry, I didn't quite catch that — is this about your service visit, or something else?",
+            'Perdón, no le entendí bien — ¿es sobre su servicio, o algo más?',
           )
-        : tr(
-            t.lang,
-            'I can search inventory, estimate a payment, or set up a visit — what would help?',
-            'Puedo buscar en el inventario, estimar un pago o agendar una visita — ¿qué le ayuda?',
-          ),
-      9,
-    );
+        : st.selectedLabel
+          ? tr(
+              t.lang,
+              `Sorry, I didn't quite follow — is that about the ${st.selectedLabel}, or something else?`,
+              `Perdón, no le entendí — ¿es sobre el ${st.selectedLabel}, o algo más?`,
+            )
+          : this.pick(
+              t,
+              t.lang === 'es'
+                ? ['Perdón, no le entendí bien. ¿Me cuenta un poco más?']
+                : [
+                    "Sorry, I didn't quite catch that — could you tell me a bit more?",
+                    'I want to make sure I get this right — what are you looking for?',
+                  ],
+              'unk',
+            );
+    this.ask(t, 'none', text, 9);
   }
 
   // ───────────────────────────────────────── lead sync
@@ -3382,7 +4302,32 @@ export class ChatOrchestrator {
       creditApplication: st.finance?.creditLinkOffered
         ? { state: 'OFFERED' }
         : null,
-      service: st.service?.need ? { need: st.service.need } : null,
+      otdQuote: st.otd?.requestId
+        ? {
+            status: st.otd.estimated ? 'ESTIMATE_SHOWN' : 'REQUESTED',
+            total:
+              (
+                t.cards.find((c) => c.kind === 'otd_quote') as
+                  | { total: number | null }
+                  | undefined
+              )?.total ?? null,
+          }
+        : null,
+      service:
+        st.service?.need || st.service?.vehicle
+          ? {
+              need: st.service?.need,
+              vehicle: st.service?.vehicle
+                ? [
+                    st.service.vehicle.year,
+                    st.service.vehicle.make,
+                    st.service.vehicle.model,
+                  ]
+                    .filter(Boolean)
+                    .join(' ')
+                : undefined,
+            }
+          : null,
       parts: st.parts?.inquiryId
         ? { need: st.parts.need, status: 'REQUESTED' }
         : null,
@@ -3486,6 +4431,10 @@ export class ChatOrchestrator {
       (x) => x.priority <= 2 || !skipped(x.key),
     );
     let silentPending: PendingQuestion | undefined;
+    // A question we just asked and are deliberately not repeating is still the one an answer
+    // ("60614", "Saturday") belongs to.
+    const quiet = ranked.find((x) => x.key !== 'none' && skipped(x.key));
+    if (quiet) silentPending = quiet.key;
     if (!q && !opts.forcedReply) {
       const o = this.outstandingQuestion(t);
       if (o && !skipped(o.key)) q = o;
@@ -3502,7 +4451,7 @@ export class ChatOrchestrator {
       recentOpeners: st.recentOpeners,
     });
     const plan = compose({
-      acknowledgement: opts.forcedReply ? undefined : ack,
+      acknowledgement: opts.forcedReply ? undefined : (t.socialPrefix ?? ack),
       directAnswer: opts.forcedReply ? [opts.forcedReply] : t.answers,
       actionNarration: opts.forcedReply ? [] : t.narration,
       followUpQuestion: opts.forcedReply ? undefined : q?.text,

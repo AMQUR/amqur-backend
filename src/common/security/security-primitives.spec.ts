@@ -163,12 +163,28 @@ describe('credit application config', () => {
     ).toEqual({ available: false, reason: 'not_https' });
   });
 
+  it('refuses credential-bearing URLs in plaintext config (vault required)', () => {
+    expect(
+      validateCreditConfig({
+        ...ok,
+        url: 'https://apply.dealer.test/app?token=abc123',
+      }),
+    ).toEqual({ available: false, reason: 'sensitive_url_in_plaintext' });
+    expect(
+      validateCreditConfig({
+        ...ok,
+        url: 'https://apply.dealer.test/app?lang=en',
+      }).available,
+    ).toBe(true);
+  });
+
   it('click tokens are opaque, signed, expiring and carry no PII', () => {
     const svc = new CreditApplicationService(
       {} as never,
       {
         get: (k: string) => (k === 'JWT_SECRET' ? 'x'.repeat(40) : undefined),
       } as never,
+      {} as never,
       {} as never,
     );
     const tok = svc.sign('fr_1', 't_1', 1_000);

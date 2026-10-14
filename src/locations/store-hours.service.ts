@@ -36,9 +36,17 @@ export type HoursProfile = {
   timezone: string;
   verified: boolean;
   verifiedAt: string | null;
+  /**
+   * Synthetic demo hours (local demo databases only). Always labeled as simulated to the
+   * customer and never treated as verified in production.
+   */
+  synthetic?: boolean;
   weekly: Partial<Record<Department, WeeklyHours>>;
   holidays: HolidayEntry[];
 };
+
+/** Marker written by the local-demo seed into Location.storeHoursVerifiedBy. */
+export const SYNTHETIC_HOURS_MARKER = 'synthetic-demo';
 
 export type DayResolution = {
   date: string;
@@ -148,6 +156,7 @@ export class StoreHoursService {
         departmentHours: true,
         holidayHours: true,
         storeHoursVerifiedAt: true,
+        storeHoursVerifiedBy: true,
       },
     });
     if (!loc) return null;
@@ -162,6 +171,7 @@ export class StoreHoursService {
     departmentHours?: unknown;
     holidayHours?: unknown;
     storeHoursVerifiedAt?: Date | null;
+    storeHoursVerifiedBy?: string | null;
   }): HoursProfile {
     const tz = isValidTimeZone(loc.timezone) ? loc.timezone : 'America/Chicago';
     const weekly: Partial<Record<Department, WeeklyHours>> = {};
@@ -185,12 +195,19 @@ export class StoreHoursService {
         )
       : [];
     // Hours count as verified only if configured AND explicitly verified by staff.
-    const verified = !!store && !!loc.storeHoursVerifiedAt;
+    const synthetic = (loc.storeHoursVerifiedBy ?? '').startsWith(
+      SYNTHETIC_HOURS_MARKER,
+    );
+    const verified =
+      !!store &&
+      !!loc.storeHoursVerifiedAt &&
+      !(synthetic && process.env.NODE_ENV === 'production');
     return {
       locationId: loc.id,
       locationName: loc.name,
       timezone: tz,
       verified,
+      ...(synthetic ? { synthetic: true } : {}),
       verifiedAt: loc.storeHoursVerifiedAt?.toISOString() ?? null,
       weekly,
       holidays,

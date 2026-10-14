@@ -70,11 +70,11 @@ model Tenant {
   configVersion Int @default(1)
 
   /// Days after LAST ACTIVITY before conversations + messages are HARD-DELETED (not archived).
-  dataRetentionDays Int @default(365)
+  dataRetentionDays      Int     @default(365)
   /// Analytics events older than this are hard-deleted (aggregate-safe, no PII).
-  analyticsRetentionDays Int @default(400)
+  analyticsRetentionDays Int     @default(400)
   /// When true, the retention job deletes nothing for this tenant (litigation / regulator hold).
-  legalHold Boolean @default(false)
+  legalHold              Boolean @default(false)
 
   /// Customer-facing consent text (public-safe)
   consentText String?
@@ -115,6 +115,7 @@ model Tenant {
   voiceCallSessions      VoiceCallSession[]
   websiteAllowedDomains  WebsiteAllowedDomain[]
   financeRequests        FinanceRequest[]
+  priceQuoteRequests     PriceQuoteRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -224,6 +225,7 @@ model Location {
   voiceCallSessions      VoiceCallSession[]
   websiteAllowedDomains  WebsiteAllowedDomain[]
   financeRequests        FinanceRequest[]
+  priceQuoteRequests     PriceQuoteRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -253,12 +255,12 @@ model User {
   isActive Boolean @default(true)
 
   /// TOTP MFA (RFC 6238). Secret stored AES-256-GCM encrypted via SecretVault.
-  mfaEnabled       Boolean   @default(false)
-  mfaSecretEnc     Json?
+  mfaEnabled          Boolean   @default(false)
+  mfaSecretEnc        Json?
   mfaPendingSecretEnc Json?
-  mfaRecoveryHashes String[] @default([])
-  mfaLastCounter   Int?
-  mfaEnrolledAt    DateTime?
+  mfaRecoveryHashes   String[]  @default([])
+  mfaLastCounter      Int?
+  mfaEnrolledAt       DateTime?
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -1031,11 +1033,11 @@ model FollowUpCampaign {
   policy   Json    @default("{}")
   template String?
 
-  locationId String?
+  locationId      String?
   /// Bumped on every edit; enrollments pin the version they started with
-  version   Int       @default(1)
-  startsAt  DateTime?
-  endsAt    DateTime?
+  version         Int       @default(1)
+  startsAt        DateTime?
+  endsAt          DateTime?
   createdByUserId String?
 
   createdAt DateTime @default(now())
@@ -1049,26 +1051,26 @@ model FollowUpCampaign {
 model OutboundMessage {
   id String @id @default(cuid())
 
-  tenantId String
-  locationId String?
-  conversationId String?
-  leadId String?
-  campaignId String?
+  tenantId        String
+  locationId      String?
+  conversationId  String?
+  leadId          String?
+  campaignId      String?
   campaignVersion Int?
 
   /// SMS | EMAIL | WHATSAPP | VOICE
-  channel String
+  channel           String
   /// normalized endpoint (E.164 / lowercased email) — staff-only PII
-  endpoint String
-  purpose String
-  body String
+  endpoint          String
+  purpose           String
+  body              String
   /// QUEUED | SUPPRESSED | SENT | DELIVERED | UNDELIVERED | FAILED
-  status String @default("QUEUED")
-  suppressReason String?
-  provider String?
+  status            String  @default("QUEUED")
+  suppressReason    String?
+  provider          String?
   providerMessageId String?
-  error String?
-  idempotencyKey String?
+  error             String?
+  idempotencyKey    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1316,6 +1318,43 @@ model FinanceRequest {
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status])
   @@index([conversationId])
+}
+
+/// Out-the-door price quote request (cash or finance). Never requires a credit application.
+/// The assistant only shows an itemized estimate when every input is dealer-verified; otherwise
+/// the request is routed to staff, who send the written quote. A preliminary calculation is
+/// never a dealer-approved written offer.
+model PriceQuoteRequest {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  conversationId  String?
+  vehicleVin      String
+  vehicleLabel    String?
+  /// CASH | FINANCE | LEASE | UNDECIDED
+  paymentMethod   String   @default("UNDECIDED")
+  registrationZip String?
+  /// REQUESTED | IN_PROGRESS | SENT | CLOSED
+  status          String   @default("REQUESTED")
+  /// Snapshot of the itemized estimate shown (only verified inputs), or null when staff-routed
+  estimateShown   Json?
+  /// Inputs still needed from the dealership (e.g. ["tax_rate","doc_fee","registration"])
+  missingInputs   String[] @default([])
+  customerName    String?
+  customerPhone   String?
+  customerEmail   String?
+  provenance      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, conversationId, vehicleVin])
+  @@index([tenantId, status])
 }
 
 enum FinanceRequestStatus {

@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UnauthorizedException,
@@ -14,6 +15,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsIn,
   IsObject,
   IsOptional,
   IsString,
@@ -31,6 +33,9 @@ import {
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { OperationsService } from './operations.service';
 import { ConversationIdService } from '../chat/conversation-id.service';
+import { CreditDestinationAdminService } from '../finance/credit-destination-admin.service';
+import { CREDIT_LINK_TYPES } from '../finance/credit-destination';
+import type { CreditLinkType } from '../finance/credit-destination';
 
 class TextDto {
   @IsString() @MinLength(1) @MaxLength(4000) text!: string;
@@ -52,12 +57,29 @@ class LocationOpsDto {
   @IsOptional() @IsObject() serviceAmenities?: Record<string, unknown> | null;
 }
 
+class CreditDestinationDto {
+  /** Write-only. Never echoed back; stored AES-256-GCM encrypted. */
+  @IsString() @MinLength(12) @MaxLength(2048) url!: string;
+  @IsOptional() @IsString() @MaxLength(60) providerName?: string;
+  @IsOptional() @IsString() @MaxLength(60) label?: string;
+  @IsOptional() @IsIn(CREDIT_LINK_TYPES) linkType?: CreditLinkType;
+  @IsOptional() @IsBoolean() demoPreview?: boolean;
+  @IsOptional() @IsBoolean() enable?: boolean;
+}
+class CreditAuthorizeDto {
+  @IsIn(CREDIT_LINK_TYPES) linkType!: CreditLinkType;
+  @IsString() @MinLength(6) @MaxLength(200) evidenceRef!: string;
+}
+
 const STAFF = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] as const;
 
 @Controller('ops')
 @UseGuards(RolesGuard)
 export class OperationsController {
-  constructor(private readonly ops: OperationsService) {}
+  constructor(
+    private readonly ops: OperationsService,
+    private readonly creditAdmin: CreditDestinationAdminService,
+  ) {}
 
   private scope(user: AuthUser, tenantId?: string, locationId?: string) {
     assertStaffRole(user);
@@ -206,6 +228,44 @@ export class OperationsController {
       u.sub,
       b,
     );
+  }
+
+  // ── secure credit-application destination (no redeploy; URL is write-only)
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('locations/:id/credit-application')
+  creditStatus(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    const s = this.scope(u, undefined, id);
+    return this.creditAdmin.status(s.tenantId, s.locationId ?? id);
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Put('locations/:id/credit-application/destination')
+  creditConfigure(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: CreditDestinationDto,
+  ) {
+    const s = this.scope(u, undefined, id);
+    return this.creditAdmin.configure(s.tenantId, s.locationId ?? id, u.sub, b);
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Post('locations/:id/credit-application/authorize')
+  creditAuthorize(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: CreditAuthorizeDto,
+  ) {
+    const s = this.scope(u, undefined, id);
+    return this.creditAdmin.authorize(s.tenantId, s.locationId ?? id, u.sub, b);
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Post('locations/:id/credit-application/disable')
+  creditDisable(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    const s = this.scope(u, undefined, id);
+    return this.creditAdmin.disable(s.tenantId, s.locationId ?? id, u.sub);
   }
 }
 

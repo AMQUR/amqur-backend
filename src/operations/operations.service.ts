@@ -15,7 +15,40 @@ import {
   StoreHoursService,
   parseWeekly,
 } from '../locations/store-hours.service';
-import { validateCreditConfig } from '../finance/credit-application.service';
+import {
+  CreditApplicationService,
+  CreditLinkResolution,
+  validateCreditConfig,
+} from '../finance/credit-application.service';
+import { urlLooksSensitive } from '../finance/credit-destination';
+
+/** Staff-safe view of the customer-facing credit-link state (never the URL/token). */
+function publicCreditView(r: CreditLinkResolution) {
+  return r.available
+    ? {
+        available: true,
+        preview: r.preview,
+        providerName: r.config.providerName,
+        host: r.config.host ?? null,
+        linkType: r.config.linkType ?? null,
+      }
+    : { available: false, reason: r.reason };
+}
+
+/** Raw location JSON with any URL reduced to its origin + path (no query/fragment). */
+function maskCreditJson(raw: unknown) {
+  if (!raw || typeof raw !== 'object') return raw ?? null;
+  const r = { ...(raw as Record<string, unknown>) };
+  if (typeof r.url === 'string') {
+    try {
+      const u = new URL(r.url);
+      r.url = `${u.origin}${u.pathname}${u.search ? '?…' : ''}`;
+    } catch {
+      r.url = '[invalid]';
+    }
+  }
+  return r;
+}
 import { mergePolicy } from '../finance/financial-assumption-policy';
 import { isValidTimeZone, parseIsoDate } from '../common/time/zoned-time';
 import { redactCreditSensitive } from '../common/security/sensitive-data';
@@ -37,6 +70,7 @@ export class OperationsService {
     private readonly crm: CrmSyncService,
     private readonly llm: LlmRouterService,
     private readonly tekion: TekionProvider,
+    private readonly credit: CreditApplicationService,
   ) {}
 
   private loc(scope: Scope) {
@@ -447,7 +481,7 @@ export class OperationsService {
 
   async queues(scope: Scope) {
     const base = { tenantId: scope.tenantId, ...this.loc(scope) };
-    const [appointments, finance, parts, trades, escalations] =
+    const [appointments, finance, parts, trades, escalations, quotes] =
       await Promise.all([
         this.prisma.appointment.findMany({
           where: {
@@ -488,8 +522,13 @@ export class OperationsService {
           orderBy: { createdAt: 'asc' },
           take: 100,
         }),
+        this.prisma.priceQuoteRequest.findMany({
+          where: { ...base, status: { in: ['REQUESTED', 'IN_PROGRESS'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 100,
+        }),
       ]);
-    return { appointments, finance, parts, trades, escalations };
+    return { appointments, finance, parts, trades, escalations, quotes };
   }
 
   async overview(scope: Scope) {
@@ -818,11 +857,11 @@ export class OperationsService {
           tenant?.financialPolicy,
           loc.financialPolicy,
         ),
-        creditApplication: validateCreditConfig({
-          ...(tenant?.creditApplication as object | null),
-          ...(loc.creditApplication as object | null),
-        }),
+        creditApplication: publicCreditView(
+          await this.credit.resolve(tenantId, locationId),
+        ),
       },
+      creditApplication: maskCreditJson(loc.creditApplication),
     };
   }
 
@@ -886,6 +925,31 @@ export class OperationsService {
       const p = { ...(patch.financialPolicy as object), verifiedBy: userId };
       mergePolicy(p); // validates shape
       data.financialPolicy = p as Prisma.InputJsonValue;
+    }
+    if (patch.creditApplication !== undefined) {
+      const incoming = patch.creditApplication as Record<string, unknown>;
+      if (typeof incoming.url === 'string' && urlLooksSensitive(incoming.url))
+        throw new BadRequestException(
+          'This URL contains a credential-like parameter. Use PUT /api/ops/locations/:id/credit-application/destination so it is stored encrypted.',
+        );
+      const current = await this.prisma.location.findFirst({
+        where: { id: locationId, tenantId },
+        select: { creditApplication: true },
+      });
+      const cur = (current?.creditApplication ?? {}) as Record<string, unknown>;
+      if (cur.destination === 'vault' && !incoming.url) {
+        // Vault-backed destination: only label/enabled may change here.
+        data.creditApplication = {
+          ...cur,
+          ...(typeof incoming.enabled === 'boolean'
+            ? { enabled: incoming.enabled }
+            : {}),
+          ...(typeof incoming.label === 'string'
+            ? { label: incoming.label.slice(0, 60) }
+            : {}),
+        } as Prisma.InputJsonValue;
+        patch = { ...patch, creditApplication: undefined };
+      }
     }
     if (patch.creditApplication !== undefined) {
       const c = { ...(patch.creditApplication as object), verifiedBy: userId };

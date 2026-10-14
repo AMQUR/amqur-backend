@@ -1,0 +1,44 @@
+{
+  "purpose": "LOCAL OWNER DEMO ONLY — disposable local database. Never applied to staging or production (the seed refuses non-local DATABASE_URL hosts).",
+  "tenantSlug": "dial-demo-local",
+  "tenantName": "Dial Auto Group · Local Demo",
+  "locationSlug": "demo-rooftop",
+  "locationName": "Demo Rooftop (simulated data)",
+  "timezone": "America/Chicago",
+  "allowedOrigins": [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173"
+  ],
+  "featureFlags": {
+    "chat": true,
+    "inventory": true,
+    "payments": true,
+    "financeCalculator": true,
+    "vehicleCompare": true,
+    "savedVehicles": true,
+    "leadCapture": true,
+    "serviceAi": true,
+    "partsAi": true,
+    "appointments": true,
+    "handoff": true,
+    "multilingual": true,
+    "leadScoring": true,
+    "copilot": true,
+    "knowledge": false,
+    "sms": false,
+    "tekionIntegration": false,
+    "automatedFollowup": false,
+    "voiceAi": false,
+    "proactiveEngagement": false,
+    "priceDropAlerts": false,
+    "crossStoreInventory": false
+  },
+  "notes": [
+    "appointments=true permits appointment REQUEST records only; confirmation still requires staff or a verified scheduler.",
+    "Hours are synthetic (storeHoursVerifiedBy=synthetic-demo) and are labeled 'demo hours' to the customer; production treats them as unverified.",
+    "Inventory rows use source=synthetic_demo, VINs that contain the letter O (impossible in a real VIN), no photos; production reads exclude them.",
+    "Financial policy stays ILLUSTRATIVE: no tax/fee rules, so out-the-door totals route to staff instead of being guessed."
+  ]
+}

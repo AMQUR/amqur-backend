@@ -3,6 +3,7 @@ import {
   detectCreditSensitive,
   SensitiveKind,
 } from '../../common/security/sensitive-data';
+import { classifySocial, SocialAct } from '../dialogue/social';
 
 /**
  * Deterministic, multi-intent turn understanding.
@@ -45,6 +46,9 @@ export type TurnIntent =
   | 'TEXT_CONTINUATION'
   | 'LANGUAGE_SWITCH'
   | 'GREETING'
+  | 'SMALL_TALK'
+  | 'SHOPPING_START'
+  | 'OTD_QUOTE'
   | 'SAFETY_URGENT'
   | 'UNKNOWN';
 
@@ -74,7 +78,24 @@ export type TurnEntities = {
   downPayment?: number;
   termMonths?: number;
   customerApr?: number;
-  leaseOrPurchase?: 'lease' | 'purchase';
+  leaseOrPurchase?: 'lease' | 'purchase' | 'cash';
+  /** Conversational acts in this turn (greeting, "how are you", thanks, …). */
+  social?: SocialAct[];
+  /** 0..1 — how much of the message is purely social. */
+  socialStrength?: number;
+  /** "the two nicest", "cheapest one", "newest" — ranking over vehicles already shown. */
+  rank?: {
+    by: 'price_desc' | 'price_asc' | 'year_desc' | 'miles_asc';
+    count?: number;
+  };
+  /** The customer is talking about a vehicle they OWN ("my other Jeep") — never a shopping target. */
+  ownVehicle?: { make?: string; model?: string; year?: number };
+  /** Registration ZIP for an out-the-door quote. */
+  zip?: string;
+  /** "does that mean I'm approved?" */
+  approvalQuestion?: boolean;
+  /** "go back to the Wrangler" — resume an earlier vehicle instead of searching again. */
+  resume?: boolean;
   trade?: {
     year?: number;
     make?: string;
@@ -124,7 +145,9 @@ export type PendingQuestion =
   | 'service_need'
   | 'confirm_handoff'
   | 'confirm_credit_link'
-  | 'text_consent';
+  | 'text_consent'
+  | 'service_vehicle'
+  | 'otd_zip';
 
 export const MAKES = [
   'acura',
@@ -397,6 +420,33 @@ const NAME_STOPWORDS = new Set([
   'stop',
   'test',
   'asap',
+  // wellbeing / browsing words that follow "I'm …" but are never names
+  'doing',
+  'well',
+  'pretty',
+  'just',
+  'looking',
+  'browsing',
+  'interested',
+  'thinking',
+  'tired',
+  'busy',
+  'here',
+  'ready',
+  'sorry',
+  'not',
+  'so',
+  'all',
+  'alright',
+  'excited',
+  'curious',
+  'shopping',
+  'trying',
+  'paying',
+  'from',
+  'in',
+  'on',
+  'at',
   ...Object.keys(MODELS),
   ...MAKES,
 ]);
@@ -418,9 +468,31 @@ function editDistance(a: string, b: string): number {
 }
 
 /** Typo-tolerant single-word model match ("wrangeler" → wrangler). Conservative: len≥6, distance≤2. */
+/** Ordinary words that sit within edit distance 2 of a model name ("compare" ~ "compass"). */
+const FUZZY_STOP = new Set([
+  'compare',
+  'compared',
+  'company',
+  'complete',
+  'campus',
+  'pilots',
+  'acorde',
+  'ranger',
+  'escape',
+  'change',
+  'charge',
+  'charges',
+  'charged',
+  'traverse',
+  'renewal',
+  'renegade',
+  'wrangle',
+]);
+
 export function fuzzyModel(text: string): string | null {
   const words = text.toLowerCase().match(/[a-z0-9-]{6,}/g) ?? [];
   for (const w of words) {
+    if (FUZZY_STOP.has(w) || MODELS[w]) continue;
     for (const m of Object.keys(MODELS)) {
       if (m.includes(' ') || m.length < 6) continue;
       if (Math.abs(m.length - w.length) <= 2 && editDistance(w, m) <= 2)
@@ -451,7 +523,23 @@ export function extractContact(
     const last = intro[2];
     const verbish =
       /^(looking|interested|trying|calling|here|going|not|just|ready|pissed|mad|frustrated|upset|from|in|at|on|a|an|the|so|very|coming|thinking|wondering|happy)$/i;
-    if (!verbish.test(first) && !NAME_STOPWORDS.has(first.toLowerCase())) {
+    // "I'm …" is usually a state ("I'm approved", "I'm doing well"), not a name. Accept it as
+    // a name only when it's explicit ("my name is"), capitalized like a name, or we just asked.
+    const explicit = /\b(my name is|my name's|this is|me llamo)\b/i.test(
+      intro[0],
+    );
+    const nameLike =
+      explicit ||
+      pending === 'contact_name' ||
+      (/^[A-ZÀ-Ý]/.test(first) && !/(ed|ing)$/i.test(first));
+    if (
+      nameLike &&
+      !verbish.test(first) &&
+      !NAME_STOPWORDS.has(first.toLowerCase()) &&
+      !/^(approved|pre-?approved|done|sure|new|available|paying|buying|good|okay)$/i.test(
+        first,
+      )
+    ) {
       out.firstName = cap(first);
       if (
         last &&
@@ -461,8 +549,15 @@ export function extractContact(
         out.lastName = cap(last);
     }
   } else if (pending === 'contact_name') {
-    // Only treat a bare short reply as a name when we just asked for one.
-    const clean = text.trim().replace(/[.!]+$/, '');
+    // Only treat a bare short reply as a name when we just asked for one. Contact details in
+    // the same reply ("Mike Chen, 312-555-0199") are removed first.
+    const clean = text
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, ' ')
+      .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, ' ')
+      .replace(/[,;.!]+/g, ' ')
+      .replace(/\b(and|my|number|phone|email|is|at)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     const words = clean.split(/\s+/);
     if (
       words.length >= 1 &&
@@ -550,6 +645,11 @@ export function understandTurn(
     activeDepartment?: 'sales' | 'service' | 'parts' | 'finance' | null;
     timeZone: string;
     now?: Date;
+    /** Models of vehicles already shown/selected in this conversation (lowercase). */
+    knownModels?: string[];
+    hasPaymentEstimate?: boolean;
+    hasCriteria?: boolean;
+    creditOffered?: boolean;
   },
 ): TurnUnderstanding {
   const raw = message.trim();
@@ -640,7 +740,52 @@ export function understandTurn(
     add('TRADE_IN', m || miles ? 0.92 : 0.8, 'trade cue');
   }
 
-  const tShop = tradeSpan ? t.replace(tradeSpan, ' ') : t;
+  let tShop = tradeSpan ? t.replace(tradeSpan, ' ') : t;
+  // "service for my other Jeep" / "my 2019 Cherokee needs brakes" → owned vehicle, not a shopping target
+  const own =
+    /\bmy (?:other |old |current |wife'?s |husband'?s |)(?:(\d{4}) )?([a-z-]+)(?: ([a-z-]+))?/.exec(
+      tShop,
+    );
+  if (
+    own &&
+    !/\b(my (?:trade|budget|payment|credit|rate|appointment|order|name|number|email|vin))\b/.test(
+      own[0],
+    ) &&
+    !/\b(?:show|see|find|search|browse|pull up)\s+my\b/.test(tShop) &&
+    !new RegExp(
+      `${own[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+(?:inventory|stock|options|listings|search)`,
+    ).test(tShop)
+  ) {
+    const w2 = own[2];
+    const w3 = own[3];
+    const key = MODELS[`${w2} ${w3}`]
+      ? `${w2} ${w3}`
+      : MODELS[w2]
+        ? w2
+        : w3 && MODELS[w3]
+          ? w3
+          : null;
+    const make = key
+      ? MODELS[key]
+      : MAKES.includes(w2)
+        ? w2 === 'chevy'
+          ? 'Chevrolet'
+          : w2 === 'vw'
+            ? 'Volkswagen'
+            : cap(w2)
+        : undefined;
+    const model = key
+      ? key.replace(/\b\w/g, (c) => c.toUpperCase()).replace('Cr-V', 'CR-V')
+      : undefined;
+    if (make || model) {
+      e.ownVehicle = {
+        ...(own[1] ? { year: Number(own[1]) } : {}),
+        ...(make ? { make } : {}),
+        ...(model ? { model } : {}),
+      };
+      tShop = tShop.replace(own[0], ' ');
+    }
+  }
 
   // ── desired vehicle
   const veh: NonNullable<TurnEntities['vehicle']> = {};
@@ -709,6 +854,29 @@ export function understandTurn(
   );
   if (seats) veh.seatsMin = WORD_NUM[seats[1]] ?? Number(seats[1]);
   if (Object.keys(veh).length) e.vehicle = veh;
+  // Answering "what vehicle are we servicing?" — that's the customer's own car.
+  if (
+    (pending === 'service_vehicle' ||
+      (ctx.activeDepartment === 'service' &&
+        (pending === 'service_need' ||
+          pending === 'appointment_date' ||
+          pending === 'appointment_time'))) &&
+    (veh.make || veh.model) &&
+    !/\b(inventory|in stock|show me|do you have|any (?:new|used)|for sale|buy|shopping)\b/.test(
+      t,
+    ) &&
+    !/\bshow\b.*\binventory\b/.test(t)
+  ) {
+    e.ownVehicle = { year: veh.year, make: veh.make, model: veh.model };
+    delete e.vehicle;
+    add('SERVICE_APPOINTMENT', 0.88, 'answers service vehicle question');
+  }
+  const zip = /\b(\d{5})(?:-\d{4})?\b/.exec(raw);
+  if (zip && (pending === 'otd_zip' || /\bzip\b/i.test(raw))) {
+    e.zip = zip[1];
+    if (pending === 'otd_zip')
+      add('OTD_QUOTE', 0.9, 'answers registration zip');
+  }
 
   // ── features
   const feats: string[] = [];
@@ -728,6 +896,15 @@ export function understandTurn(
   if (monthly) {
     const n = moneyToNumber(monthly[1]);
     if (n && n >= 50 && n <= 5000) e.maxMonthly = n;
+  }
+  if (!e.maxMonthly) {
+    // "I want to stay under $700" — an amount this small can only be a monthly budget.
+    const small =
+      /\b(?:under|below|less than|no more than|at most|stay under|keep it under|max(?:imum)?|around)\s*\$\s*(\d[\d,]*)\b(?!\s*(?:k|grand|thousand))/.exec(
+        t,
+      );
+    const n = small ? moneyToNumber(small[1]) : null;
+    if (n && n >= 100 && n < 3000) e.maxMonthly = n;
   }
   const price =
     /\b(?:under|below|less than|max(?:imum)?|no more than|budget(?: is| of)?|around|up to|menos de)\s*\$?\s*(\d[\d,.]*)\s*(k|grand|thousand|mil)?\b(?!\s*(?:\/\s*mo|a month|per month|monthly|miles|mi\b|al mes))/.exec(
@@ -769,7 +946,13 @@ export function understandTurn(
     const n = Number(apr[1] ?? apr[2]);
     if (n >= 0 && n <= 30) e.customerApr = n;
   }
-  if (/\blease|leasing|arrendamiento\b/.test(t)) e.leaseOrPurchase = 'lease';
+  const cashBuyer =
+    /\b(pay(?:ing)? (?:in |with )?cash|cash (?:buyer|deal|purchase|price)|(?:don'?t|do not|won'?t) (?:want|need) (?:financing|a loan|to finance)|not (?:financing|going to finance)|no financing|pay(?:ing)? (?:it )?(?:off )?in full|paying outright|de contado|en efectivo)\b/.test(
+      t,
+    );
+  if (cashBuyer) e.leaseOrPurchase = 'cash';
+  else if (/\blease|leasing|arrendamiento\b/.test(t))
+    e.leaseOrPurchase = 'lease';
   else if (/\b(buy|purchase|finance it|financing|own it)\b/.test(t))
     e.leaseOrPurchase = 'purchase';
 
@@ -781,9 +964,37 @@ export function understandTurn(
   const contact = extractContact(raw, pending);
   if (contact) e.contact = contact;
 
+  // ── ranking over shown vehicles
+  const rk =
+    /\b(?:the )?(?:(two|three|2|3|top two|top three) )?(nicest|best|most expensive|highest[- ]priced|priciest|loaded|top[- ]of[- ]the[- ]line|cheapest|least expensive|lowest[- ]priced|most affordable|newest|latest|lowest (?:miles|mileage)|least miles)\b/.exec(
+      t,
+    );
+  if (rk) {
+    const w = rk[2];
+    const by = /cheap|least exp|lowest[- ]priced|affordable/.test(w)
+      ? 'price_asc'
+      : /newest|latest/.test(w)
+        ? 'year_desc'
+        : /miles|mileage/.test(w)
+          ? 'miles_asc'
+          : 'price_desc';
+    const cnt = rk[1]
+      ? (WORD_NUM[rk[1].replace('top ', '')] ??
+        Number(rk[1].replace('top ', '')))
+      : undefined;
+    e.rank = { by, ...(cnt ? { count: cnt } : {}) };
+    e.referencesPrior = true;
+  }
+
   // ── references to prior results
   if (
-    /\b(you showed me|you sent|from before|the (?:first|second|third|last|other) one|that one|this one|those|these|of those|of these|the one you|ese|esa|esos|esas|la primera|el primero|la segunda|el segundo|la última|el último)\b/.test(
+    /\b(go(?:ing)? back to|back to the|return to|come back to|revisit|volvamos a)\b/.test(
+      t,
+    )
+  )
+    e.resume = true;
+  if (
+    /\b(you showed me|you sent|from before|the (?:first|second|third|last|other|[a-z]+) one|that one|this one|those|these|of those|of these|the one you|ese|esa|esos|esas|la primera|el primero|la segunda|el segundo|la última|el último)\b/.test(
       t,
     )
   ) {
@@ -811,6 +1022,12 @@ export function understandTurn(
   )
     sentiment = 'positive';
 
+  const social = classifySocial(raw);
+  if (social.acts.length) {
+    e.social = social.acts;
+    e.socialStrength = social.strength;
+  }
+
   const isQuestion =
     /\?\s*$/.test(raw) ||
     /^(what|which|how|when|where|who|why|do|does|is|are|can|could|would|will|cuál|cuál|qué|que|cómo|como|cuándo|dónde|tienen|hay)\b/i.test(
@@ -831,9 +1048,11 @@ export function understandTurn(
     /\b(talk|speak|chat|connect|transfer)\s+(?:to|with)\s+(?:a |an |the |someone|somebody|a real|real|live|an actual)?\s*(?:human|person|someone|somebody|agent|rep|representative|salesperson|sales person|manager|advisor|associate)\b/.test(
       t,
     ) ||
-    /\b(real person|live person|live agent|human please|a human|actual person|representative|hablar con (?:alguien|una persona|un asesor))\b/.test(
+    (/\b(real person|live person|live agent|human please|a human|actual person|representative|hablar con (?:alguien|una persona|un asesor))\b/.test(
       t,
-    ) ||
+    ) &&
+      // "are you a real person?" asks what the assistant is — answered honestly, not a transfer
+      !/\b(are you|is this|am i (?:talking|chatting))\b/.test(t)) ||
     /^\s*(agent|human|representative|operator)\s*[.!?]*\s*$/.test(t) ||
     /\b(call me|have someone (?:call|text|reach)|someone (?:call|contact) me)\b/.test(
       t,
@@ -937,9 +1156,10 @@ export function understandTurn(
 
   // ── APPOINTMENT changes
   if (
-    /\b(reschedule|move (?:it|my appointment)|change (?:it|my appointment|the time|the day)|actually make it|make it (?:saturday|sunday|monday|tuesday|wednesday|thursday|friday|tomorrow|\d)|instead|push it|cambiar (?:la )?cita)\b/.test(
+    (/\b(reschedule|move (?:it|my appointment)|change (?:it|my appointment|the time|the day)|actually make it|make it (?:saturday|sunday|monday|tuesday|wednesday|thursday|friday|tomorrow|\d)|push it|cambiar (?:la )?cita)\b/.test(
       t,
-    ) &&
+    ) ||
+      (/\binstead\b/.test(t) && !!when)) &&
     (ctx.hasActiveAppointment || when)
   ) {
     add(
@@ -1003,36 +1223,64 @@ export function understandTurn(
 
   // ── FINANCE: "finance" alone can be a department question; credit app explicit
   if (
-    /\b(credit app(?:lication)?|apply for (?:financing|credit|a loan)|get pre-?approved|pre-?approval|pre-?qualif\w*|solicitud de cr[eé]dito|aplicar para (?:el )?cr[eé]dito)\b/.test(
+    /\b(credit app(?:lication)?s?|apply for (?:financing|credit|a loan|finance)|apply (?:for it )?online|get pre-?approved|pre-?approv\w*|pre-?qualif\w*|finance application|financing application|loan application|(?:send|give|show) me (?:the |your |an? )?(?:credit |finance |financing |loan )?app(?:lication)?|(?:fill|filling) out (?:a |the |an |your )?(?:credit |finance |financing )?app(?:lication)?|where(?:'s| is) (?:the |your )(?:credit |finance |financing )?app(?:lication)?|solicitud de cr[eé]dito|aplicar para (?:el )?cr[eé]dito)\b/.test(
       t,
-    )
+    ) ||
+    (ctx.creditOffered &&
+      /\b(do it online|online|apply now|where do i apply|how do i apply)\b/.test(
+        t,
+      ))
   ) {
     add('CREDIT_APPLICATION', 0.95, 'credit application');
   }
   if (
-    /\b(financing|finance options|lease|leasing|loan|bad credit|credit score|monthly payment options|financiamiento|financiar)\b/.test(
+    !cashBuyer &&
+    (/\b(financing|finance options|lease|leasing|loan|bad credit|credit score|monthly payment options|financiamiento|financiar)\b/.test(
       t,
-    ) &&
+    ) ||
+      /\bcan i finance\b|\bfinance (?:it|this|that|one|the)\b/.test(t)) &&
     !/\bfinance (?:department|office) (?:hours|open)\b/.test(t)
   ) {
     add('FINANCE_REQUEST', 0.7, 'finance discussion');
   }
   if (
-    /\b(am i approved|approve me|guarantee(?:d)? approval|what rate (?:will|would|do) i get|my rate)\b/.test(
+    /\b(am i approved|approve me|guarantee(?:d)? approval|what rate (?:will|would|do) i get|my rate|(?:i'?m|i am|i'?ll be|i will be|be) (?:pre-?)?approved|mean (?:i'?m|i am) (?:pre-?)?approved|instant(?:ly)? approv\w*)\b/.test(
       t,
     )
   ) {
+    e.approvalQuestion = true;
     add('FINANCE_REQUEST', 0.85, 'approval/rate ask');
+  }
+
+  // ── OUT-THE-DOOR quote (cash or finance) — never requires a credit application
+  if (
+    /\b(out[- ]the[- ]door|out of the door|otd|drive[- ]?off|all[- ]in (?:price|cost|number)|total (?:price|cost)|final price|price (?:with|including) (?:tax|taxes|fees)|with (?:tax(?:es)?(?: and fees)?|fees) included|tax(?:es)? and fees included|precio final|precio total)\b/.test(
+      t,
+    ) ||
+    (cashBuyer && (ctx.hasSelectedVehicle || ctx.hasVisibleVehicles))
+  ) {
+    add(
+      'OTD_QUOTE',
+      cashBuyer && !/out[- ]the[- ]door|otd/.test(t) ? 0.8 : 0.92,
+      'out-the-door',
+    );
   }
 
   // ── PAYMENT estimate
   if (
     e.maxMonthly ||
     e.downPayment !== undefined ||
-    /\b(payment|monthly|per month|a month|what would (?:it|that) (?:be|cost) (?:a|per) month|mensualidad|pago mensual|cu[aá]nto (?:ser[ií]a|pagar[ií]a) al mes)\b/.test(
+    /\b(payments?|monthly|per month|a month|what would (?:it|that) (?:be|cost) (?:a|per) month|mensualidad|pago mensual|cu[aá]nto (?:ser[ií]a|pagar[ií]a) al mes)\b/.test(
       t,
     ) ||
-    (e.termMonths && /\b(payment|finance|loan)\b/.test(t))
+    (e.termMonths && /\b(payments?|finance|loan)\b/.test(t)) ||
+    (e.termMonths && ctx.hasSelectedVehicle) ||
+    (ctx.hasPaymentEstimate &&
+      (e.termMonths ||
+        e.customerApr !== undefined ||
+        /\b(with my trade|what (?:would|does) (?:that|it) look like|what if|how about|what about)\b/.test(
+          t,
+        )))
   ) {
     add(
       'PAYMENT_ESTIMATE',
@@ -1109,8 +1357,32 @@ export function understandTurn(
   const shoppingSpec =
     hasVehicleSpec || !!e.maxPrice || !!veh.color || !!veh.condition;
   const selecting = intents.some((i) => i.intent === 'SELECT_VEHICLE');
-  if (!e.serviceNeed && !partsCue) {
-    if (shopVerb && shoppingSpec)
+  const browseMore =
+    /\b(show me (?:what you(?:'ve| have)? got|what you have|them|those|some|options|more|everything|all)|what (?:do )?you (?:have|got)|what(?:'s| is) available|let me see (?:them|some|what)|see (?:them|some options)|what are my options)\b/.test(
+      t,
+    );
+  // Mentioning a model already on screen ("I like that Wrangler", "back to the Wrangler")
+  // refers to THAT vehicle — it must not trigger a brand-new search that drops it.
+  const mentionsKnown =
+    !!veh.model &&
+    (ctx.knownModels ?? []).includes(veh.model.toLowerCase()) &&
+    (e.resume ||
+      /\b(that|this|the|those|these|like|love|want|take|interested in the|liked)\b/.test(
+        tShop,
+      )) &&
+    !shopVerb;
+  if (mentionsKnown) {
+    add(
+      'SELECT_VEHICLE',
+      0.88,
+      e.resume ? 'resume known vehicle' : 'known vehicle reference',
+    );
+    e.referencesPrior = true;
+  }
+  if (!e.serviceNeed && !partsCue && !mentionsKnown && !e.ownVehicle) {
+    if (browseMore && !shoppingSpec && ctx.hasCriteria)
+      add('INVENTORY_SEARCH', 0.85, 'browse with saved criteria');
+    else if (shopVerb && shoppingSpec)
       add('INVENTORY_SEARCH', 0.9, 'shopping verb + spec');
     else if (hasVehicleSpec && !selecting && !isQuestion)
       add('INVENTORY_SEARCH', 0.7, 'vehicle spec');
@@ -1118,7 +1390,9 @@ export function understandTurn(
       hasVehicleSpec &&
       !selecting &&
       isQuestion &&
-      /\b(any|have|got|available|stock)\b/.test(tShop)
+      /\b(any|have|got|available|stock|show|see|inventory|options|look at|carry)\b/.test(
+        tShop,
+      )
     )
       add('INVENTORY_SEARCH', 0.8, 'availability question');
     else if (e.maxPrice && !intents.length)
@@ -1165,18 +1439,32 @@ export function understandTurn(
   )
     add('AFFIRM', 0.9, 'affirmative');
   if (
-    /^\s*(no|nope|nah|not now|no thanks|no thank you|maybe later|not yet|no gracias)\s*[.!]*\s*$/.test(
-      t,
-    )
-  )
-    add('DECLINE', 0.9, 'negative');
-  if (
-    /^\s*(hi|hello|hey|hola|good (?:morning|afternoon|evening)|buenas)\b/.test(
+    /^\s*(no|nope|nah|not now|no thanks|no thank you|maybe later|not yet|no gracias|not interested|not really|i'?m (?:ok|okay|good|fine)(?: for now)?(?:,? thanks?)?|all good|we'?re good)\s*[.!]*\s*$/.test(
       t,
     ) &&
-    raw.split(/\s+/).length <= 4
+    (!/\bi'?m (?:ok|okay|good|fine)|all good|we'?re good/.test(t) ||
+      (pending !== 'none' && pending !== undefined))
   )
-    add('GREETING', 0.8, 'greeting');
+    add('DECLINE', 0.9, 'negative');
+  // Greetings are handled by the conversational layer (SMALL_TALK) below; GREETING is
+  // reserved for department chips that open a conversation without text.
+
+  // ── conversational layer: social acts never route to the dealership-fact fallback
+  if (e.social?.length) {
+    const pure = (e.socialStrength ?? 0) >= 0.6;
+    if (
+      e.social.includes('shopping_start') &&
+      !intents.some((i) => i.intent === 'INVENTORY_SEARCH')
+    )
+      add('SHOPPING_START', 0.88, 'open shopping intent');
+    if (e.social.includes('identity'))
+      add('SMALL_TALK', 0.95, 'identity question');
+    else if (
+      e.social.some((a) => a !== 'shopping_start') &&
+      (pure || !intents.length || e.social.includes('how_are_you'))
+    )
+      add('SMALL_TALK', pure ? 0.9 : 0.65, 'social act');
+  }
 
   // ── knowledge / general automotive question
   if (!intents.length && isQuestion)
@@ -1214,6 +1502,7 @@ export function understandTurn(
     'INVENTORY_SEARCH',
     'COMPARE',
     'PAYMENT_ESTIMATE',
+    'OTD_QUOTE',
     'FINANCE_REQUEST',
     'SALES_APPOINTMENT',
     'HOLD_REQUEST',
@@ -1225,6 +1514,8 @@ export function understandTurn(
     'LANGUAGE_SWITCH',
     'AFFIRM',
     'DECLINE',
+    'SHOPPING_START',
+    'SMALL_TALK',
     'GREETING',
     'UNKNOWN',
   ];

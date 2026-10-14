@@ -42,9 +42,43 @@ export function vehicleHasFeature(
  * feed ingestion maintains. No payment math here (FinancialAssumptionPolicy owns that), no
  * stock/demo imagery, and no mutation of authoritative inventory.
  */
+export const SYNTHETIC_SOURCE = 'synthetic_demo';
+
 @Injectable()
 export class InventoryEngine {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Synthetic demo vehicles (source=synthetic_demo) exist only in disposable local/demo
+   * databases. In production they are invisible to every customer-facing read, so a fixture
+   * can never be presented as dealership inventory.
+   */
+  static liveOnly(): Prisma.VehicleWhereInput {
+    return process.env.NODE_ENV === 'production'
+      ? { NOT: { source: SYNTHETIC_SOURCE } }
+      : {};
+  }
+
+  /** What kind of inventory backs this rooftop — drives honest "no match" wording. */
+  async sourceKind(
+    tenantId: string,
+    locationId: string | null | undefined,
+  ): Promise<'synthetic' | 'live' | 'mixed' | 'empty'> {
+    const where: Prisma.VehicleWhereInput = {
+      tenantId,
+      ...(locationId ? { OR: [{ locationId }, { locationId: null }] } : {}),
+      ...InventoryEngine.liveOnly(),
+    };
+    const [synthetic, total] = await Promise.all([
+      this.prisma.vehicle.count({
+        where: { ...where, source: SYNTHETIC_SOURCE },
+      }),
+      this.prisma.vehicle.count({ where }),
+    ]);
+    if (!total) return 'empty';
+    if (synthetic === total) return 'synthetic';
+    return synthetic ? 'mixed' : 'live';
+  }
 
   static toCard(
     v: Vehicle,
@@ -81,6 +115,7 @@ export class InventoryEngine {
       locationId: v.locationId,
       lastSeenAt: v.lastSeenAt ? v.lastSeenAt.toISOString() : null,
       source: v.source ?? null,
+      simulated: v.source === SYNTHETIC_SOURCE,
       freshnessState: v.freshnessState ?? null,
     };
   }
@@ -88,6 +123,7 @@ export class InventoryEngine {
   async searchVehicles(c: InventoryCriteria) {
     const AND: Prisma.VehicleWhereInput[] = [
       { tenantId: c.tenantId },
+      InventoryEngine.liveOnly(),
       {
         status: {
           in:
@@ -193,7 +229,11 @@ export class InventoryEngine {
 
   async getVehiclesByVin(tenantId: string, vins: string[]) {
     const rows = await this.prisma.vehicle.findMany({
-      where: { tenantId, vin: { in: vins.map((v) => v.toUpperCase()) } },
+      where: {
+        tenantId,
+        vin: { in: vins.map((v) => v.toUpperCase()) },
+        ...InventoryEngine.liveOnly(),
+      },
     });
     const byVin = new Map(rows.map((r) => [r.vin, InventoryEngine.toCard(r)]));
     return vins
@@ -204,14 +244,22 @@ export class InventoryEngine {
   /** Returns the row regardless of status — callers MUST check `status` before claiming availability. */
   async getVehicleByVin(tenantId: string, vin: string) {
     const row = await this.prisma.vehicle.findFirst({
-      where: { tenantId, vin: vin.toUpperCase() },
+      where: {
+        tenantId,
+        vin: vin.toUpperCase(),
+        ...InventoryEngine.liveOnly(),
+      },
     });
     return row ? InventoryEngine.toCard(row) : null;
   }
 
   async getVehicleByStock(tenantId: string, stock: string) {
     const row = await this.prisma.vehicle.findFirst({
-      where: { tenantId, stock: { equals: stock, mode: 'insensitive' } },
+      where: {
+        tenantId,
+        stock: { equals: stock, mode: 'insensitive' },
+        ...InventoryEngine.liveOnly(),
+      },
     });
     return row ? InventoryEngine.toCard(row) : null;
   }

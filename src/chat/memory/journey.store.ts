@@ -27,6 +27,10 @@ export type JourneyState = {
     features?: string[];
   };
   visibleVins: string[];
+  /** Lowercase models of vehicles shown/selected — lets "that Wrangler" resolve to them. */
+  visibleModels?: string[];
+  /** Vehicles the customer passed on ("not that one") — not re-suggested first. */
+  rejectedVins?: string[];
   selectedVin?: string;
   /** Human label for the selected vehicle (e.g. "black 2024 Jeep Wrangler Sport S") */
   selectedLabel?: string;
@@ -37,7 +41,7 @@ export type JourneyState = {
     downPayment?: number;
     termMonths?: number;
     customerApr?: number;
-    leaseOrPurchase?: 'lease' | 'purchase';
+    leaseOrPurchase?: 'lease' | 'purchase' | 'cash';
     lastEstimate?: {
       vin: string;
       monthly: number;
@@ -81,7 +85,28 @@ export type JourneyState = {
     serviceNeed?: string;
     note?: string;
   };
-  service?: { need?: string; vin?: string; amenityAsked?: string };
+  service?: {
+    need?: string;
+    vin?: string;
+    amenityAsked?: string;
+    /** The customer's OWN vehicle being serviced — kept apart from the sales selection. */
+    vehicle?: { year?: number; make?: string; model?: string };
+  };
+  /** Out-the-door quote request (cash or finance — never requires a credit application). */
+  otd?: {
+    requestId?: string;
+    vin?: string;
+    paymentMethod?: 'CASH' | 'FINANCE' | 'LEASE' | 'UNDECIDED';
+    zip?: string;
+    estimated?: boolean;
+  };
+  /** Conversational memory: greetings exchanged, browsing mode. */
+  social?: {
+    greeted?: boolean;
+    askedHowAreYou?: boolean;
+    browsing?: boolean;
+    demoNoted?: boolean;
+  };
   parts?: {
     inquiryId?: string;
     need?: string;

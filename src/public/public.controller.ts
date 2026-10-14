@@ -39,6 +39,7 @@ export class PublicController {
         departmentHours: true,
         holidayHours: true,
         storeHoursVerifiedAt: true,
+        storeHoursVerifiedBy: true,
       },
     });
     if (!loc) return { known: false };
@@ -62,6 +63,8 @@ export class PublicController {
     };
     return {
       known: profile.verified,
+      /** Local demo only: hours are synthetic and must be labeled as such. */
+      simulated: profile.synthetic === true,
       timezone: profile.timezone,
       summary: StoreHoursService.summarize(profile, 'store', locale),
       sales: dept('store'),

@@ -31,7 +31,9 @@
     "onboard:dealership": "ts-node --transpile-only scripts/onboard-dealership.ts",
     "test:all:local": "npm run test:infra:reset && set -a && . ./test-infra/.env.test && set +a && npx prisma migrate deploy && npm run typecheck && npm test && npm run test:cov && npm run test:e2e:platform && npm run build",
     "build:cc": "npm --prefix command-center ci --no-audit --no-fund && npm --prefix command-center run build",
-    "build:all": "npm run build && npm run build:cc"
+    "build:all": "npm run build && npm run build:cc",
+    "credit:destination": "ts-node --transpile-only scripts/credit-destination.ts",
+    "seed:local-demo": "ts-node --transpile-only scripts/seed-local-demo.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

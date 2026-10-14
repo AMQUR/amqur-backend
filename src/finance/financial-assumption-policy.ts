@@ -24,6 +24,15 @@ export type FinancialAssumptionPolicy = {
   taxBasis: 'price' | 'net' | null;
   docFee: number | null;
   otherFees: Array<{ label: string; amount: number }>;
+  /**
+   * Government title/registration/plate charges for the rooftop's home jurisdiction
+   * (dealer-verified). Empty = unknown → out-the-door totals are staff-quoted, never guessed.
+   */
+  governmentFees: Array<{ label: string; amount: number }>;
+  /** FTC: when the advertised price already includes the doc fee it must not be added again. */
+  docFeeIncludedInPrice: boolean;
+  /** Two-letter state the tax/government fees apply to (registration jurisdiction). */
+  jurisdiction: string | null;
   verifiedAt: string | null;
   verifiedBy: string | null;
   disclaimer: string;
@@ -41,6 +50,9 @@ export const SYSTEM_DEFAULT_POLICY: FinancialAssumptionPolicy = {
   taxBasis: null,
   docFee: null,
   otherFees: [],
+  governmentFees: [],
+  docFeeIncludedInPrice: false,
+  jurisdiction: null,
   verifiedAt: null,
   verifiedBy: null,
   disclaimer:
@@ -58,6 +70,7 @@ export function mergePolicy(
   const out: FinancialAssumptionPolicy = {
     ...SYSTEM_DEFAULT_POLICY,
     otherFees: [],
+    governmentFees: [],
   };
   for (const raw of layers) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
@@ -93,6 +106,23 @@ export function mergePolicy(
           amount: Number(f.amount),
         }));
     }
+    if (Array.isArray(l.governmentFees)) {
+      out.governmentFees = l.governmentFees
+        .filter(
+          (f): f is { label: string; amount: number } =>
+            !!f &&
+            typeof (f as { label?: unknown }).label === 'string' &&
+            num((f as { amount?: unknown }).amount, 0, 10000) !== null,
+        )
+        .map((f) => ({
+          label: f.label.slice(0, 60),
+          amount: Number(f.amount),
+        }));
+    }
+    if (typeof l.docFeeIncludedInPrice === 'boolean')
+      out.docFeeIncludedInPrice = l.docFeeIncludedInPrice;
+    if (typeof l.jurisdiction === 'string' && /^[A-Z]{2}$/.test(l.jurisdiction))
+      out.jurisdiction = l.jurisdiction;
     if (typeof l.verifiedAt === 'string') out.verifiedAt = l.verifiedAt;
     if (typeof l.verifiedBy === 'string') out.verifiedBy = l.verifiedBy;
     if (typeof l.version === 'string') out.version = l.version.slice(0, 60);
@@ -112,6 +142,8 @@ export function mergePolicy(
     out.taxBasis = null;
     out.docFee = null;
     out.otherFees = [];
+    out.governmentFees = [];
+    out.jurisdiction = null;
   }
   if (!out.allowedTerms.includes(out.defaultTermMonths)) {
     out.allowedTerms = [...out.allowedTerms, out.defaultTermMonths].sort(

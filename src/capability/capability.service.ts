@@ -199,6 +199,10 @@ export class CapabilityService {
         tenantId,
         ...(locationId ? { locationId } : {}),
         status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
+        // Synthetic demo fixtures never make production inventory "ready".
+        ...(process.env.NODE_ENV === 'production'
+          ? { NOT: { source: 'synthetic_demo' } }
+          : {}),
       },
     });
 
@@ -209,6 +213,9 @@ export class CapabilityService {
           ...(locationId ? { locationId } : {}),
           status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
           freshnessState: { in: ['FRESH', 'DEGRADED'] },
+          ...(process.env.NODE_ENV === 'production'
+            ? { NOT: { source: 'synthetic_demo' } }
+            : {}),
         },
       });
       if (fresh > 0) return { ok: true, reason: 'vehicles_present' };

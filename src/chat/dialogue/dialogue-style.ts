@@ -66,15 +66,9 @@ export function chooseAcknowledgement(params: {
         : ['No problem.', 'Got it — updating that.'],
     );
   }
-  if (
-    intents.includes('CREDIT_APPLICATION') ||
-    intents.includes('SALES_APPOINTMENT') ||
-    intents.includes('SERVICE_APPOINTMENT')
-  ) {
-    return pick(
-      lang === 'es' ? ['Perfecto.', 'Muy bien.'] : ['Sounds good.', 'Perfect.'],
-    );
-  }
+  // Task turns open with the substance itself ("I can help with that…", "Here's…") —
+  // a stock "Perfect." in front of every request reads as scripted.
+  void intents;
   return undefined;
 }
 

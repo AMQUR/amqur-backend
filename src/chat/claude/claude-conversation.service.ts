@@ -89,8 +89,12 @@ export class ClaudeConversationService {
     context: string[] = [],
     opts: { language?: string | null; assistantName?: string | null } = {},
   ): Promise<string> {
+    // Dealership-specific facts we can't verify are never guessed — but the reply stays human
+    // and offers ONE next step instead of a menu.
     const noFacts =
-      'I can’t verify that from the dealership’s systems right now. I can search inventory, take a message for the team, or connect you with someone — what would help most?';
+      opts.language === 'es'
+        ? 'Eso no lo tengo en la información de la agencia, y prefiero no adivinar. ¿Quiere que alguien del equipo le confirme?'
+        : 'That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?';
     if (!this.router.isAvailable()) {
       if (context.length > 0) {
         return `Here’s what the dealership has on file: ${context.join(' ').slice(0, 500)}`;

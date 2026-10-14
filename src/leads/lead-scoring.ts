@@ -27,6 +27,7 @@ export type LeadSignal =
   | 'service_request'
   | 'parts_request'
   | 'saved_vehicle'
+  | 'quote_requested'
   | 'return_visit';
 
 export const SIGNAL_WEIGHTS: Record<LeadSignal, number> = {
@@ -51,6 +52,7 @@ export const SIGNAL_WEIGHTS: Record<LeadSignal, number> = {
   service_request: 3,
   parts_request: 2,
   saved_vehicle: 2,
+  quote_requested: 4,
   return_visit: 2,
 };
 

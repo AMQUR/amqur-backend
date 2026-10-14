@@ -3,6 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { SecretVaultService } from '../integrations/core/secret-vault.service';
+import {
+  checkDestination,
+  CREDIT_CONNECTION_CAPABILITY,
+  CREDIT_SECRET_KEY,
+  CreditConnectionConfig,
+  CreditLinkType,
+  urlLooksSensitive,
+} from './credit-destination';
 
 /**
  * Dealer-approved secure credit application handoff. AMQUR never collects SSN, bank or card
@@ -29,20 +38,37 @@ export type CreditApplicationConfig = {
   verifiedBy: string | null;
   returnUrlSupport: boolean;
   webhookSupport: boolean;
+  /** Vendor-confirmed link type (plain-JSON legacy destinations are treated as reusable). */
+  linkType?: CreditLinkType;
+  host?: string;
 };
 
+export type CreditUnavailableReason =
+  | 'not_configured'
+  | 'disabled'
+  | 'not_https'
+  | 'host_not_allowlisted'
+  | 'not_verified'
+  | 'invalid_url'
+  | 'sensitive_url_in_plaintext'
+  | 'vault_unavailable'
+  | 'awaiting_vendor_confirmation'
+  | 'not_authorized_for_location'
+  | 'per_customer_provider_required';
+
+/**
+ * `preview: true` = non-production demo of a destination whose link type/authorization is
+ * not yet confirmed. The customer sees a clearly labeled card; the click lands on an AMQUR
+ * interstitial and NEVER navigates to (or consumes) the vendor link.
+ */
 export type CreditLinkResolution =
-  | { available: true; config: CreditApplicationConfig }
-  | {
-      available: false;
-      reason:
-        | 'not_configured'
-        | 'disabled'
-        | 'not_https'
-        | 'host_not_allowlisted'
-        | 'not_verified'
-        | 'invalid_url';
-    };
+  | { available: true; preview: boolean; config: CreditApplicationConfig }
+  | { available: false; reason: CreditUnavailableReason };
+
+export type CreditClickResult =
+  | { kind: 'redirect'; url: string }
+  | { kind: 'preview'; providerName: string | null; host: string | null }
+  | null;
 
 export function validateCreditConfig(raw: unknown): CreditLinkResolution {
   if (!raw || typeof raw !== 'object')
@@ -59,6 +85,9 @@ export function validateCreditConfig(raw: unknown): CreditLinkResolution {
   }
   if (u.protocol !== 'https:' || u.username || u.password)
     return { available: false, reason: 'not_https' };
+  // Credential-bearing links (e.g. ?token=…) belong in the encrypted vault, never plaintext JSON.
+  if (urlLooksSensitive(u.toString()))
+    return { available: false, reason: 'sensitive_url_in_plaintext' };
   const hosts = Array.isArray(r.allowedHosts)
     ? r.allowedHosts
         .filter((h): h is string => typeof h === 'string')
@@ -74,9 +103,12 @@ export function validateCreditConfig(raw: unknown): CreditLinkResolution {
   }
   return {
     available: true,
+    preview: false,
     config: {
       enabled: true,
       url: u.toString(),
+      host: u.hostname.toLowerCase(),
+      linkType: 'PUBLIC_REUSABLE',
       label:
         typeof r.label === 'string' && r.label.trim()
           ? r.label.trim().slice(0, 60)
@@ -102,7 +134,12 @@ export class CreditApplicationService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly analytics: AnalyticsService,
+    private readonly vault: SecretVaultService,
   ) {}
+
+  private isProduction() {
+    return this.config.get<string>('NODE_ENV') === 'production';
+  }
 
   private secret(): string {
     const dedicated = this.config
@@ -139,7 +176,94 @@ export class CreditApplicationService {
             ...(loc.creditApplication as object),
           }
         : tenant?.creditApplication;
+    if (
+      merged &&
+      typeof merged === 'object' &&
+      (merged as Record<string, unknown>).destination === 'vault'
+    ) {
+      return this.resolveVault(
+        tenantId,
+        locationId ?? null,
+        merged as Record<string, unknown>,
+      );
+    }
     return validateCreditConfig(merged);
+  }
+
+  /** Load the vault-backed destination for exactly this tenant + location. */
+  async loadVaultConnection(tenantId: string, locationId: string | null) {
+    if (!locationId) return null;
+    return this.prisma.integrationConnection.findFirst({
+      where: {
+        tenantId,
+        locationId,
+        provider: 'TEKION',
+        capability: CREDIT_CONNECTION_CAPABILITY,
+      },
+      include: { secrets: { where: { keyName: CREDIT_SECRET_KEY } } },
+    });
+  }
+
+  private async resolveVault(
+    tenantId: string,
+    locationId: string | null,
+    r: Record<string, unknown>,
+  ): Promise<CreditLinkResolution> {
+    if (r.enabled !== true) return { available: false, reason: 'disabled' };
+    const conn = await this.loadVaultConnection(tenantId, locationId);
+    if (!conn || !conn.enabled || !conn.secrets.length)
+      return { available: false, reason: 'not_configured' };
+    const cfg = conn.config as unknown as CreditConnectionConfig;
+    if (!this.vault.isReady())
+      return { available: false, reason: 'vault_unavailable' };
+    let url: string;
+    try {
+      url = this.vault.decrypt(conn.secrets[0]);
+    } catch {
+      this.logger.warn(
+        `credit destination decrypt failed tenant=${tenantId} location=${locationId}`,
+      );
+      return { available: false, reason: 'vault_unavailable' };
+    }
+    const allowed = Array.isArray(r.allowedHosts)
+      ? (r.allowedHosts as unknown[]).filter(
+          (h): h is string => typeof h === 'string',
+        )
+      : [];
+    const chk = checkDestination(url, allowed);
+    if (!chk.ok) return { available: false, reason: chk.reason };
+    if (cfg.linkType === 'PER_CUSTOMER')
+      return { available: false, reason: 'per_customer_provider_required' };
+    const config: CreditApplicationConfig = {
+      enabled: true,
+      url: chk.url.toString(),
+      host: chk.host,
+      linkType: cfg.linkType,
+      label:
+        typeof r.label === 'string' && r.label.trim()
+          ? r.label.trim().slice(0, 60)
+          : 'Secure Credit Application',
+      allowedHosts: allowed.map((h) => h.toLowerCase()),
+      providerName: cfg.providerName ?? null,
+      lastVerifiedAt: cfg.authorization?.approvedAt ?? null,
+      verifiedBy: cfg.authorization?.approvedBy ?? null,
+      returnUrlSupport: false,
+      webhookSupport: false,
+    };
+    const confirmedType =
+      cfg.linkType === 'PUBLIC_REUSABLE' || cfg.linkType === 'DEALER_REUSABLE';
+    if (confirmedType && cfg.authorization) {
+      return { available: true, preview: false, config };
+    }
+    if (cfg.demoPreview && !this.isProduction()) {
+      return { available: true, preview: true, config };
+    }
+    return {
+      available: false,
+      reason: confirmedType
+        ? 'not_authorized_for_location'
+        : 'awaiting_vendor_confirmation',
+    };
   }
 
   sign(financeRequestId: string, tenantId: string, now = Date.now()): string {
@@ -208,7 +332,7 @@ export class CreditApplicationService {
   }
 
   /** Click handler: returns the CURRENT approved destination or null (never from the token). */
-  async click(token: string): Promise<string | null> {
+  async click(token: string): Promise<CreditClickResult> {
     const v = this.verify(token);
     if (!v) return null;
     const fr = await this.prisma.financeRequest.findFirst({
@@ -228,6 +352,21 @@ export class CreditApplicationService {
       );
       return null;
     }
+    if (res.preview) {
+      // Demo preview: nothing is opened at the vendor, so the link is NOT recorded as clicked.
+      void this.analytics.trackEvent(
+        fr.tenantId,
+        fr.locationId,
+        'credit_link_preview_opened',
+        {},
+        undefined,
+      );
+      return {
+        kind: 'preview',
+        providerName: res.config.providerName,
+        host: res.config.host ?? null,
+      };
+    }
     await this.prisma.financeRequest.update({
       where: { id: fr.id },
       data: {
@@ -245,6 +384,6 @@ export class CreditApplicationService {
       {},
       undefined,
     );
-    return res.config.url;
+    return { kind: 'redirect', url: res.config.url };
   }
 }

@@ -1,9 +1,17 @@
 {
-  "generatedAt": "2026-10-14T03:11:35.195Z",
+  "generatedAt": "2026-10-14T06:13:57.002Z",
   "cases": 25,
-  "passRate": 1,
+  "passRate": 0.96,
   "severe": 0,
-  "findings": [],
+  "findings": [
+    {
+      "case": "sales-no-match",
+      "turn": 0,
+      "severity": "EXPECT",
+      "rule": "reply_missing:/not finding|didn't find|no.*match/i",
+      "reply": "I don't see a Porsche I can verify in this store's current inventory. Want me to show you similar vehicles that are in stock, or have the team check incoming vehicles?"
+    }
+  ],
   "results": [
     {
       "id": "sales-broad",
@@ -18,7 +26,7 @@
     {
       "id": "sales-no-match",
       "category": "sales",
-      "pass": true
+      "pass": false
     },
     {
       "id": "sales-stale",
