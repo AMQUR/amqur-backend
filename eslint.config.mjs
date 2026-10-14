@@ -17,6 +17,7 @@ export default tseslint.config(
       'coverage/**',
       'node_modules/**',
       'test/evidence/**',
+      'command-center/**',
     ],
   },
   eslint.configs.recommended,

@@ -32,3 +32,5 @@ test/evidence/production-failclosed-[0-9]*.json
 release.json
 # Local binary upload storage (not source module)
 /uploads/
+command-center/node_modules
+command-center/dist

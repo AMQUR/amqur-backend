@@ -13,7 +13,8 @@ module.exports = {
   ],
   coverageDirectory: './coverage',
   testEnvironment: 'node',
-  modulePathIgnorePatterns: ['<rootDir>/dist/'],
+  modulePathIgnorePatterns: ['<rootDir>/dist/', '<rootDir>/command-center/'],
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/command-center/'],
   // Global floor = anti-regression. Critical modules enforce stronger gates.
   coverageThreshold: {
     global: {

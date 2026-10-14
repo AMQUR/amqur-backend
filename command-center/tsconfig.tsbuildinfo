@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/api.ts","./src/hooks.ts","./src/main.tsx","./src/ui.tsx","./src/pages/appointments.tsx","./src/pages/home.tsx","./src/pages/inbox.tsx","./src/pages/integrations.tsx","./src/pages/knowledge.tsx","./src/pages/login.tsx","./src/pages/ops.tsx","./src/pages/queues.tsx","./src/pages/security.tsx","./src/pages/settings.tsx"],"version":"5.9.3"}
