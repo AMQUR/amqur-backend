@@ -1,6 +1,6 @@
 # Master production execution ledger
 
-Last updated: 2026-10-14. Branch `feat/production-completion-2026-10` (backend PR AMQUR/amqur-backend#28, widget PR AMQUR/amqur-widget#21). Nothing here is deployed to staging or production by this work.
+Last updated: 2026-10-14 (release reconciliation pass). Branch `feat/production-completion-2026-10` (backend PR AMQUR/amqur-backend#28, widget PR AMQUR/amqur-widget#21). Nothing here is deployed to staging or production by this work.
 
 Statuses: `NOT_IMPLEMENTED` · `IN_PROGRESS` · `CODE_COMPLETE` (built, unit-tested) · `LOCAL_VERIFIED` (proven on the disposable Postgres/Redis stack through the real HTTP API) · `INTEGRATION_VERIFIED` (proven against the real vendor) · `STAGING_VERIFIED` · `PRODUCTION_VERIFIED` · `EXTERNAL_DEPENDENCY_BLOCKED` · `RELEASE_BLOCKED`.
 
@@ -84,3 +84,17 @@ No row is above `LOCAL_VERIFIED`: no vendor integration has credentials, staging
 | Load (local, LLM off) | p95 ≤ 37 ms up to 300 concurrent shoppers, 0 errors; soak 168 s 0 errors |
 | Staging deploy, backups, restore drill, monitoring DSN | RELEASE_BLOCKED (Railway access; B-11, B-12) |
 | Website installation (5 stores) | RELEASE_BLOCKED (B-10) |
+
+
+## Release reconciliation (2026-10-14, later)
+
+| Item | Result |
+|---|---|
+| PR #28 head `7ce3931`, PR #21 head `6950060` | CI green on every job (build-test, e2e-postgres, migrations-empty-db, docker-build, command-center, sbom; widget build) |
+| Merge to `main` | **Not performed** — the engineering session's permission policy blocks merging without review. Owner action. |
+| Staging | Still running `63425e0` (2026-08-28). Read-only acceptance against it: 21/21 (`scripts/staging-acceptance.sh`) |
+| Production dependency advisories | 0 (`deepmerge-ts` pinned ^8 via overrides) |
+| Real-model AI | Infrastructure complete (spend cap, load shedding, cost metering, status, probe, live eval harness); **no provider key available** → not verified |
+| Five-store simulation | 3,000 scenarios / 9,319 turns, 0 P0/P1/P2 |
+| Blind hold-out #2 | first run 75/84 (89.3%), fixed to 84/84 (no longer blind) |
+| Browser matrix | sales journey on all five engines incl. iPhone Safari; isolation on WebKit |
