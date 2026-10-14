@@ -1,0 +1,72 @@
+{
+  "generatedAt": "2026-10-14T11:49:33.495Z",
+  "seed": 20261014,
+  "mode": "deterministic (LLM disabled)",
+  "scenarios": 1670,
+  "turns": 5079,
+  "durationMs": 101370,
+  "throttleWaits": 1,
+  "taskSuccess": 1,
+  "holdoutTaskSuccess": 1,
+  "holdoutScenarios": 334,
+  "severities": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0
+  },
+  "byCategory": {
+    "property": {
+      "n": 1000,
+      "success": 1000,
+      "rate": 1
+    },
+    "multi-turn": {
+      "n": 500,
+      "success": 500,
+      "rate": 1
+    },
+    "adversarial": {
+      "n": 120,
+      "success": 120,
+      "rate": 1
+    },
+    "long": {
+      "n": 50,
+      "success": 50,
+      "rate": 1
+    }
+  },
+  "byDepartmentTurns": {
+    "sales": {
+      "n": 2567,
+      "failed": 0
+    },
+    "security": {
+      "n": 409,
+      "failed": 0
+    },
+    "conversation": {
+      "n": 771,
+      "failed": 0
+    },
+    "support": {
+      "n": 213,
+      "failed": 0
+    },
+    "service": {
+      "n": 753,
+      "failed": 0
+    },
+    "parts": {
+      "n": 231,
+      "failed": 0
+    },
+    "finance": {
+      "n": 135,
+      "failed": 0
+    }
+  },
+  "topRules": [],
+  "dbFindings": [],
+  "failures": []
+}

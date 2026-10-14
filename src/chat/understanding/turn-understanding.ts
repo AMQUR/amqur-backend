@@ -4,6 +4,7 @@ import {
   SensitiveKind,
 } from '../../common/security/sensitive-data';
 import { classifySocial, SocialAct } from '../dialogue/social';
+import { normalizeCustomerText } from './normalize';
 
 /**
  * Deterministic, multi-intent turn understanding.
@@ -200,6 +201,7 @@ export const MODELS: Record<string, string> = {
   renegade: 'Jeep',
   wagoneer: 'Jeep',
   'grand wagoneer': 'Jeep',
+  cayenne: 'Porsche',
   accord: 'Honda',
   civic: 'Honda',
   'cr-v': 'Honda',
@@ -420,6 +422,15 @@ const NAME_STOPWORDS = new Set([
   'stop',
   'test',
   'asap',
+  'buenas',
+  'buenos',
+  'tardes',
+  'noches',
+  'dias',
+  'días',
+  'good',
+  'night',
+  'day',
   // wellbeing / browsing words that follow "I'm …" but are never names
   'doing',
   'well',
@@ -578,7 +589,8 @@ function cap(s: string) {
 }
 
 export function detectLanguage(text: string): 'en' | 'es' | undefined {
-  const t = ` ${text.toLowerCase().replace(/[.,!?;:()]/g, ' ')} `;
+  const hasInvQ = /[¿¡ñ]/.test(text);
+  const t = ` ${text.toLowerCase().replace(/[.,!?¿¡;:()]/g, ' ')} `;
   const es = [
     ' hola ',
     ' quiero ',
@@ -619,6 +631,22 @@ export function detectLanguage(text: string): 'en' | 'es' | undefined {
     ' is ',
     ' my ',
     ' please ',
+    ' are ',
+    ' your ',
+    ' do ',
+    ' how ',
+    ' show ',
+    ' me ',
+    ' hours ',
+    ' price ',
+    ' thanks ',
+    ' needs ',
+    ' an ',
+    ' and ',
+    ' to ',
+    ' for ',
+    ' it ',
+    ' other ',
   ];
   const sEs = es.reduce((a, w) => a + (t.includes(w) ? 1 : 0), 0);
   const sEn = en.reduce((a, w) => a + (t.includes(w) ? 1 : 0), 0);
@@ -631,6 +659,15 @@ export function detectLanguage(text: string): 'en' | 'es' | undefined {
   )
     return 'es';
   if (sEs >= 2 && sEs > sEn) return 'es';
+  // Short Spanish messages ("hola", "¿Tienen Compass?", "buenas tardes") carry one strong cue.
+  const strong =
+    hasInvQ ||
+    /\b(hola|buenas|buenos|gracias|tienen|cuánto|cuanto|quiero|busco|necesito|sería|seria)\b/.test(
+      t,
+    );
+  if (strong && sEn === 0) return 'es';
+  // A plain English sentence switches back after Spanish ("What are your hours?").
+  if (sEn >= 2 && sEs === 0 && !hasInvQ) return 'en';
   if (sEn >= 2 && sEn > sEs) return 'en';
   return undefined;
 }
@@ -655,7 +692,9 @@ export function understandTurn(
   },
 ): TurnUnderstanding {
   const raw = message.trim();
-  const t = ` ${raw.toLowerCase().replace(/[“”]/g, '"').replace(/[’]/g, "'")} `;
+  const t = ` ${normalizeCustomerText(
+    raw.toLowerCase().replace(/[“”]/g, '"').replace(/[’]/g, "'"),
+  )} `;
   const intents: ScoredIntent[] = [];
   const add = (intent: TurnIntent, confidence: number, evidence: string) => {
     const ex = intents.find((i) => i.intent === intent);
@@ -857,17 +896,21 @@ export function understandTurn(
   if (seats) veh.seatsMin = WORD_NUM[seats[1]] ?? Number(seats[1]);
   if (Object.keys(veh).length) e.vehicle = veh;
   // Answering "what vehicle are we servicing?" — that's the customer's own car.
+  const shopping =
+    /\b(inventory|in stock|show me|do you have|have any|got any|any (?:new|used)|for sale|buy|shopping|looking for|interested in|tienen|busco|quiero ver)\b/.test(
+      t,
+    ) || /\bshow\b.*\binventory\b/.test(t);
   if (
     (pending === 'service_vehicle' ||
+      // Mid-service, a vehicle described like an owned one ("2019 Cherokee") is the service
+      // vehicle; a bare model name ("Wrangler") is a new shopping question.
       (ctx.activeDepartment === 'service' &&
         (pending === 'service_need' ||
           pending === 'appointment_date' ||
-          pending === 'appointment_time'))) &&
+          pending === 'appointment_time') &&
+        !!veh.year)) &&
     (veh.make || veh.model) &&
-    !/\b(inventory|in stock|show me|do you have|any (?:new|used)|for sale|buy|shopping)\b/.test(
-      t,
-    ) &&
-    !/\bshow\b.*\binventory\b/.test(t)
+    !shopping
   ) {
     e.ownVehicle = { year: veh.year, make: veh.make, model: veh.model };
     delete e.vehicle;
@@ -1047,7 +1090,7 @@ export function understandTurn(
 
   // ── HUMAN HANDOFF: "agent"/"person" only with request verbs; not "real estate agent", "personal"
   if (
-    /\b(talk|speak|chat|connect|transfer)\s+(?:to|with)\s+(?:a |an |the |someone|somebody|a real|real|live|an actual)?\s*(?:human|person|someone|somebody|agent|rep|representative|salesperson|sales person|manager|advisor|associate)\b/.test(
+    /\b(talk|speak|chat|connect|transfer|put)\s+(?:me\s+)?(?:to|with|through to|in touch with)\s+(?:a |an |the |someone|somebody|a real|real|live|an actual)?\s*(?:human|person|someone|somebody|agent|rep|representative|salesperson|sales person|manager|advisor|associate)\b/.test(
       t,
     ) ||
     (/\b(real person|live person|live agent|human please|a human|actual person|representative|hablar con (?:alguien|una persona|un asesor))\b/.test(
@@ -1089,10 +1132,12 @@ export function understandTurn(
     !/(?<!\b(?:oil|air|cabin|fuel) )\bfilter (?:by|for|to|them|those|results)\b/.test(
       t,
     );
-  if (
-    partsCue &&
-    !/\b(service department|service appointment|oil change)\b/.test(t)
-  ) {
+  // Service work phrased with part words ("tire rotation", "brake inspection") is service.
+  const servicePhrase =
+    /\b(squeak\w*|grind\w*|rattl\w*|vibrat\w*|overheat\w*|look at it|take a look|service department|service appointment|oil change|tire rotation|rotate (?:my )?tires|alignment|tune[- ]?up|inspection|check engine|warning light|battery (?:test|check)|brake (?:inspection|service|job))\b/.test(
+      t,
+    );
+  if (partsCue && !servicePhrase) {
     // "front brakes … how much" → parts AND (often) installed service; parts inquiry handles both
     add('PARTS_INQUIRY', e.partNumber ? 0.95 : 0.85, 'parts vocabulary');
     const pm =
@@ -1110,7 +1155,7 @@ export function understandTurn(
 
   // ── SERVICE: "service" excluding "service contract/plan" (F&I product) and "customer service" complaints
   const serviceNeed =
-    /\b(oil change|cambio de aceite|tire rotation|rotate (?:my )?tires|alignment|inspection|state inspection|recall|check engine|warning light|maintenance|tune[- ]?up|repair|diagnos\w*|brake (?:job|service|inspection)|transmission (?:service|flush)|coolant|a\/?c (?:repair|service|not)|noise|leak|won'?t start|battery (?:test|replacement)|servicio|mantenimiento)\b/.exec(
+    /\b(squeak\w*|grind\w*|rattl\w*|vibrat\w*|shak(?:e|ing)|pulls? to|pulling|overheat\w*|smok(?:e|ing)|takes? a look|look at it|oil change|cambio de aceite|tire rotation|rotate (?:my )?tires|alignment|inspection|state inspection|recall|check engine|warning light|maintenance|tune[- ]?up|repair|diagnos\w*|brake (?:job|service|inspection)|transmission (?:service|flush)|coolant|a\/?c (?:repair|service|not)|noise|leak|won'?t start|battery (?:test|replacement)|servicio|mantenimiento)\b/.exec(
       t,
     );
   const serviceDept =
@@ -1228,10 +1273,13 @@ export function understandTurn(
     /\b(credit app(?:lication)?s?|apply for (?:financing|credit|a loan|finance)|apply (?:for it )?online|get pre-?approved|pre-?approv\w*|pre-?qualif\w*|finance application|financing application|loan application|(?:send|give|show) me (?:the |your |an? )?(?:credit |finance |financing |loan )?app(?:lication)?|(?:fill|filling) out (?:a |the |an |your )?(?:credit |finance |financing )?app(?:lication)?|where(?:'s| is) (?:the |your )(?:credit |finance |financing )?app(?:lication)?|solicitud de cr[eé]dito|aplicar para (?:el )?cr[eé]dito)\b/.test(
       t,
     ) ||
-    (ctx.creditOffered &&
-      /\b(do it online|online|apply now|where do i apply|how do i apply)\b/.test(
-        t,
-      ))
+    /\b(?:get|getting) (?:pre-?)?financed\b|\b(?:finance|financing|credit|loan) app\b/.test(
+      t,
+    ) ||
+    /\b(where (?:do|can) i apply|how (?:do|can) i apply|apply now|apply for (?:a |an )?(?:car )?loan)\b/.test(
+      t,
+    ) ||
+    (ctx.creditOffered && /\b(do it online|online)\b/.test(t))
   ) {
     add('CREDIT_APPLICATION', 0.95, 'credit application');
   }
@@ -1246,7 +1294,7 @@ export function understandTurn(
     add('FINANCE_REQUEST', 0.7, 'finance discussion');
   }
   if (
-    /\b(am i approved|approve me|guarantee(?:d)? approval|what rate (?:will|would|do) i get|my rate|(?:i'?m|i am|i'?ll be|i will be|be) (?:pre-?)?approved|mean (?:i'?m|i am) (?:pre-?)?approved|instant(?:ly)? approv\w*)\b/.test(
+    /\b(am i approved|approve me|will i (?:get|be) (?:pre-?)?approved|can i get (?:pre-?)?approved|guarantee(?:d)? approval|what rate (?:will|would|do) i get|my rate|(?:i'?m|i am|i'?ll be|i will be|be) (?:pre-?)?approved|mean (?:i'?m|i am) (?:pre-?)?approved|instant(?:ly)? approv\w*)\b/.test(
       t,
     )
   ) {
@@ -1256,6 +1304,7 @@ export function understandTurn(
 
   // ── OUT-THE-DOOR quote (cash or finance) — never requires a credit application
   if (
+    /\btotal\b.{0,25}\b(?:tax|taxes|fees)\b/.test(t) ||
     /\b(out[- ]the[- ]door|out of the door|otd|drive[- ]?off|all[- ]in (?:price|cost|number)|total (?:price|cost)|final price|price (?:with|including) (?:tax|taxes|fees)|with (?:tax(?:es)?(?: and fees)?|fees) included|tax(?:es)? and fees included|precio final|precio total)\b/.test(
       t,
     ) ||

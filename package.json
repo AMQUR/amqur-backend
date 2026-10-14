@@ -34,7 +34,8 @@
     "build:all": "npm run build && npm run build:cc",
     "credit:destination": "ts-node --transpile-only scripts/credit-destination.ts",
     "seed:local-demo": "ts-node --transpile-only scripts/seed-local-demo.ts",
-    "start:local-demo": "bash scripts/start-local-demo.sh"
+    "start:local-demo": "bash scripts/start-local-demo.sh",
+    "test:simulator": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=simulator"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

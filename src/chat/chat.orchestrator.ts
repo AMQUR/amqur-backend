@@ -3051,7 +3051,24 @@ export class ChatOrchestrator {
         );
         return;
       }
-      if (!need && !t.u.entities.partNeed && !st.parts?.inquiryId) {
+      if (t.u.entities.ownVehicle && !t.handled.has('ACK_OWN_VEHICLE')) {
+        t.handled.add('ACK_OWN_VEHICLE');
+        const ov = t.u.entities.ownVehicle;
+        t.narration.push(
+          tr(
+            t.lang,
+            `Got it — your ${[ov.year, ov.make, ov.model].filter(Boolean).join(' ')}.`,
+            `Entendido — su ${[ov.year, ov.make, ov.model].filter(Boolean).join(' ')}.`,
+          ),
+        );
+      }
+      // A date/time already given is enough to save the request; the advisor asks the details.
+      if (
+        !need &&
+        !t.u.entities.partNeed &&
+        !st.parts?.inquiryId &&
+        !t.u.entities.when?.date
+      ) {
         st.draftAppointment = { type };
         this.ask(
           t,
@@ -4500,8 +4517,11 @@ export class ChatOrchestrator {
       // Same question asked again: keep the facts, but don't answer like a recording.
       draft = `${draft} ${tr(t.lang, 'Is there anything else I can help you with?', '¿Hay algo más en lo que le pueda ayudar?')}`;
     } else if (signature(draft) === st.lastReplySig && q) {
-      draft =
-        `${t.answers.concat(t.narration).join(' ')} ${tr(t.lang, 'Or is there something else I can help with?', '¿O hay algo más en lo que le pueda ayudar?')}`.trim();
+      // Re-asking the same thing: never drop the question itself. Say why we're asking again.
+      const said = t.answers.concat(t.narration).join(' ').trim();
+      draft = said
+        ? `${said} ${tr(t.lang, 'Or is there something else I can help with?', '¿O hay algo más en lo que le pueda ayudar?')}`
+        : `${tr(t.lang, 'Sorry, I still need one detail —', 'Perdón, aún me falta un dato —')} ${q.text.charAt(0).toLowerCase()}${q.text.slice(1)}`;
     }
 
     // Language layer: polish with LLM (router → fallback). Claims present in the server

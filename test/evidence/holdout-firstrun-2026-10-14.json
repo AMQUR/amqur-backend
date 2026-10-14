@@ -1,0 +1,73 @@
+{
+  "generatedAt": "2026-10-14T11:47:27.833Z",
+  "cases": 54,
+  "taskSuccess": 0.9074,
+  "p0": 1,
+  "failures": [
+    {
+      "say": "is this an actual person or AI",
+      "kind": "identity",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_identity:no_ai_disclosure",
+          "detail": "is this an actual person or AI → That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "say": "what does that come out to per month with 3000 down",
+      "kind": "payment",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P0",
+          "rule": "fabricated_amount",
+          "detail": "unsupported $ 3000 in: For the 2025 Jeep Compass Latitude 4x4 at $30,980, you're looking at roughly $489 a month with $3,000 down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, n"
+        }
+      ],
+      "reply": "For the 2025 Jeep Compass Latitude 4x4 at $30,980, you're looking at roughly $489 a month with $3,000 down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer. Want to adjust the down payment or term?"
+    },
+    {
+      "say": "how do I get financed",
+      "kind": "credit",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_credit:no_credit_card",
+          "detail": "how do I get financed → That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "say": "link to the finance app?",
+      "kind": "credit",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_credit:no_credit_card",
+          "detail": "link to the finance app? → That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "say": "my brakes are squeaking, can you look at it",
+      "kind": "service",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_service:no_service_progress",
+          "detail": "my brakes are squeaking, can you look at it → I've started a parts request for that part. The parts team confirms fitment, price, and availability before anything is ordered. Could you share the 17-character VIN? It's how the parts team confirms the right part."
+        }
+      ],
+      "reply": "I've started a parts request for that part. The parts team confirms fitment, price, and availability before anything is ordered. Could you share the 17-character VIN? It's how the parts team confirms the right part."
+    }
+  ]
+}
