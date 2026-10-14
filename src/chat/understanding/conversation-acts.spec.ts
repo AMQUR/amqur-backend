@@ -191,3 +191,47 @@ describe('negatives and typos', () => {
     expect(u('show me a wranglr').entities.vehicle?.model).toBe('Wrangler');
   });
 });
+
+describe('hold-out #2 regressions (2026-10-14)', () => {
+  it.each([
+    ['am i chatting with a robot', 'SMALL_TALK'],
+    ['is there a human on the other end', 'SMALL_TALK'],
+    ['wranglers on the lot?', 'INVENTORY_SEARCH'],
+    ['how can i get pre approved', 'CREDIT_APPLICATION'],
+    ['do u have a tahoo', 'INVENTORY_SEARCH'],
+    ['q x 60 in stock', 'INVENTORY_SEARCH'],
+  ])('"%s" → %s', (m, intent) => {
+    expect(u(m).primary).toBe(intent);
+  });
+  it('identity questions never trigger a forced handoff', () => {
+    expect(
+      u('is there a human on the other end').intents.map((i) => i.intent),
+    ).not.toContain('HUMAN_HANDOFF');
+  });
+  it('"pay with taxes and fees" is an out-the-door question', () => {
+    expect(
+      u('what will i actually pay with taxes and fees', {
+        hasSelectedVehicle: true,
+      }).primary,
+    ).toBe('OTD_QUOTE');
+  });
+  it('a second model named is kept as an alternative ("pathfinder or rouge?")', () => {
+    const r = u('pathfinder or rouge?');
+    expect(r.entities.vehicle?.model).toBe('Pathfinder');
+    expect(r.entities.alternativeModels).toContain('Rogue');
+  });
+  it('owned models outside our vocabulary are kept, alphanumeric models stay uppercase', () => {
+    expect(
+      u('service for my 2019 Dodge Journey').entities.ownVehicle,
+    ).toMatchObject({ make: 'Dodge', model: 'Journey' });
+    expect(
+      u('service for my 2018 INFINITI QX50').entities.ownVehicle?.model,
+    ).toBe('QX50');
+    expect(u('show me qx60s').entities.vehicle?.model).toBe('QX60');
+  });
+  it('product questions about a model are not availability searches', () => {
+    expect(u("What's new with the 2027 Tacoma?").primary).not.toBe(
+      'INVENTORY_SEARCH',
+    );
+  });
+});

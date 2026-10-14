@@ -37,7 +37,8 @@
     "start:local-demo": "bash scripts/start-local-demo.sh",
     "test:simulator": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=simulator",
     "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",
-    "ai:check": "ts-node --transpile-only scripts/ai-check.ts"
+    "ai:check": "ts-node --transpile-only scripts/ai-check.ts",
+    "eval:live-model": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=live-model"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

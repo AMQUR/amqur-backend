@@ -91,6 +91,8 @@ export type TurnEntities = {
   };
   /** The customer is talking about a vehicle they OWN ("my other Jeep") — never a shopping target. */
   ownVehicle?: { make?: string; model?: string; year?: number };
+  /** Additional models named in the same message, in order ("X or Y?"). */
+  alternativeModels?: string[];
   /** Registration ZIP for an out-the-door quote. */
   zip?: string;
   /** "does that mean I'm approved?" */
@@ -476,6 +478,26 @@ const NAME_STOPWORDS = new Set([
   ...MAKES,
 ]);
 
+/** Display a model the way manufacturers write it: "QX60", "RAV4", "CR-V", "F-150", "Grand Cherokee". */
+export function displayModel(key: string): string {
+  const special: Record<string, string> = {
+    'cr-v': 'CR-V',
+    crv: 'CR-V',
+    f150: 'F-150',
+    'f-150': 'F-150',
+    'hr-v': 'HR-V',
+  };
+  if (special[key]) return special[key];
+  return key
+    .split(' ')
+    .map((w) =>
+      /\d/.test(w) && /[a-z]/.test(w)
+        ? w.toUpperCase()
+        : w.charAt(0).toUpperCase() + w.slice(1),
+    )
+    .join(' ');
+}
+
 function editDistance(a: string, b: string): number {
   const dp = Array.from(
     { length: a.length + 1 },
@@ -515,9 +537,20 @@ const FUZZY_STOP = new Set([
 ]);
 
 export function fuzzyModel(text: string): string | null {
-  const words = text.toLowerCase().match(/[a-z0-9-]{6,}/g) ?? [];
+  const words = text.toLowerCase().match(/[a-z0-9-]{5,}/g) ?? [];
   for (const w of words) {
     if (FUZZY_STOP.has(w) || MODELS[w]) continue;
+    if (w.length === 5) {
+      // Short words: one edit only, and only against models of the same length.
+      for (const m of Object.keys(MODELS)) {
+        if (m.length !== 5 || m.includes(' ')) continue;
+        if (editDistance(w, m) === 1) return m;
+        // one adjacent swap ("rouge" → "rogue")
+        for (let i = 0; i < 4; i += 1)
+          if (w === m.slice(0, i) + m[i + 1] + m[i] + m.slice(i + 2)) return m;
+      }
+      continue;
+    }
     for (const m of Object.keys(MODELS)) {
       if (m.includes(' ') || m.length < 6) continue;
       if (Math.abs(m.length - w.length) <= 2 && editDistance(w, m) <= 2)
@@ -599,6 +632,14 @@ export function extractContact(
 }
 
 function cap(s: string) {
+  // Brands written in capitals by their manufacturers.
+  const brand: Record<string, string> = {
+    infiniti: 'INFINITI',
+    bmw: 'BMW',
+    gmc: 'GMC',
+    mini: 'MINI',
+  };
+  if (brand[s.toLowerCase()]) return brand[s.toLowerCase()];
   return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 }
 
@@ -798,7 +839,7 @@ export function understandTurn(
   let tShop = tradeSpan ? t.replace(tradeSpan, ' ') : t;
   // "service for my other Jeep" / "my 2019 Cherokee needs brakes" → owned vehicle, not a shopping target
   const own =
-    /\bmy (?:other |old |current |wife'?s |husband'?s |)(?:(\d{4}) )?([a-z-]+)(?: ([a-z-]+))?/.exec(
+    /\bmy (?:other |old |current |wife'?s |husband'?s |)(?:(\d{4}) )?([a-z-]+)(?: ([a-z][a-z0-9-]*))?/.exec(
       tShop,
     );
   if (
@@ -829,9 +870,25 @@ export function understandTurn(
             ? 'Volkswagen'
             : cap(w2)
         : undefined;
+    // The customer's OWN car needn't be in our shopping vocabulary ("my 2019 Dodge Journey").
     const model = key
-      ? key.replace(/\b\w/g, (c) => c.toUpperCase()).replace('Cr-V', 'CR-V')
-      : undefined;
+      ? displayModel(key)
+      : make &&
+          w3 &&
+          /^[a-z][a-z0-9-]{1,15}$/.test(w3) &&
+          !NAME_STOPWORDS.has(w3) &&
+          ![
+            'needs',
+            'need',
+            'is',
+            'has',
+            'with',
+            'for',
+            'and',
+            'that',
+          ].includes(w3)
+        ? displayModel(w3)
+        : undefined;
     if (make || model) {
       e.ownVehicle = {
         ...(own[1] ? { year: Number(own[1]) } : {}),
@@ -850,18 +907,38 @@ export function understandTurn(
     const re = new RegExp(`\\b${model.replace(/[-]/g, '[- ]?')}s?\\b`);
     if (re.test(tShop)) {
       if (/^\d+$/.test(model) && !/\bram\b/.test(tShop)) continue;
-      veh.model = model
-        .replace(/\b\w/g, (c) => c.toUpperCase())
-        .replace('Cr-V', 'CR-V')
-        .replace('F150', 'F-150');
+      veh.model = displayModel(model);
       veh.make = make;
       break;
     }
   }
+  // Other models named in the same message ("pathfinder or rogue?") — tried when the first has none.
+  const alts: string[] = [];
+  for (const m of Object.keys(MODELS).sort((a, b) => b.length - a.length)) {
+    if (/^\d+$/.test(m)) continue;
+    const re = new RegExp(`\\b${m.replace(/[-]/g, '[- ]?')}s?\\b`);
+    const dm = displayModel(m);
+    if (
+      re.test(tShop) &&
+      dm !== veh.model &&
+      !alts.includes(dm) &&
+      !(veh.model ?? '').toLowerCase().includes(m)
+    )
+      alts.push(dm);
+  }
+  for (const w of tShop.match(/[a-z0-9-]{5,}/g) ?? []) {
+    const fm = fuzzyModel(w);
+    if (
+      fm &&
+      displayModel(fm) !== veh.model &&
+      !alts.includes(displayModel(fm))
+    )
+      alts.push(displayModel(fm));
+  }
   if (!veh.model) {
     const fm = fuzzyModel(tShop);
     if (fm) {
-      veh.model = fm.replace(/\b\w/g, (c) => c.toUpperCase());
+      veh.model = displayModel(fm);
       veh.make = MODELS[fm];
     }
   }
@@ -909,6 +986,7 @@ export function understandTurn(
   );
   if (seats) veh.seatsMin = WORD_NUM[seats[1]] ?? Number(seats[1]);
   if (Object.keys(veh).length) e.vehicle = veh;
+  if (veh.model && alts.length) e.alternativeModels = alts.slice(0, 2);
   // Answering "what vehicle are we servicing?" — that's the customer's own car.
   const shopping =
     /\b(inventory|in stock|show me|do you have|have any|got any|any (?:new|used)|for sale|buy|shopping|looking for|interested in|tienen|busco|quiero ver)\b/.test(
@@ -1111,7 +1189,9 @@ export function understandTurn(
       t,
     ) &&
       // "are you a real person?" asks what the assistant is — answered honestly, not a transfer
-      !/\b(are you|is this|am i (?:talking|chatting))\b/.test(t)) ||
+      !/\b(are you|is this|am i (?:talking|chatting|speaking)|is there (?:an? )?(?:real |actual )?(?:human|person))\b/.test(
+        t,
+      )) ||
     /^\s*(agent|human|representative|operator)\s*[.!?]*\s*$/.test(t) ||
     /\b(call me|have someone (?:call|text|reach)|someone (?:call|contact) me)\b/.test(
       t,
@@ -1284,7 +1364,7 @@ export function understandTurn(
 
   // ── FINANCE: "finance" alone can be a department question; credit app explicit
   if (
-    /\b(credit app(?:lication)?s?|apply for (?:financing|credit|a loan|finance)|apply (?:for it )?online|get pre-?approved|pre-?approv\w*|pre-?qualif\w*|finance application|financing application|loan application|(?:send|give|show) me (?:the |your |an? )?(?:credit |finance |financing |loan )?app(?:lication)?|(?:fill|filling) out (?:a |the |an |your )?(?:credit |finance |financing )?app(?:lication)?|where(?:'s| is) (?:the |your )(?:credit |finance |financing )?app(?:lication)?|solicitud de cr[eé]dito|aplicar para (?:el )?cr[eé]dito)\b/.test(
+    /\b(credit app(?:lication)?s?|apply for (?:financing|credit|a loan|finance)|apply (?:for it )?online|get pre[- ]?approved|pre[- ]?approv\w*|pre[- ]?qualif\w*|finance application|financing application|loan application|(?:send|give|show) me (?:the |your |an? )?(?:credit |finance |financing |loan )?app(?:lication)?|(?:fill|filling) out (?:a |the |an |your )?(?:credit |finance |financing )?app(?:lication)?|where(?:'s| is) (?:the |your )(?:credit |finance |financing )?app(?:lication)?|solicitud de cr[eé]dito|aplicar para (?:el )?cr[eé]dito)\b/.test(
       t,
     ) ||
     /\b(?:get|getting) (?:pre-?)?financed\b|\b(?:finance|financing|credit|loan) app\b/.test(
@@ -1308,7 +1388,7 @@ export function understandTurn(
     add('FINANCE_REQUEST', 0.7, 'finance discussion');
   }
   if (
-    /\b(am i approved|approve me|will i (?:get|be) (?:pre-?)?approved|can i get (?:pre-?)?approved|guarantee(?:d)? approval|what rate (?:will|would|do) i get|my rate|(?:i'?m|i am|i'?ll be|i will be|be) (?:pre-?)?approved|mean (?:i'?m|i am) (?:pre-?)?approved|instant(?:ly)? approv\w*)\b/.test(
+    /\b(am i approved|approve me|will i (?:get|be) (?:pre-?)?approved|can i get (?:pre-?)?approved|guarantee(?:d)? approval|what rate (?:will|would|do) i get|my rate|(?:i'?m|i am|i'?ll be|i will be|be) (?:pre[- ]?)?approved|mean (?:i'?m|i am) (?:pre[- ]?)?approved|instant(?:ly)? approv\w*)\b/.test(
       t,
     )
   ) {
@@ -1319,6 +1399,9 @@ export function understandTurn(
   // ── OUT-THE-DOOR quote (cash or finance) — never requires a credit application
   if (
     /\btotal\b.{0,25}\b(?:tax|taxes|fees)\b/.test(t) ||
+    /\bpay\b.{0,20}\b(?:with|after|including|plus) (?:tax|taxes|fees|title)\b/.test(
+      t,
+    ) ||
     /\b(out[- ]the[- ]door|out of the door|otd|drive[- ]?off|all[- ]in (?:price|cost|number)|total (?:price|cost)|final price|price (?:with|including) (?:tax|taxes|fees)|with (?:tax(?:es)?(?: and fees)?|fees) included|tax(?:es)? and fees included|precio final|precio total)\b/.test(
       t,
     ) ||
@@ -1481,7 +1564,7 @@ export function understandTurn(
       hasVehicleSpec &&
       !selecting &&
       isQuestion &&
-      /\b(any|have|got|available|stock|show|see|inventory|options|look at|carry)\b/.test(
+      /\b(any|have|got|available|stock|show|see|inventory|options|look at|carry|lot|on hand)\b/.test(
         tShop,
       )
     )
@@ -1556,6 +1639,21 @@ export function understandTurn(
     )
       add('SMALL_TALK', pure ? 0.9 : 0.65, 'social act');
   }
+
+  // A question that names a vehicle and asks nothing else is an availability question.
+  if (
+    !intents.length &&
+    isQuestion &&
+    hasVehicleSpec &&
+    !e.ownVehicle &&
+    !partsCue &&
+    !e.serviceNeed &&
+    // Product-information questions are not availability ("what's new with…", "is it reliable")
+    !/\b(what'?s new|new with|difference|reliable|reliability|review|mpg|mileage rating|specs?|horsepower|towing capacity|how (?:does|is|good)|good car|worth it|better than|vs\.?|versus|safety rating|recall)\b/.test(
+      t,
+    )
+  )
+    add('INVENTORY_SEARCH', 0.75, 'vehicle question');
 
   // ── knowledge / general automotive question
   if (!intents.length && isQuestion)

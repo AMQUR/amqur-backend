@@ -540,10 +540,12 @@ export class ChatOrchestrator {
       toolCount: 0,
       urgent: false,
       quickReplies: [],
+      // "Actually, …" opening a new request is not a correction of what we just did.
       isCorrection:
-        /\b(actually|instead|i meant|correction|no,? i said|en realidad|mejor)\b/i.test(
+        /\b(instead|i meant|correction|no,? i said|en realidad|mejor)\b/i.test(
           rawMessage,
-        ),
+        ) ||
+        /^\s*actually,?\s+(?:make it|change|i meant|no)\b/i.test(rawMessage),
       capCache: new Map(),
       handled: new Set(),
       conversationExtra: {},
@@ -1673,6 +1675,27 @@ export class ChatOrchestrator {
       if (fits.length) vehicles = fits;
       else monthlyMiss = true;
     }
+    // "Pathfinder or Rogue?" — if the first has nothing verified, try the other(s) named.
+    let altNote: string | null = null;
+    if (vehicles.length === 0 && t.u.entities.alternativeModels?.length) {
+      for (const alt of t.u.entities.alternativeModels) {
+        const found = await this.inventory.searchVehicles({
+          tenantId: t.tenantId,
+          locationId: t.locationId,
+          model: alt,
+        });
+        if (found.length) {
+          altNote = tr(
+            t.lang,
+            `I don't see a ${c.model} I can verify in stock, but here ${found.length === 1 ? `is the ${found[0].model}` : `are ${found.length} ${found[0].model}s`} I can.`,
+            `No veo un ${c.model} en existencia, pero aquí ${found.length === 1 ? `está el ${found[0].model}` : `hay ${found.length} ${found[0].model}`}.`,
+          );
+          vehicles = found;
+          t.st.criteria = { ...t.st.criteria, model: alt };
+          break;
+        }
+      }
+    }
     if (vehicles.length === 0) {
       this.metrics.increment('inventory.miss');
       void this.analytics.trackEvent(
@@ -1760,7 +1783,8 @@ export class ChatOrchestrator {
       (e) =>
         e.field === 'inventory_availability' && e.freshnessState !== 'fresh',
     );
-    if (relaxedNote) t.narration.push(relaxedNote);
+    if (altNote) t.narration.push(altNote);
+    else if (relaxedNote) t.narration.push(relaxedNote);
     else if (sameAsShown && shown.length > 1) {
       t.narration.push(
         tr(
@@ -1778,10 +1802,20 @@ export class ChatOrchestrator {
         ),
       );
     } else {
+      // Name the model the way the inventory does ("QX60", "CR-V"), not the parser's casing.
+      const shownModel =
+        c.model &&
+        shown.every((v) =>
+          (v.model ?? '').toLowerCase().startsWith(c.model!.toLowerCase()),
+        )
+          ? (shown.find(
+              (v) => (v.model ?? '').toLowerCase() === c.model!.toLowerCase(),
+            )?.model ?? c.model)
+          : c.model;
       const what =
         vehicleLabel(
           {
-            model: c.model,
+            model: shownModel,
             make: c.model ? undefined : c.make,
             color: c.color,
           },

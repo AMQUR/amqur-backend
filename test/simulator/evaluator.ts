@@ -213,6 +213,17 @@ export function evaluateTurn(params: {
       add('P0', 'payment_price_mismatch', `${c.vin} ${c.price}`);
   }
 
+  // ── P2 model names must match the dealership's own spelling ("QX60", not "Qx60")
+  for (const name of new Set(oracle.fixtures.map((v) => v.model))) {
+    const re = new RegExp(
+      `\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}s?\\b`,
+      'gi',
+    );
+    for (const m of text.matchAll(re))
+      if (!m[0].startsWith(name))
+        add('P2', 'model_casing', `"${m[0]}" should be "${name}"`);
+  }
+
   // ── P2 style
   if ((text.match(/\?/g) ?? []).length > 2)
     add('P2', 'too_many_questions', text.slice(0, 160));
@@ -326,7 +337,9 @@ export function evaluateTurn(params: {
     case 'service':
       if (
         !hasCard('appointment') &&
-        !/vehicle|what day|need|when|veh[ií]culo|d[ií]a|necesita/i.test(text)
+        !/vehicle|what day|what time|need|when|veh[ií]culo|d[ií]a|hora|necesita/i.test(
+          text,
+        )
       )
         fail('no_service_progress');
       if (/can.t take appointment|not enabled/i.test(text))

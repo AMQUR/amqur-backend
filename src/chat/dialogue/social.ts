@@ -52,7 +52,7 @@ const FAREWELL =
 const BROWSING =
   /\b(just (?:looking|browsing|checking (?:things )?out)|looking around|browsing|window shopping|not (?:ready|buying) (?:yet|today|right now)|no rush|just curious|solo (?:estoy )?mirando)\b/;
 const IDENTITY =
-  /\b(?:is this|are you|am i talking to) (?:an? )?(?:actual |real )?(?:person|human) or (?:an? )?(?:ai|bot|robot|machine)|is this (?:an? )?(?:ai|bot|robot|chatbot)|are you chatgpt|(are you (?:a )?(?:bot|robot|real|human|person|ai|a real person|an ai|a computer|chatgpt|automated)|is this (?:a )?(?:bot|real person|human|ai)|am i (?:talking|chatting) (?:to|with) (?:a )?(?:bot|human|person|real person|ai)|who am i (?:talking|chatting) (?:to|with)|what are you|eres (?:un )?(?:robot|bot|humano|persona))\b/;
+  /\b(?:is this|are you|am i talking to) (?:an? )?(?:actual |real )?(?:person|human) or (?:an? )?(?:ai|bot|robot|machine)|is this (?:an? )?(?:ai|bot|robot|chatbot)|are you chatgpt|am i (?:talking|chatting|speaking) (?:to|with) (?:an? )?(?:robot|machine|computer|bot|ai|human|person|real person)|is there (?:an? )?(?:real |actual )?(?:human|person) (?:on the other end|there|on this|behind this|reading this)|(are you (?:a )?(?:bot|robot|real|human|person|ai|a real person|an ai|a computer|chatgpt|automated)|is this (?:a )?(?:bot|real person|human|ai)|am i (?:talking|chatting) (?:to|with) (?:a )?(?:bot|human|person|real person|ai)|who am i (?:talking|chatting) (?:to|with)|what are you|eres (?:un )?(?:robot|bot|humano|persona))\b/;
 const COMPLIMENT =
   /^\s*(cool|nice|awesome|great|sweet|neat|perfect|love it|good to know|that'?s (?:great|helpful|awesome|cool|nice)|you'?re (?:helpful|great|awesome|good)|very helpful|so helpful)\s*[!.]*\s*$/;
 const LAUGH = /^\s*(lol|haha+|hehe+|lmao|jaja+)\b/;

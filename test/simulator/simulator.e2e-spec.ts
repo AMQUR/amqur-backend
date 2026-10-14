@@ -11,6 +11,8 @@ import {
 import { generateScenarios, Scenario } from './generator';
 import { ConversationOracle, evaluateTurn, Finding, Reply } from './evaluator';
 import { HOLDOUT } from './holdout';
+import { STORES, StoreVocab } from './stores';
+import { HOLDOUT2 } from './holdout2';
 
 /**
  * Autonomous customer simulator — drives the REAL HTTP API + Postgres with thousands of
@@ -53,9 +55,25 @@ describe('customer simulator', () => {
   let dealer: DemoDealer;
   let rival: DemoDealer;
   let token: string;
+  const fleet: Array<{ vocab: StoreVocab; dealer: DemoDealer; token: string }> =
+    [];
 
   beforeAll(async () => {
     ctx = await createE2eApp();
+    for (const vocab of STORES) {
+      const d = await seedDemoDealer(ctx.app, ctx.prisma, `sim5-${vocab.key}`, {
+        vehicles: vocab.vehicles,
+      });
+      const tk = await request(ctx.app.getHttpServer())
+        .post('/api/public/widget-token')
+        .set('Origin', SIM_ORIGIN)
+        .send({ tenantSlug: d.slug, locationSlug: 'main' });
+      fleet.push({
+        vocab,
+        dealer: d,
+        token: unwrap<{ token: string }>(tk.body).token,
+      });
+    }
     dealer = await seedDemoDealer(ctx.app, ctx.prisma, 'sim-motors');
     rival = await seedDemoDealer(ctx.app, ctx.prisma, 'sim-rival', {
       vehicles: RIVAL_VEHICLES,
@@ -69,16 +87,28 @@ describe('customer simulator', () => {
   afterAll(async () => ctx.app.close());
 
   it('generated conversations meet the truth, safety and task gates', async () => {
-    let scenarios: Scenario[] = generateScenarios({
-      baseSeed: SEED,
-      property: N('SIM_PROPERTY', 1000),
-      multiTurn: N('SIM_MULTI', 500),
-      adversarial: N('SIM_ADV', 120),
-      long: N('SIM_LONG', 50),
-    });
+    // ~3,000 scenarios across the five simulated stores by default (per-store = total / 5).
+    const per = (k: string, d: number) =>
+      Math.max(0, Math.round(N(k, d) / fleet.length));
+    let scenarios: Array<Scenario & { store: number }> = fleet.flatMap((f, i) =>
+      generateScenarios({
+        baseSeed: SEED + i * 1_000_000,
+        store: f.vocab,
+        property: per('SIM_PROPERTY', 1750),
+        multiTurn: per('SIM_MULTI', 900),
+        adversarial: per('SIM_ADV', 250),
+        long: per('SIM_LONG', 100),
+      }).map((s) => ({ ...s, store: i })),
+    );
     if (process.env.SIM_ONLY)
       scenarios = scenarios.filter((s) => s.id === process.env.SIM_ONLY);
-    const foreign = new Set(rival.vehicles.map((v) => v.vin));
+    const foreignFor = (i: number) =>
+      new Set([
+        ...rival.vehicles.map((v) => v.vin),
+        ...fleet
+          .filter((_, j) => j !== i)
+          .flatMap((f) => f.dealer.vehicles.map((v) => v.vin)),
+      ]);
     const results: Array<{
       s: Scenario;
       findings: Finding[];
@@ -88,7 +118,11 @@ describe('customer simulator', () => {
     let throttleWaits = 0;
     const started = Date.now();
     for (const s of scenarios) {
-      const oracle = new ConversationOracle(dealer.vehicles, foreign);
+      const store = fleet[s.store];
+      const oracle = new ConversationOracle(
+        store.dealer.vehicles,
+        foreignFor(s.store),
+      );
       const findings: Finding[] = [];
       const transcript: Array<{ u: string; a: string }> = [];
       let cid: string | undefined;
@@ -99,7 +133,7 @@ describe('customer simulator', () => {
         const send = () =>
           request(ctx.app.getHttpServer())
             .post('/api/chat')
-            .set('Authorization', `Bearer ${token}`)
+            .set('Authorization', `Bearer ${store.token}`)
             .set('Origin', SIM_ORIGIN)
             .send({ message: turn.say, conversationId: cid });
         let r = await send();
@@ -138,8 +172,9 @@ describe('customer simulator', () => {
     // ── database-level invariants (independent of replies)
     const db = ctx.prisma;
     const dbFindings: Finding[] = [];
+    const fleetIds = fleet.map((f) => f.dealer.tenantId);
     const confirmed = await db.appointment.count({
-      where: { tenantId: dealer.tenantId, status: 'CONFIRMED' },
+      where: { tenantId: { in: fleetIds }, status: 'CONFIRMED' },
     });
     if (confirmed)
       dbFindings.push({
@@ -164,7 +199,7 @@ describe('customer simulator', () => {
       });
     const credit = await db.financeRequest.count({
       where: {
-        tenantId: dealer.tenantId,
+        tenantId: { in: fleetIds },
         creditLinkState: { in: ['CLICKED', 'COMPLETED_VERIFIED'] },
       },
     });
@@ -226,6 +261,17 @@ describe('customer simulator', () => {
       taskSuccess: Number(rate(results).toFixed(4)),
       holdoutTaskSuccess: Number(rate(holdout).toFixed(4)),
       holdoutScenarios: holdout.length,
+      byStore: Object.fromEntries(
+        fleet.map((f, i) => {
+          const xs = results.filter(
+            (x) => (x.s as Scenario & { store: number }).store === i,
+          );
+          return [
+            f.vocab.key,
+            { scenarios: xs.length, taskSuccess: Number(rate(xs).toFixed(4)) },
+          ];
+        }),
+      ),
       severities: sev,
       byCategory: Object.fromEntries(
         Object.entries(byCat).map(([k, v]) => [
@@ -324,6 +370,81 @@ describe('customer simulator', () => {
       .filter((f) => f.severity === 'P0').length;
     fs.writeFileSync(
       path.join(__dirname, '../evidence/holdout-latest.json'),
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          cases: rows.length,
+          taskSuccess: Number(rate.toFixed(4)),
+          p0,
+          failures: rows.filter((r) => !r.ok || r.findings.length),
+        },
+        null,
+        2,
+      ),
+    );
+    expect(p0).toBe(0);
+    expect(rate).toBeGreaterThanOrEqual(0.95);
+  }, 600_000);
+
+  it('hold-out #2 (five stores, written blind) meets the task gate', async () => {
+    const rows: Array<{
+      store: string;
+      say: string;
+      kind: string;
+      ok: boolean;
+      findings: Finding[];
+      reply: string;
+    }> = [];
+    for (const c of HOLDOUT2) {
+      const idx = fleet.findIndex((f) => f.vocab.key === c.store);
+      const f = fleet[idx];
+      const foreign = new Set([
+        ...rival.vehicles.map((v) => v.vin),
+        ...fleet
+          .filter((_, j) => j !== idx)
+          .flatMap((x) => x.dealer.vehicles.map((v) => v.vin)),
+      ]);
+      const oracle = new ConversationOracle(f.dealer.vehicles, foreign);
+      let cid: string | undefined;
+      let last: { status: number; body: Reply | null } = {
+        status: 0,
+        body: null,
+      };
+      for (const say of [...(c.pre ?? []), c.say]) {
+        oracle.absorbUser(say);
+        const r = await request(ctx.app.getHttpServer())
+          .post('/api/chat')
+          .set('Authorization', `Bearer ${f.token}`)
+          .set('Origin', SIM_ORIGIN)
+          .send({ message: say, conversationId: cid });
+        const body =
+          r.status < 300
+            ? unwrap<Reply & { conversationId: string }>(r.body)
+            : null;
+        if (body) cid = body.conversationId;
+        last = { status: r.status, body };
+      }
+      const findings = evaluateTurn({
+        turn: { say: c.say, expect: c.expect },
+        res: last,
+        oracle,
+        history: [],
+      });
+      rows.push({
+        store: c.store,
+        say: c.say,
+        kind: c.expect.kind,
+        ok: !findings.some((x) => x.severity !== 'P2'),
+        findings,
+        reply: last.body?.reply ?? `HTTP ${last.status}`,
+      });
+    }
+    const rate = rows.filter((r) => r.ok).length / rows.length;
+    const p0 = rows
+      .flatMap((r) => r.findings)
+      .filter((x) => x.severity === 'P0').length;
+    fs.writeFileSync(
+      path.join(__dirname, '../evidence/holdout2-latest.json'),
       JSON.stringify(
         {
           generatedAt: new Date().toISOString(),

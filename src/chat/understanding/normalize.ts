@@ -30,6 +30,10 @@ const SLANG: Array<[RegExp, string]> = [
 ];
 
 const VOICE: Array<[RegExp, string]> = [
+  // spelled-out alphanumeric models: "q x 60" → "qx60", "q 50" → "q50", "rav 4" → "rav4"
+  [/\bq ?x ?(\d{2})\b/g, 'qx$1'],
+  [/\bq (\d{2})\b/g, 'q$1'],
+  [/\brav ?4\b/g, 'rav4'],
   [/\brang(?:e)? ?ler\b/g, 'wrangler'],
   [/\bgrand wagon(?: |-)?ear\b/g, 'grand wagoneer'],
   [/\bwagon ?ear\b/g, 'wagoneer'],
