@@ -104,3 +104,156 @@ describe('CapabilityService fail-closed gates', () => {
     expect(r.allowed).toBe(false);
   });
 });
+
+
+describe('CapabilityService expanded gate coverage', () => {
+  const flags = { resolve: jest.fn() };
+  const prisma = {
+    location: { findFirst: jest.fn() },
+    vehicle: { count: jest.fn() },
+    integrationConnection: { findFirst: jest.fn() },
+  };
+  const service = new CapabilityService(prisma as never, flags as never);
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    prisma.location.findFirst.mockResolvedValue(null);
+    prisma.vehicle.count.mockResolvedValue(0);
+    prisma.integrationConnection.findFirst.mockResolvedValue(null);
+  });
+
+  it('rejects chat and human handoff when chat is disabled', async () => {
+    flags.resolve.mockResolvedValue({ chat: false });
+    expect(await service.check('tenant-a', 'roof-a', 'chat')).toMatchObject({
+      allowed: false,
+      reason: 'chat_disabled',
+    });
+    expect(await service.check('tenant-a', 'roof-a', 'handoff')).toMatchObject({
+      allowed: false,
+      reason: 'chat_disabled',
+    });
+  });
+
+  it('permits service and parts assistance when explicitly enabled', async () => {
+    flags.resolve.mockResolvedValue({ serviceAi: true, partsAi: true });
+    expect(await service.check('tenant-a', 'roof-a', 'service')).toEqual({ allowed: true });
+    expect(await service.check('tenant-a', 'roof-a', 'parts')).toEqual({ allowed: true });
+  });
+
+  it.each([
+    ['savedVehicles', 'savedVehicles', 'saved_flag_off'],
+    ['appointments', 'appointments', 'appointments_flag_off'],
+    ['leadCapture', 'leadCapture', 'lead_capture_off'],
+    ['knowledge', 'knowledge', 'knowledge_flag_off'],
+    ['sms', 'sms', 'sms_flag_off'],
+  ] as const)(
+    '%s is disabled without explicit permission and enabled with it',
+    async (capability, flag, reason) => {
+      flags.resolve.mockResolvedValue({ [flag]: false });
+      expect(await service.check('tenant-a', 'roof-a', capability)).toMatchObject({
+        allowed: false,
+        reason,
+      });
+      flags.resolve.mockResolvedValue({ [flag]: true });
+      expect(await service.check('tenant-a', 'roof-a', capability)).toEqual({
+        allowed: true,
+      });
+    },
+  );
+
+  it('allows a payment estimate only when pricing inventory and both flags are ready', async () => {
+    flags.resolve.mockResolvedValue({
+      payments: true,
+      financeCalculator: true,
+      inventory: true,
+    });
+    prisma.vehicle.count.mockResolvedValueOnce(3).mockResolvedValueOnce(2);
+    expect(await service.check('tenant-a', 'roof-a', 'payments')).toEqual({
+      allowed: true,
+    });
+    expect(prisma.vehicle.count).toHaveBeenCalledTimes(2);
+  });
+
+  it('permits compare only after successfully checking the inventory dependency', async () => {
+    flags.resolve.mockResolvedValue({ vehicleCompare: true, inventory: true });
+    prisma.vehicle.count.mockResolvedValueOnce(2).mockResolvedValueOnce(2);
+    expect(await service.check('tenant-a', 'roof-a', 'vehicleCompare')).toEqual({
+      allowed: true,
+    });
+  });
+
+  it('propagates an inventory dependency rejection for vehicle compare', async () => {
+    flags.resolve.mockResolvedValue({ vehicleCompare: true, inventory: false });
+    expect(await service.check('tenant-a', 'roof-a', 'vehicleCompare')).toMatchObject({
+      allowed: false,
+      reason: 'inventory_flag_off',
+    });
+    expect(prisma.vehicle.count).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes configured-but-empty rooftop feed from no inventory source', async () => {
+    flags.resolve.mockResolvedValue({ inventory: true });
+    prisma.location.findFirst.mockResolvedValue({
+      inventoryFeedUrl: 'https://dealer.example/authorized.xml',
+    });
+    expect(await service.check('tenant-a', 'roof-a', 'inventory')).toMatchObject({
+      allowed: false,
+      reason: 'feed_configured_but_empty',
+    });
+    expect(prisma.integrationConnection.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('reports a configured live vAuto connection with no imported vehicles', async () => {
+    flags.resolve.mockResolvedValue({ inventory: true });
+    prisma.integrationConnection.findFirst.mockResolvedValue({ id: 'connection-a' });
+    expect(await service.check('tenant-a', 'roof-a', 'inventory')).toMatchObject({
+      allowed: false,
+      reason: 'vauto_enabled_but_no_vehicles',
+    });
+    expect(prisma.integrationConnection.findFirst).toHaveBeenCalledWith({
+      where: {
+        tenantId: 'tenant-a',
+        provider: 'VAUTO',
+        enabled: true,
+        liveReady: true,
+      },
+      select: { id: true },
+    });
+  });
+
+  it('checks tenant-wide inventory without querying a location when location is null', async () => {
+    flags.resolve.mockResolvedValue({ inventory: true });
+    prisma.vehicle.count.mockResolvedValueOnce(1).mockResolvedValueOnce(1);
+    expect(await service.check('tenant-a', null, 'inventory')).toEqual({ allowed: true });
+    expect(prisma.location.findFirst).not.toHaveBeenCalled();
+    expect(prisma.vehicle.count).toHaveBeenCalledWith({
+      where: {
+        tenantId: 'tenant-a',
+        status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
+      },
+    });
+  });
+
+  it('does not count fresh units from the wrong rooftop toward availability', async () => {
+    flags.resolve.mockResolvedValue({ inventory: true });
+    prisma.vehicle.count.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+    expect(await service.check('tenant-a', 'roof-a', 'inventory')).toMatchObject({
+      allowed: false,
+      reason: 'inventory_stale',
+    });
+    for (const call of prisma.vehicle.count.mock.calls) {
+      expect(call[0].where).toMatchObject({
+        tenantId: 'tenant-a',
+        locationId: 'roof-a',
+      });
+    }
+  });
+
+  it('fails closed for an unsupported capability name', async () => {
+    flags.resolve.mockResolvedValue({});
+    expect(await service.check('tenant-a', 'roof-a', 'unsupported' as never)).toMatchObject({
+      allowed: false,
+      reason: 'unknown',
+    });
+  });
+});
