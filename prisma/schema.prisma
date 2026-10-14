@@ -248,6 +248,14 @@ model User {
   /// Disabled users cannot log in or refresh; access tokens age out (<=15m).
   isActive Boolean @default(true)
 
+  /// TOTP MFA (RFC 6238). Secret stored AES-256-GCM encrypted via SecretVault.
+  mfaEnabled       Boolean   @default(false)
+  mfaSecretEnc     Json?
+  mfaPendingSecretEnc Json?
+  mfaRecoveryHashes String[] @default([])
+  mfaLastCounter   Int?
+  mfaEnrolledAt    DateTime?
+
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 

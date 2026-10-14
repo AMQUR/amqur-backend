@@ -31,7 +31,12 @@ describe('AuthService.bootstrap lockout', () => {
     };
     const jwt = { sign: jest.fn().mockReturnValue('token') };
     return {
-      svc: new AuthService(prisma as never, jwt as never, config as never),
+      svc: new AuthService(
+        prisma as never,
+        jwt as never,
+        config as never,
+        {} as never,
+      ),
       prisma,
     };
   }
@@ -46,6 +51,7 @@ describe('AuthService.bootstrap lockout', () => {
       prisma as never,
       { sign: jest.fn() } as never,
       badConfig as never,
+      {} as never,
     );
     await expect(
       svc.bootstrap({

@@ -3,7 +3,9 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
+import { mfaRequiredRoles } from '../auth.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
@@ -58,10 +60,30 @@ export class JwtAuthGuard implements CanActivate {
       const payload = useWidgetSecret
         ? await this.jwtService.verifyAsync(token, { secret: widgetSecret })
         : await this.jwtService.verifyAsync(token);
+      // Only access/widget tokens authenticate API calls (MFA challenge tokens never do).
+      if (payload?.typ !== 'access' && payload?.typ !== 'widget') {
+        throw new UnauthorizedException('Invalid token type');
+      }
       request.user = payload;
-      return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired token');
     }
+    // Staff roles that require MFA may only reach MFA enrollment + logout until verified.
+    const user = request.user as {
+      typ?: string;
+      role?: string;
+      amr?: string[];
+    };
+    if (
+      user.typ === 'access' &&
+      mfaRequiredRoles().includes(user.role ?? '') &&
+      !(user.amr ?? []).includes('otp')
+    ) {
+      const url: string = request.originalUrl ?? request.url ?? '';
+      if (!/\/auth\/(mfa\/(setup|confirm)|logout(-all)?)\b/.test(url)) {
+        throw new ForbiddenException('mfa_enrollment_required');
+      }
+    }
+    return true;
   }
 }

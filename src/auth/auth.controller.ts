@@ -1,4 +1,5 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { IsString, Length } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -10,6 +11,14 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
+
+class MfaVerifyDto {
+  @IsString() @Length(10, 2000) mfa_token!: string;
+  @IsString() @Length(6, 16) code!: string;
+}
+class MfaCodeDto {
+  @IsString() @Length(6, 16) code!: string;
+}
 
 @Controller('auth')
 export class AuthController {
@@ -43,6 +52,42 @@ export class AuthController {
   @Post('logout')
   logout(@Body() dto: RefreshDto) {
     return this.authService.logout(dto.refresh_token);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('mfa/verify')
+  verifyMfa(@Body() dto: MfaVerifyDto) {
+    return this.authService.verifyMfa(dto.mfa_token, dto.code);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  @Post('mfa/setup')
+  setupMfa(@CurrentUser() user: AuthUser) {
+    return this.authService.setupMfa(user.sub);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('mfa/confirm')
+  confirmMfa(@CurrentUser() user: AuthUser, @Body() dto: MfaCodeDto) {
+    return this.authService.confirmMfa(user.sub, dto.code);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Post('users/:id/mfa/reset')
+  resetMfa(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.authService.resetMfa(user, id);
+  }
+
+  @UseGuards(RolesGuard)
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  @Post('logout-all')
+  logoutAll(@CurrentUser() user: AuthUser) {
+    return this.authService.logoutAll(user.sub);
   }
 
   @Public()
