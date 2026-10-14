@@ -256,7 +256,6 @@ describe('customer simulator', () => {
     };
     const out = path.join(__dirname, '../evidence/simulator-latest.json');
     fs.writeFileSync(out, JSON.stringify(report, null, 2));
-    // eslint-disable-next-line no-console
     console.log(
       JSON.stringify(
         {

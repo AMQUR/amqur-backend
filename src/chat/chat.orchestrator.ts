@@ -25,6 +25,7 @@ import { CreditApplicationService } from '../finance/credit-application.service'
 import { PartsInquiryService } from '../parts/parts-inquiry.service';
 import { TradeService } from '../trade/trade.service';
 import { AppraisalService } from '../trade/appraisal.service';
+import { ExperimentsService } from '../experiments/experiments.service';
 import {
   AppointmentRequestResult,
   AppointmentService,
@@ -396,7 +397,28 @@ export class ChatOrchestrator {
     private readonly consent: ConsentService,
     private readonly quotes: PriceQuoteService,
     private readonly appraisals: AppraisalService,
+    private readonly experiments: ExperimentsService,
   ) {}
+
+  /** First greeting copy, optionally from a RUNNING greeting experiment (tone only). */
+  private async greetingLine(t: Turn, salt: string) {
+    const ex = await this.experiments.greetingFor(
+      t.tenantId,
+      t.locationId,
+      t.s.externalKey,
+      !!t.st.social?.experimentExposed,
+    );
+    if (ex && t.lang === 'en') {
+      t.st.social = { ...t.st.social, experimentExposed: true };
+      return ex.text;
+    }
+    return socialLine(
+      'greetingFirst',
+      t.lang,
+      t.st.recentOpeners,
+      this.seed(t, salt),
+    );
+  }
 
   // ───────────────────────────────────────── entry
 
@@ -2677,7 +2699,7 @@ export class ChatOrchestrator {
    * "are you a bot?"). Pure social messages get a warm, varied, honest reply with no sales
    * menu; social words attached to a real request only set a brief opener.
    */
-  private handleSocial(t: Turn) {
+  private async handleSocial(t: Turn) {
     const st = t.st;
     const acts = t.u.entities.social ?? [];
     const strength = t.u.entities.socialStrength ?? 0;
@@ -2756,7 +2778,7 @@ export class ChatOrchestrator {
       return void t.answers.push(
         greeted
           ? `${line('greetingAgain')} ${tr(L, 'What can I help with?', '¿En qué le ayudo?')}`
-          : line('greetingFirst'),
+          : await this.greetingLine(t, 'greetingFirst'),
       );
     }
     if (acts.includes('compliment'))

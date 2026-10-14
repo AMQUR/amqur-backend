@@ -12,6 +12,7 @@ import { Settings } from './pages/Settings';
 import { Ops } from './pages/Ops';
 import { Security } from './pages/Security';
 import { Group } from './pages/Group';
+import { Spotlights } from './pages/Spotlights';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -19,6 +20,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'appointments', label: 'Appointments' },
   { id: 'queues', label: 'Service · Parts · Finance' },
   { id: 'knowledge', label: 'Knowledge' },
+  { id: 'spotlights', label: 'Spotlights' },
   { id: 'integrations', label: 'Integrations', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'settings', label: 'Rooftop settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'ops', label: 'Delivery failures', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
@@ -94,6 +96,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'settings' && <Settings locationId={locationId} />}
         {route === 'ops' && <Ops />}
         {route === 'group' && <Group />}
+        {route === 'spotlights' && <Spotlights locationId={locationId} />}
         {route === 'security' && <Security required={props.enrollRequired} />}
       </main>
     </div>

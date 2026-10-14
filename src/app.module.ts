@@ -1,3 +1,5 @@
+import { ExperimentsModule } from './experiments/experiments.module';
+import { SpotlightsModule } from './spotlights/spotlights.module';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 
 import { ConfigModule } from '@nestjs/config';
@@ -49,6 +51,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
   imports: [
+    SpotlightsModule,
+    ExperimentsModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],

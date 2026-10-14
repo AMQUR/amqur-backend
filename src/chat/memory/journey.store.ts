@@ -107,6 +107,7 @@ export type JourneyState = {
     askedHowAreYou?: boolean;
     browsing?: boolean;
     demoNoted?: boolean;
+    experimentExposed?: boolean;
   };
   parts?: {
     inquiryId?: string;

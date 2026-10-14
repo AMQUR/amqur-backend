@@ -1539,3 +1539,64 @@ model ConsentRecord {
   @@index([tenantId, channel, endpoint, createdAt])
   @@index([tenantId, leadId])
 }
+
+/// Dealer-managed spotlight (featured vehicle, offer, event or announcement). Shown to
+/// customers VERBATIM, labeled as a dealership announcement, only when APPROVED, inside its
+/// date window, and for its own store. Offers must cite their source and carry their own
+/// disclaimer; the assistant never paraphrases or extends them.
+model Spotlight {
+  id String @id @default(cuid())
+
+  tenantId     String
+  locationId   String
+  /// VEHICLE | OFFER | EVENT | ANNOUNCEMENT
+  kind         String
+  title        String
+  body         String
+  /// Optional HTTPS link on the dealer's own site
+  linkUrl      String?
+  vehicleVin   String?
+  /// Where an offer comes from (e.g. "OEM national program 10/2026", "dealer special")
+  source       String?
+  disclaimer   String?
+  /// DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | ARCHIVED
+  status       String    @default("DRAFT")
+  startsAt     DateTime
+  endsAt       DateTime
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, locationId, status])
+}
+
+/// Controlled experiment on customer-facing COPY only (currently: the first greeting).
+/// Never varies prices, eligibility, disclosures or consent. Assignment is a stable hash of
+/// the conversation key, so a shopper always sees the same variant. A different manager must
+/// start it; results never auto-promote a variant.
+model Experiment {
+  id String @id @default(cuid())
+
+  tenantId    String
+  locationId  String?
+  key         String
+  /// greeting
+  surface     String
+  /// [{ key, weight, text }] — first entry is the control
+  variants    Json
+  /// DRAFT | RUNNING | STOPPED
+  status      String    @default("DRAFT")
+  createdById String?
+  startedById String?
+  startedAt   DateTime?
+  stoppedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status])
+}
