@@ -16,6 +16,12 @@ async function main() {
   const cache = {
     getJson: async (k: string) => (mem.get(k) as never) ?? null,
     setJson: async (k: string, v: unknown) => void mem.set(k, v),
+    getCounter: async (k: string): Promise<number> => Number(mem.get(k) ?? 0),
+    incrBy: async (k: string, by: number): Promise<number> => {
+      const total = Number(mem.get(k) ?? 0) + by;
+      mem.set(k, total);
+      return total;
+    },
   };
   const providers = {
     anthropic: new AnthropicLlmProvider(config as never),
