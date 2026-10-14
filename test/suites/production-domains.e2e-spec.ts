@@ -44,7 +44,7 @@ describe('production domains (Postgres)', () => {
       });
       const outbox = ctx.app.get(OutboxService);
       const results = await Promise.all(
-        ['w1', 'w2', 'w3', 'w4', 'w5'].map((w) => outbox.claimPending(15, w)),
+        ['w1', 'w2', 'w3', 'w4', 'w5'].map((w) => outbox.claimPending(400, w)),
       );
       const rows = results.flat();
       const ids = rows.map((r) => r.id);
