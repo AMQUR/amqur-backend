@@ -68,7 +68,11 @@ import {
   stripFiller,
   tr,
 } from './dialogue/dialogue-style';
-import { formatClock, parseIsoDate } from '../common/time/zoned-time';
+import {
+  addDays as addDaysLocal,
+  formatClock,
+  parseIsoDate,
+} from '../common/time/zoned-time';
 import { CrmSyncService } from '../integrations/crm/crm-sync.service';
 import { CampaignEngine } from '../messaging/campaign.engine';
 import { ConsentService } from '../messaging/consent.service';
@@ -637,6 +641,8 @@ export class ChatOrchestrator {
 
   private async runIntent(t: Turn, intent: TurnIntent) {
     switch (intent) {
+      case 'SAFETY_URGENT':
+        return this.handleSafety(t);
       case 'COMPLAINT':
       case 'HUMAN_HANDOFF':
         return this.handleHandoff(
@@ -1045,6 +1051,24 @@ export class ChatOrchestrator {
         ),
         1,
       );
+    }
+  }
+
+  /** Safety first; no diagnosis, no "it's probably fine". Then route to a person. */
+  private async handleSafety(t: Turn) {
+    t.urgent = true;
+    this.metrics.increment('chat.safety_urgent');
+    t.answers.push(
+      tr(
+        t.lang,
+        "If you're in danger or the vehicle isn't safe to drive, please stop driving, get to a safe place, and call 911 or roadside assistance. I can't diagnose the problem from here.",
+        'Si está en peligro o el vehículo no es seguro, deje de manejar, póngase en un lugar seguro y llame al 911 o a asistencia en el camino. No puedo diagnosticar el problema desde aquí.',
+      ),
+    );
+    t.st.department = 'service';
+    if (!t.handled.has('HUMAN_HANDOFF')) {
+      t.handled.add('HUMAN_HANDOFF');
+      await this.handleHandoff(t, 'complaint');
     }
   }
 
@@ -2172,6 +2196,41 @@ export class ChatOrchestrator {
       !hasIntent(t.u, 'APPOINTMENT_RESCHEDULE')
     ) {
       return this.handleReschedule(t);
+    }
+    // Tell the customer about a closed day BEFORE asking anything else.
+    const early = t.u.entities.when;
+    if (early?.date) {
+      const hours = await this.getHours(t);
+      if (hours?.verified) {
+        const dept = type === 'SERVICE' ? 'service' : 'sales';
+        const day = StoreHoursService.resolveDay(hours, early.date, dept);
+        if (day.closed) {
+          st.draftAppointment = {
+            type,
+            serviceNeed: t.u.entities.serviceNeed ?? st.service?.need,
+          };
+          return this.narrateAppointmentResult(
+            t,
+            {
+              status: 'rejected',
+              code: 'closed_day',
+              day: {
+                date: day.date,
+                open: day.open,
+                close: day.close,
+                note: day.note,
+              },
+              alternatives: AppointmentService.nextOpenDays(
+                hours,
+                addDaysLocal(early.date, 1),
+                dept,
+              ),
+              timezone: hours.timezone,
+            },
+            type,
+          );
+        }
+      }
     }
     if (type === 'SERVICE') {
       const need = t.u.entities.serviceNeed ?? st.service?.need;
@@ -3450,7 +3509,10 @@ export class ChatOrchestrator {
     });
     let draft =
       plan.text || tr(t.lang, 'How can I help?', '¿En qué le puedo ayudar?');
-    if (signature(draft) === st.lastReplySig && q) {
+    if (signature(draft) === st.lastReplySig && !q) {
+      // Same question asked again: keep the facts, but don't answer like a recording.
+      draft = `${draft} ${tr(t.lang, 'Is there anything else I can help you with?', '¿Hay algo más en lo que le pueda ayudar?')}`;
+    } else if (signature(draft) === st.lastReplySig && q) {
       draft =
         `${t.answers.concat(t.narration).join(' ')} ${tr(t.lang, 'Or is there something else I can help with?', '¿O hay algo más en lo que le pueda ayudar?')}`.trim();
     }

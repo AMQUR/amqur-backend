@@ -45,6 +45,7 @@ export type TurnIntent =
   | 'TEXT_CONTINUATION'
   | 'LANGUAGE_SWITCH'
   | 'GREETING'
+  | 'SAFETY_URGENT'
   | 'UNKNOWN';
 
 export type Sentiment = 'neutral' | 'frustrated' | 'anxious' | 'positive';
@@ -400,6 +401,35 @@ const NAME_STOPWORDS = new Set([
   ...MAKES,
 ]);
 
+function editDistance(a: string, b: string): number {
+  const dp = Array.from(
+    { length: a.length + 1 },
+    (_, i) => [i, ...Array(b.length).fill(0)] as number[],
+  );
+  for (let j = 1; j <= b.length; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1)
+    for (let j = 1; j <= b.length; j += 1)
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+  return dp[a.length][b.length];
+}
+
+/** Typo-tolerant single-word model match ("wrangeler" → wrangler). Conservative: len≥6, distance≤2. */
+export function fuzzyModel(text: string): string | null {
+  const words = text.toLowerCase().match(/[a-z0-9-]{6,}/g) ?? [];
+  for (const w of words) {
+    for (const m of Object.keys(MODELS)) {
+      if (m.includes(' ') || m.length < 6) continue;
+      if (Math.abs(m.length - w.length) <= 2 && editDistance(w, m) <= 2)
+        return m;
+    }
+  }
+  return null;
+}
+
 export function extractContact(
   text: string,
   pending: PendingQuestion,
@@ -628,6 +658,13 @@ export function understandTurn(
       break;
     }
   }
+  if (!veh.model) {
+    const fm = fuzzyModel(tShop);
+    if (fm) {
+      veh.model = fm.replace(/\b\w/g, (c) => c.toUpperCase());
+      veh.make = MODELS[fm];
+    }
+  }
   if (!veh.make) {
     const mk = MAKES.find((m) => new RegExp(`\\b${m}\\b`).test(tShop));
     if (mk)
@@ -779,6 +816,15 @@ export function understandTurn(
     /^(what|which|how|when|where|who|why|do|does|is|are|can|could|would|will|cuál|cuál|qué|que|cómo|como|cuándo|dónde|tienen|hay)\b/i.test(
       raw,
     );
+
+  // ── SAFETY: urgent vehicle-safety language gets safety-first handling (no diagnosis)
+  if (
+    /\b(smoke|on fire|fire|flames|smell(?:s|ing)? (?:gas|fuel)|fuel leak|brakes? (?:failed|failing|went out|don'?t work|not working|gave out)|no brakes|steering (?:locked|failed|went out)|(?:car|truck|engine) (?:died|stalled|shut off) (?:on|in) (?:the )?(?:highway|freeway|interstate|traffic)|airbag deployed|(?:i was|we were|i(?:'ve| have) been|just got) in an? (?:accident|crash)|(?:i|we) (?:just )?crashed)\b/.test(
+      t,
+    )
+  ) {
+    add('SAFETY_URGENT', 0.95, 'urgent safety language');
+  }
 
   // ── HUMAN HANDOFF: "agent"/"person" only with request verbs; not "real estate agent", "personal"
   if (
@@ -1152,6 +1198,7 @@ export function understandTurn(
     });
 
   const PRIORITY: TurnIntent[] = [
+    'SAFETY_URGENT',
     'COMPLAINT',
     'HUMAN_HANDOFF',
     'APPOINTMENT_CANCEL',
