@@ -68,4 +68,10 @@ describe('owner transcript + unscripted phrasings', () => {
         ?.model,
     ).toMatch(/wrangler/i);
   });
+  it('"Who is your manager?" is a confident, specific question (model is not consulted)', () => {
+    const r = u('Who is your manager?', { pending: 'confirm_handoff' });
+    const k = r.intents.find((i) => i.intent === 'KNOWLEDGE_QUESTION');
+    expect(k?.evidence).toBe('manager identity');
+    expect(r.intents.map((i) => i.intent)).not.toContain('HUMAN_HANDOFF');
+  });
 });

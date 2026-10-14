@@ -158,8 +158,15 @@ export function mergeInterpretation(
       !(i.intent === 'UNKNOWN') &&
       !(i.intent === 'KNOWLEDGE_QUESTION' && i.evidence === 'open question'),
   );
+  // Questions about who we are / who works here are answered, never turned into a transfer.
+  const noHandoff =
+    !!u.entities.managerQuestion ||
+    !!u.entities.social?.some((a) =>
+      ['identity', 'name_question', 'origin_question'].includes(a),
+    );
   for (const p of m.intents) {
     if (p.confidence < 0.7) continue;
+    if (noHandoff && p.intent === 'HUMAN_HANDOFF') continue;
     if (intents.some((i) => i.intent === p.intent)) continue;
     intents.push({
       intent: p.intent,

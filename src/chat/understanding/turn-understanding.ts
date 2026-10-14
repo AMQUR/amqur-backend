@@ -808,6 +808,9 @@ export function understandTurn(
   const add = (intent: TurnIntent, confidence: number, evidence: string) => {
     const ex = intents.find((i) => i.intent === intent);
     if (ex) {
+      // A stronger, more specific rule also replaces the evidence label — otherwise a
+      // generic "open question" upgraded by a specific rule still looks weak downstream.
+      if (confidence > ex.confidence) ex.evidence = evidence;
       ex.confidence = Math.max(ex.confidence, confidence);
       return;
     }
@@ -1896,7 +1899,7 @@ export function understandTurn(
 
   // ── "why should I buy this one?" is a question about the shown vehicle
   if (
-    /\bwhy (?:should|would) i (?:buy|get|choose|pick|go with) (?:this|that|it|this one|that one)\b|\bwhat makes (?:it|this one|this) (?:special|worth it|stand out|better)\b|\bis (?:it|this one) worth it\b|\bsell me on (?:it|this)\b/.test(
+    /\bwhy (?:should|would) i (?:buy|get|choose|pick|go with) (?:this|that|it|this one|that one)\b|\bwhat makes (?:it|this one|this) (?:special|worth it|stand out|better)\b|\bis (?:it|this one|that one|this|that) worth (?:it|the money|the price)\b|\bworth the money\b|\bsell me on (?:it|this)\b/.test(
       t,
     ) &&
     (ctx.hasSelectedVehicle || ctx.hasVisibleVehicles)
@@ -1934,7 +1937,7 @@ export function understandTurn(
   const aboutShown = ctx.hasSelectedVehicle || ctx.hasVisibleVehicles;
   if (
     aboutShown &&
-    /\b(?:how much (?:is|for|does|do|would|will)? ?(?:it|this|that|this one|that one|the \w+|they)?|what(?:'s| is| are) (?:the |its |your )?(?:price|asking price|sticker|cost)|price on (?:it|this|that)|how much)\b/.test(
+    /\b(?:how much (?:is|for|does|do|would|will)? ?(?:it|this|that|this one|that one|the \w+|they)?|what(?:'s| is| are) (?:the |its |your )?(?:price|asking price|sticker|cost)|price on (?:it|this|that)|how much|cu[aá]nto (?:cuesta|vale|sale|es)|qu[eé] precio tiene|precio del?)\b/.test(
       t,
     ) &&
     !/\b(month|monthly|payment|per mo|out[- ]the[- ]door|otd|tax|taxes|fees|all in|down|trade|apr|rate|insurance|oil change|service|repair|part)\b/.test(
@@ -1943,6 +1946,18 @@ export function understandTurn(
   ) {
     e.priceQuestion = true;
     add('VEHICLE_QUESTION', 0.9, 'price of selected vehicle');
+  } else if (
+    e.vehicle?.model &&
+    /\b(?:how much (?:is|are|does|do) (?:the |a |that |this )?|what(?:'s| is) the price (?:of|on) |cu[aá]nto (?:cuesta|vale|sale|es) )/.test(
+      t,
+    ) &&
+    !/\b(month|monthly|payment|out[- ]the[- ]door|otd|tax|taxes|fees|down|al mes|mensual)\b/.test(
+      t,
+    )
+  ) {
+    // "How much is the red Wrangler?" — find it, then answer its price.
+    e.priceQuestion = true;
+    add('VEHICLE_QUESTION', 0.7, 'price of named vehicle');
   }
   if (
     /\bhow long (?:has|have|did) (?:it|this|that|the \w+|this (?:car|truck|suv|one)|that (?:car|truck|suv|one)|you(?:'ve)? had (?:it|this|that))\b.*\b(?:lot|stock|inventory|sitting|there|had)\b|\b(?:days|time) (?:on|in) (?:the |your )?(?:lot|stock|inventory)\b|\bhow long (?:has|have) (?:it|this|that)? ?been (?:on|in|at|sitting)\b|\bhow old is (?:the |this |that )?(?:listing|inventory)\b/.test(
@@ -2051,6 +2066,13 @@ export function understandTurn(
       0.82,
       'what about <day>',
     );
+
+  if (
+    /\bwhat'?s the catch\b|\bis there a catch\b|\bany catch\b|\bsounds too good\b/.test(
+      t,
+    )
+  )
+    add('KNOWLEDGE_QUESTION', 0.9, 'whats the catch');
 
   // ── "how can I get started?" with a vehicle in view is a purchase start
   if (

@@ -396,6 +396,29 @@ const PRESSURE: Array<{ kind: string; re: RegExp }> = [
   },
 ];
 
+/** "red Wrangler" → "Wrangler rojo" for Spanish replies (plain colors only). */
+function esColorLabel(label: string): string {
+  const ES: Record<string, string> = {
+    black: 'negro',
+    white: 'blanco',
+    red: 'rojo',
+    blue: 'azul',
+    gray: 'gris',
+    grey: 'gris',
+    silver: 'plateado',
+    green: 'verde',
+    yellow: 'amarillo',
+    orange: 'naranja',
+    brown: 'café',
+    beige: 'beige',
+    gold: 'dorado',
+  };
+  const m = /^(\w+)\s+(.+)$/.exec(label);
+  return m && ES[m[1].toLowerCase()]
+    ? `${m[2]} ${ES[m[1].toLowerCase()]}`
+    : label;
+}
+
 function vehicleLabel(
   v: {
     year?: number;
@@ -2007,7 +2030,7 @@ export class ChatOrchestrator {
           tr(
             t.lang,
             `I found one ${what}${under} — it’s marked in transit, so it isn’t on the lot yet.`,
-            `Encontré un ${what}${under} — aparece en tránsito, así que aún no está en el lote.`,
+            `Encontré un ${esColorLabel(what)}${under} — aparece en tránsito, así que aún no está en el lote.`,
           ),
         );
       } else if (transit > 0) {
@@ -2027,7 +2050,7 @@ export class ChatOrchestrator {
                 t,
                 t.lang === 'es'
                   ? [
-                      `Encontré un ${what} que puedo verificar en existencia${under}.`,
+                      `Encontré un ${esColorLabel(what)} que puedo verificar en existencia${under}.`,
                     ]
                   : [
                       `Here's the one ${what} I can verify in stock right now${under}.`,
@@ -4367,7 +4390,7 @@ export class ChatOrchestrator {
     }
     // "Why should I buy this one?" — a pitch built only from the listing, then a fit question.
     if (
-      /\bwhy (?:should|would) i\b|\bwhat makes\b|\bworth it\b|\bsell me\b/.test(
+      /\bwhy (?:should|would) i\b|\bwhat makes\b|\bworth (?:it|the money|the price)\b|\bsell me\b/.test(
         m,
       )
     ) {
@@ -4575,6 +4598,21 @@ export class ChatOrchestrator {
 
   private async handleKnowledge(t: Turn) {
     if (t.u.entities.managerQuestion) return this.handleManagerQuestion(t);
+    if (
+      t.u.intents.some(
+        (i) =>
+          i.intent === 'KNOWLEDGE_QUESTION' && i.evidence === 'whats the catch',
+      )
+    ) {
+      t.answers.push(
+        tr(
+          t.lang,
+          'No catch from my side — chatting here doesn’t commit you to anything. The one thing to know: prices and payments I show are estimates until the dealership puts them in writing, and nothing is booked or approved until a person confirms it.',
+          'No hay trampa de mi parte — conversar aquí no le compromete a nada. Lo único: los precios y pagos que muestro son estimados hasta que la agencia los ponga por escrito, y nada queda reservado ni aprobado hasta que una persona lo confirme.',
+        ),
+      );
+      return;
+    }
     const kc = await this.cap(t, 'knowledge');
     const ctx: string[] = [];
     if (kc.allowed) {
