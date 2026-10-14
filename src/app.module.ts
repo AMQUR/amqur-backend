@@ -38,7 +38,6 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { TradeModule } from './trade/trade.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { VoiceModule } from './voice/voice.module';
-import { ChannelsModule } from './channels/channels.module';
 import { FinanceModule } from './finance/finance.module';
 import { AppointmentsModule } from './appointments/appointments.module';
 import { OperationsModule } from './operations/operations.module';
@@ -106,7 +105,6 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     TradeModule,
     UploadsModule,
     VoiceModule,
-    ChannelsModule,
     FinanceModule,
     AppointmentsModule,
     OperationsModule,
