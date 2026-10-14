@@ -34,3 +34,4 @@ release.json
 /uploads/
 command-center/node_modules
 command-center/dist
+command-center/*.tsbuildinfo
