@@ -1,0 +1,634 @@
+{
+  "generatedAt": "2026-10-15T01:25:26.195Z",
+  "mode": "in-process-holdout",
+  "target": "in-process",
+  "turns": 27,
+  "passed": 17,
+  "passRate": 63,
+  "criticalFailures": 0,
+  "provenance": {
+    "none": 27
+  },
+  "latencyMs": {
+    "p50": 13,
+    "p90": 23,
+    "max": 51
+  },
+  "failures": [
+    {
+      "journey": "holdout-shopper",
+      "tag": "search-budget",
+      "say": "got any jeeps that arent crazy expensive",
+      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 21,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /Jeep|\\$\\d|budget/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "cheapest",
+      "say": "which one costs the least",
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 14,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /\\$\\d|lowest|cheapest|least/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "price",
+      "say": "ok whats the sticker on the grand cherokee",
+      "reply": "I found one Grand Cherokee — it’s marked in transit, so it isn’t on the lot yet. (Heads up: this demo runs on simulated vehicles, not the dealership’s live inventory.) Want to see what payments might look like on it?",
+      "cards": [],
+      "vehicles": 1,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 25,
+      "pass": false,
+      "fails": [
+        "missing meaning /49,870|52,010/"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "assessment",
+      "say": "hmm is that a decent number",
+      "reply": "Sorry, I didn't quite follow — is that about the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4, or something else?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 9,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /estimate|depends|credit|rate|MSRP|budget/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "otd",
+      "say": "what would i owe all in with tax",
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 10,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /zip|tax|fee|out-the-door/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "service-price",
+      "say": "whats a brake job usually run",
+      "reply": "What day works for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 11,
+      "pass": false,
+      "fails": [
+        "missing meaning /don.t have|won.t|team|verify|price/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "credit",
+      "say": "my credit is kinda trash tbh",
+      "reply": "I want to make sure I get this right — what are you looking for?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 8,
+      "pass": false,
+      "fails": [
+        "missing meaning /credit|lender|finance/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "small-talk",
+      "say": "hows your day going",
+      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 7,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /good|well|great|thanks|going/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "general-finance",
+      "say": "is leasing smarter than buying",
+      "reply": "Want me to pull up the dealership's secure credit application? It opens in a new tab, so your financial details stay out of this chat.",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 15,
+      "pass": false,
+      "fails": [
+        "missing meaning /lease|leasing|own|mileage/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "manager-request",
+      "say": "can you ask the boss to give me a deal",
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 10,
+      "pass": false,
+      "fails": [
+        "generic deflection"
+      ],
+      "critical": []
+    }
+  ],
+  "results": [
+    {
+      "journey": "holdout-shopper",
+      "tag": "identity",
+      "say": "hey there, who am I chatting with?",
+      "reply": "I'm the dealership's AI assistant. I'll be straight with you about what I can confirm, and I can connect you with a real person anytime.",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 51,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "search-budget",
+      "say": "got any jeeps that arent crazy expensive",
+      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 21,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /Jeep|\\$\\d|budget/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "cheapest",
+      "say": "which one costs the least",
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 14,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /\\$\\d|lowest|cheapest|least/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "price",
+      "say": "ok whats the sticker on the grand cherokee",
+      "reply": "I found one Grand Cherokee — it’s marked in transit, so it isn’t on the lot yet. (Heads up: this demo runs on simulated vehicles, not the dealership’s live inventory.) Want to see what payments might look like on it?",
+      "cards": [],
+      "vehicles": 1,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 25,
+      "pass": false,
+      "fails": [
+        "missing meaning /49,870|52,010/"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "payment",
+      "say": "and if i did 3 grand down",
+      "reply": "For the 2025 Jeep Grand Cherokee Limited 4x4 at $49,870, you're looking at roughly $820 a month with $3,000 down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer. Want to adjust the down payment or term?",
+      "cards": [
+        "payment"
+      ],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 17,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "assessment",
+      "say": "hmm is that a decent number",
+      "reply": "Sorry, I didn't quite follow — is that about the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4, or something else?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 9,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /estimate|depends|credit|rate|MSRP|budget/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "otd",
+      "say": "what would i owe all in with tax",
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 10,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /zip|tax|fee|out-the-door/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "visit-transit",
+      "say": "can i swing by and look at it saturday",
+      "reply": "What time on Saturday, Oct 17 (open 8 AM–2 PM)?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 13,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-shopper",
+      "tag": "change-mind",
+      "say": "nevermind",
+      "reply": "No problem at all. Want to look at something other than the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4, or change something else?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 9,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "symptom",
+      "say": "my car is making a grinding noise when i brake",
+      "reply": "I can help with that. What vehicle are we scheduling the grinding for? Year, make and model is plenty.",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 14,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "service-vehicle",
+      "say": "its a 2018 cherokee",
+      "reply": "Got it — your 2018 Jeep Cherokee. What day works for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 9,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "service-price",
+      "say": "whats a brake job usually run",
+      "reply": "What day works for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 11,
+      "pass": false,
+      "fails": [
+        "missing meaning /don.t have|won.t|team|verify|price/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "parts",
+      "say": "do yall carry wiper blades for that",
+      "reply": "I've started a parts request for wiper blades for your Toyota Camry. The parts team confirms fitment, price, and availability before anything is ordered. Could you share the 17-character VIN? It's how the parts team confirms the right part.",
+      "cards": [
+        "parts"
+      ],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 10,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "credit",
+      "say": "my credit is kinda trash tbh",
+      "reply": "I want to make sure I get this right — what are you looking for?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 8,
+      "pass": false,
+      "fails": [
+        "missing meaning /credit|lender|finance/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-service",
+      "tag": "bring",
+      "say": "what paperwork do i need",
+      "reply": "Typically you’d bring your driver’s license, proof of insurance, and how you plan to pay — a down payment method, or financing details if you have them. If you’re trading in, bring the title or payoff info and all the keys. The team will confirm anything specific to this store. Of course. Here's the dealership's secure credit application. It opens through Tekion, so your sensitive financial information stays out of this chat. (Demo preview: the live Tekion link stays off until Tekion and the dealership confirm it for this store.) Once you’ve completed it, the finance team can review the next steps — applying isn’t an approval.",
+      "cards": [
+        "credit_application"
+      ],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 13,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "small-talk",
+      "say": "hows your day going",
+      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 7,
+      "pass": false,
+      "fails": [
+        "generic deflection",
+        "missing meaning /good|well|great|thanks|going/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "weather",
+      "say": "whats the forecast looking like for tonight",
+      "reply": "Per the National Weather Service for Chicago: tonight, 58°F and mostly cloudy; thursday, 61°F and rain showers.",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 11,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "sports",
+      "say": "who do you think wins the bears game sunday",
+      "reply": "I can’t check live scores or schedules — I don’t have a live sports feed connected, so I won’t guess a result.",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 7,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "general-car",
+      "say": "whats the difference between 4wd and awd again",
+      "reply": "Generally, all-wheel drive is always on and automatically shifts power between wheels — great for rain and snow on pavement. Four-wheel drive (4x4) is usually driver-selected and built tougher, with low-range gearing for off-road, deep snow or towing out of tough spots.",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 12,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "general-finance",
+      "say": "is leasing smarter than buying",
+      "reply": "Want me to pull up the dealership's secure credit application? It opens in a new tab, so your financial details stay out of this chat.",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 15,
+      "pass": false,
+      "fails": [
+        "missing meaning /lease|leasing|own|mileage/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "manager-request",
+      "say": "can you ask the boss to give me a deal",
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 10,
+      "pass": false,
+      "fails": [
+        "generic deflection"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-switch",
+      "tag": "es-family",
+      "say": "necesito una camioneta grande para mi familia",
+      "reply": "Encontré un vehículo que puedo verificar en existencia. (Nota: esta demostración usa vehículos simulados, no el inventario real de la agencia.) ¿Quiere ver cómo quedarían los pagos de eso?",
+      "cards": [],
+      "vehicles": 1,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 23,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-switch",
+      "tag": "es-price",
+      "say": "y el precio del grand cherokee?",
+      "reply": "El Velvet Red 2025 Jeep Grand Cherokee Limited 4x4 tiene un precio de $49,870 (cifra de demostración — inventario simulado). El MSRP es $52,010. Aparece en tránsito, así que aún no está en el lote. Es el precio de venta antes de impuestos y cargos. Encontré un Grand Cherokee — aparece en tránsito, así que aún no está en el lote. ¿Quiere un pago mensual estimado o el precio final?",
+      "cards": [],
+      "vehicles": 1,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 17,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-switch",
+      "tag": "en-feature",
+      "say": "ok english now, does it have heated seats",
+      "reply": "The Velvet Red 2025 Jeep Grand Cherokee Limited 4x4 lists heated seats. Want me to estimate a payment on one?",
+      "cards": [],
+      "vehicles": 1,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 14,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-switch",
+      "tag": "memory",
+      "say": "what was the payment we talked about",
+      "reply": "For the 2025 Jeep Grand Cherokee Limited 4x4 at $49,870, you're looking at roughly $872 a month with nothing down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer. Want to adjust the down payment or term?",
+      "cards": [
+        "payment"
+      ],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 15,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-switch",
+      "tag": "topic-switch",
+      "say": "forget the jeep, show me trucks",
+      "reply": "I don't see a Grand Cherokee in this demo's simulated inventory — that says nothing about the dealership's real stock. Want me to show you similar Trucks that are in stock, or have the team check incoming vehicles?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 12,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    },
+    {
+      "journey": "holdout-switch",
+      "tag": "resume",
+      "say": "actually back to that grand cherokee",
+      "reply": "Good pick — the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4. Would an out-the-door price help, or would you rather see it in person first?",
+      "cards": [],
+      "vehicles": 1,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 14,
+      "pass": true,
+      "fails": [],
+      "critical": []
+    }
+  ]
+}

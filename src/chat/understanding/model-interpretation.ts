@@ -29,6 +29,7 @@ export const MODEL_INTENTS: readonly TurnIntent[] = [
   'HUMAN_HANDOFF',
   'KNOWLEDGE_QUESTION',
   'CHANGE_OF_MIND',
+  'LIVE_INFO',
   'SMALL_TALK',
 ];
 
@@ -143,6 +144,30 @@ export function isContextAmbiguous(
 }
 
 /**
+ * Fast path: a confident, specific rule match on a clear message skips the model call
+ * (latency/cost). Everything else is interpreted by the model as well.
+ */
+export function needsModelUnderstanding(
+  u: TurnUnderstanding,
+  message: string,
+  ctx: { hasContext: boolean },
+): boolean {
+  if (isWeakUnderstanding(u) || isContextAmbiguous(u, message, ctx))
+    return true;
+  const words = message.trim().split(/\s+/).length;
+  const top = Math.max(0, ...u.intents.map((i) => i.confidence));
+  // pure social one-liners ("thanks", "hi") don't need it
+  if (
+    words <= 2 &&
+    u.intents.every((i) =>
+      ['SMALL_TALK', 'GREETING', 'AFFIRM', 'DECLINE'].includes(i.intent),
+    )
+  )
+    return false;
+  return words >= 3 && top < 0.88;
+}
+
+/**
  * Merge model proposals into the deterministic result. Model intents need ≥ 0.7 confidence
  * and are capped at 0.85 so any deterministic signal of the same kind still wins; the
  * model's entities fill gaps only — they never overwrite what the customer's text yielded.
@@ -170,7 +195,7 @@ export function mergeInterpretation(
     if (intents.some((i) => i.intent === p.intent)) continue;
     intents.push({
       intent: p.intent,
-      confidence: Math.min(0.85, p.confidence),
+      confidence: Math.min(0.88, p.confidence),
       evidence: 'model',
     });
   }

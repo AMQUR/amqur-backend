@@ -53,6 +53,7 @@ export type TurnIntent =
   | 'PURCHASE_START'
   | 'CHANGE_OF_MIND'
   | 'RESUME_VEHICLE'
+  | 'LIVE_INFO'
   | 'SAFETY_URGENT'
   | 'UNKNOWN';
 
@@ -123,6 +124,12 @@ export type TurnEntities = {
     | 'send_it'
     | 'that_one'
     | 'who_is_that';
+  /** Live-information topic (weather/sports) — answered only from a live source. */
+  liveTopic?: 'weather' | 'sports';
+  /** "Is that good?" about the last number/vehicle discussed. */
+  assessment?: boolean;
+  /** "How much is an oil change?" — service pricing (never guessed). */
+  servicePriceQuestion?: boolean;
   /** Expressed interest without naming anything ("yes I'm interested"). */
   interest?: boolean;
   /** Visit time described loosely ("after work", "in the evening") — needs an exact time. */
@@ -1775,6 +1782,7 @@ export function understandTurn(
     'APPOINTMENT_RESCHEDULE',
     'CHANGE_OF_MIND',
     'RESUME_VEHICLE',
+    'LIVE_INFO',
     'PURCHASE_START',
     'CREDIT_APPLICATION',
     'SERVICE_STATUS',
@@ -2086,6 +2094,103 @@ export function understandTurn(
       ctx.hasSelectedVehicle ? 0.9 : 0.8,
       'getting started',
     );
+
+  // ── live information: weather and sports (never answered from memory as "current")
+  if (
+    /\b(weather|forecast|temperature outside|how (?:cold|hot|warm) is it|(?:is it|it'?s) (?:supposed|going) to (?:rain|snow|storm)|(?:will|gonna) it (?:rain|snow)|is it (?:raining|snowing)|clima|pron[oó]stico|va a (?:llover|nevar))\b/.test(
+      t,
+    )
+  ) {
+    e.liveTopic = 'weather';
+    add('LIVE_INFO', 0.92, 'weather');
+  } else if (
+    /\b(bulls|bears|cubs|white sox|sox|blackhawks|chicago fire|chicago sky|nba|nfl|mlb|nhl|super bowl|playoffs|world series)\b/.test(
+      t,
+    ) ||
+    /\b(?:did|do|does) (?:the )?\w+ win\b|\bwho won\b|\b(?:the )?score of\b|\bwhat'?s happening in sports\b|\bsports (?:tonight|today|news)\b|\bgame (?:last night|tonight|today)\b/.test(
+      t,
+    )
+  ) {
+    e.liveTopic = 'sports';
+    add('LIVE_INFO', 0.9, 'sports');
+  }
+  if (e.liveTopic)
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (
+        ['KNOWLEDGE_QUESTION', 'UNKNOWN', 'INVENTORY_SEARCH'].includes(
+          intents[i].intent,
+        ) &&
+        !e.vehicle?.model
+      )
+        intents.splice(i, 1);
+
+  // ── "is that good?" — an assessment of what we just showed
+  if (
+    /^\s*(?:is (?:that|it|this) (?:good|a good (?:deal|price|payment|rate)|reasonable|fair|high|too high|bad)|(?:is )?that a good deal|good deal\??|does that sound right)\s*[?.!]*\s*$/.test(
+      t,
+    ) &&
+    (ctx.hasPaymentEstimate || ctx.hasSelectedVehicle)
+  ) {
+    e.assessment = true;
+    add('VEHICLE_QUESTION', 0.88, 'assessment');
+  }
+  // ── service pricing questions are answered (not guessed), not turned into a booking
+  if (
+    /\bhow much (?:is|for|does|do|would|will)? ?(?:an? |the |my )?(?:oil change|brake job|brakes|tire rotation|rotation|alignment|inspection|tune[- ]?up|service|diagnostic|new tires|battery)\b/.test(
+      t,
+    )
+  ) {
+    e.servicePriceQuestion = true;
+    add('KNOWLEDGE_QUESTION', 0.9, 'service price');
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (
+        [
+          'SERVICE_APPOINTMENT',
+          'PAYMENT_ESTIMATE',
+          'VEHICLE_QUESTION',
+        ].includes(intents[i].intent)
+      )
+        intents.splice(i, 1);
+  }
+  // ── bare "how much is it?" with nothing on screen still deserves a question back
+  if (!aboutShown && /^\s*how much(?: is (?:it|that|this))?\s*\??\s*$/.test(t))
+    add('VEHICLE_QUESTION', 0.75, 'price without a vehicle');
+  // ── opinion about a model in winter / snow → general knowledge, not a search
+  if (
+    /\b(?:good|any good|okay|ok|great|bad|reliable) (?:in|for) (?:the )?(?:snow|winter|winters|ice|chicago)\b/.test(
+      t,
+    ) &&
+    /\b(?:think|is|are|would)\b/.test(t)
+  ) {
+    add('KNOWLEDGE_QUESTION', 0.9, 'general winter opinion');
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (intents[i].intent === 'INVENTORY_SEARCH') intents.splice(i, 1);
+  }
+
+  // ── family / passenger needs and loose preferences while shopping
+  const kids =
+    /\b(\d|one|two|three|four|five)\s+(?:kids|children|little ones)\b/.exec(t);
+  if (
+    /\b(family|kids|children|car seats?|carpool|third row|3rd row)\b/.test(t) &&
+    !e.serviceNeed &&
+    !e.ownVehicle
+  ) {
+    const n = kids ? (WORD_NUM[kids[1]] ?? Number(kids[1])) : 0;
+    e.vehicle = {
+      ...e.vehicle,
+      bodyType: e.vehicle?.bodyType ?? 'suv',
+      ...(n >= 3 || /third row|3rd row/.test(t)
+        ? { seatsMin: Math.min(7, n + 2 || 7) }
+        : {}),
+    };
+    add('INVENTORY_SEARCH', 0.82, 'family needs');
+  }
+  if (
+    /\bsomething (?:nice|fancy|luxury|luxurious|sporty|reliable|cheap|affordable|fun|comfortable|bigger|smaller)\b/.test(
+      t,
+    )
+  )
+    add('SHOPPING_START', 0.8, 'loose preference');
 
   // A generic "open question" fallback yields to any specific intent found above.
   if (intents.some((i) => i.evidence !== 'open question'))

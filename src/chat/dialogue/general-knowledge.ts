@@ -9,6 +9,21 @@ type Entry = { re: RegExp; en: string; es: string };
 
 const ENTRIES: Entry[] = [
   {
+    re: /\bwhat(?:'s| is| does)\b.*\b(awd|all[- ]wheel drive)\b|\b(awd)\b.*\bmean\b/,
+    en: 'AWD (all-wheel drive) sends power to all four wheels automatically whenever the system senses slip, so you get extra grip on wet or snowy roads without doing anything. It’s different from 4x4, which you usually switch on yourself and is built more for off-road and deep snow.',
+    es: 'AWD (tracción integral) manda fuerza a las cuatro ruedas automáticamente cuando detecta que patinan, así tiene más agarre en lluvia o nieve sin hacer nada. Es distinto del 4x4, que normalmente activa usted y está hecho más para terreno difícil y nieve profunda.',
+  },
+  {
+    re: /\b(?:good|any good|okay|great|reliable) (?:in|for) (?:the )?(?:snow|winter|winters|ice|chicago)\b/,
+    en: 'Generally, yes — a 4x4 Jeep with good winter or all-season tires handles Chicago snow well, and ground clearance helps with unplowed streets. The tires matter as much as the drivetrain, and 4x4 helps you get going but doesn’t help you stop, so braking distances still grow on ice.',
+    es: 'En general, sí — un Jeep 4x4 con buenas llantas de invierno o para toda temporada se maneja bien en la nieve de Chicago, y la altura ayuda en calles sin limpiar. Las llantas importan tanto como la tracción, y el 4x4 ayuda a arrancar pero no a frenar.',
+  },
+  {
+    re: /\b(check engine|engine light|warning light)\b/,
+    en: 'In general, a steady check-engine light means the car has logged a fault worth having read soon — it can be as simple as a loose gas cap. A flashing light usually means a misfire that can damage the catalytic converter, so it’s best to ease off and have it checked right away. Only a technician reading the code can say what it is.',
+    es: 'En general, una luz de “check engine” fija indica una falla registrada que conviene revisar pronto — puede ser algo tan simple como el tapón de gasolina. Si parpadea, suele ser una falla de encendido que puede dañar el catalizador, así que conviene revisarlo cuanto antes. Solo un técnico leyendo el código puede decir qué es.',
+  },
+  {
     re: /\b(awd|all[- ]wheel)\b.*\b(4wd|4x4|four[- ]wheel)\b|\b(4wd|4x4|four[- ]wheel)\b.*\b(awd|all[- ]wheel)\b/,
     en: 'Generally, all-wheel drive is always on and automatically shifts power between wheels — great for rain and snow on pavement. Four-wheel drive (4x4) is usually driver-selected and built tougher, with low-range gearing for off-road, deep snow or towing out of tough spots.',
     es: 'En general, la tracción integral (AWD) siempre está activa y reparte la fuerza automáticamente — ideal para lluvia y nieve en pavimento. La 4x4 normalmente la activa el conductor y es más robusta, con baja para terreno difícil, nieve profunda o remolque.',

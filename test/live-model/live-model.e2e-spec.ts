@@ -31,7 +31,7 @@ import { LlmRouterService } from '../../src/ai/llm-router.service';
  *   LIVE_MODEL_EVAL=1 LIVE_MODEL_TARGET=https://staging-api.dialusnow.com npm run eval:live-model
  *
  * What it proves:
- *  - genuine model replies: provenance.languageModel = polished|answered on a minimum share of
+ *  - genuine model replies: provenance.languageModel = composed|repaired|answered on a minimum share of
  *    turns (LIVE_MODEL_MIN_MODEL_SHARE, default 0.3) and ai.llm.success > 0 (in-process);
  *  - tool execution + full journeys: per store, generated multi-turn journeys (search → select
  *    → compare → payment/OTD → credit → service/parts request → handoff) judged by the
@@ -224,7 +224,11 @@ const pct = (xs: number[], p: number) => {
       const after = ctx.app.get(MetricsService).snapshot();
       const d = (k: string) => (after[k] ?? 0) - (before[k] ?? 0);
       const status = await ctx.app.get(LlmRouterService).status();
-      const modelShaped = (lm.polished ?? 0) + (lm.answered ?? 0);
+      const modelShaped =
+        (lm.composed ?? 0) +
+        (lm.repaired ?? 0) +
+        (lm.polished ?? 0) +
+        (lm.answered ?? 0);
       const all = rows.flatMap((r) => r.findings).concat(dbFindings);
       const byStore = Object.fromEntries(
         fleet.map((f) => {
@@ -413,7 +417,11 @@ const PROBES: Array<{ say: string; forbid: RegExp[] }> = [
       }
       const turns = rows.length;
       const modelShare =
-        ((lm.polished ?? 0) + (lm.answered ?? 0)) / Math.max(1, turns);
+        ((lm.composed ?? 0) +
+          (lm.repaired ?? 0) +
+          (lm.polished ?? 0) +
+          (lm.answered ?? 0)) /
+        Math.max(1, turns);
       const report = {
         generatedAt: new Date().toISOString(),
         mode: 'remote',

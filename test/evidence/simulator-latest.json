@@ -1,10 +1,10 @@
 {
-  "generatedAt": "2026-10-14T22:00:28.571Z",
+  "generatedAt": "2026-10-15T01:28:45.578Z",
   "seed": 20261014,
   "mode": "deterministic (LLM disabled)",
   "scenarios": 3000,
   "turns": 9319,
-  "durationMs": 164323,
+  "durationMs": 147240,
   "throttleWaits": 1,
   "taskSuccess": 1,
   "holdoutTaskSuccess": 1,

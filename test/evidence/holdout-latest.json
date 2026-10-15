@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14T22:00:29.337Z",
+  "generatedAt": "2026-10-15T01:28:46.299Z",
   "cases": 54,
   "taskSuccess": 0.9815,
   "p0": 0,
@@ -12,10 +12,10 @@
         {
           "severity": "P1",
           "rule": "task_handoff:no_handoff",
-          "detail": "get me a manager → I want to make sure I get this right — what are you looking for?"
+          "detail": "get me a manager → Sorry, I didn't quite catch that — could you tell me a bit more?"
         }
       ],
-      "reply": "I want to make sure I get this right — what are you looking for?"
+      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?"
     }
   ]
 }

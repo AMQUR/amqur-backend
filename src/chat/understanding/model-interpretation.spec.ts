@@ -52,7 +52,7 @@ describe('model-assisted understanding', () => {
       'hmm so like what would you do in my shoes',
     );
     expect(merged.intents.map((i) => i.intent)).toEqual(['PURCHASE_START']);
-    expect(merged.intents[0].confidence).toBe(0.85);
+    expect(merged.intents[0].confidence).toBe(0.88);
     expect(merged.intents[0].evidence).toBe('model');
   });
 

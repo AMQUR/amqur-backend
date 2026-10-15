@@ -44,18 +44,15 @@ import {
   CapabilityService,
 } from '../capability/capability.service';
 import { KnowledgeRetrievalService } from '../knowledge/knowledge-retrieval.service';
-import { factsPreserved } from './dialogue/facts-preserved';
+import { ConversationComposerService } from './compose/conversation-composer.service';
+import { LiveInfoService } from '../live-info/live-info.service';
 import { mergePublicBranding } from '../common/types/public-branding';
 import { generalAnswer } from './dialogue/general-knowledge';
 import {
-  isContextAmbiguous,
-  isWeakUnderstanding,
+  needsModelUnderstanding,
   mergeInterpretation,
 } from './understanding/model-interpretation';
-import {
-  ClaudeConversationService,
-  DealerReplyMode,
-} from './claude/claude-conversation.service';
+import { ClaudeConversationService } from './claude/claude-conversation.service';
 import {
   detectClaimTypes,
   GroundingGuardService,
@@ -102,7 +99,15 @@ export type ChatProvenance = {
    * data), `discarded` (model output rejected by the grounding guard; draft sent), `none`.
    * Lets operators and the live-model evaluation prove genuine model replies.
    */
-  languageModel?: 'polished' | 'answered' | 'discarded' | 'none';
+  languageModel?:
+    | 'composed'
+    | 'repaired'
+    | 'polished'
+    | 'answered'
+    | 'discarded'
+    | 'none';
+  /** Why the model's reply was not used (validator reasons), when it wasn't. */
+  fallbackReason?: string;
   /** True when a language model helped understand this turn (proposal validated + merged). */
   modelInterpreted?: boolean;
 };
@@ -345,6 +350,9 @@ type Turn = {
   toolCount: number;
   languageModel: NonNullable<ChatProvenance['languageModel']>;
   modelInterpreted: boolean;
+  fallbackReason?: string;
+  /** Live data retrieved this turn (weather …), passed to the composer as its only live source. */
+  live?: string;
   urgent: boolean;
   quickReplies: string[];
   /** Social opener for this turn ("Hi there!") — replaces the generic acknowledgement. */
@@ -494,6 +502,8 @@ export class ChatOrchestrator {
     private readonly capabilities: CapabilityService,
     private readonly knowledge: KnowledgeRetrievalService,
     private readonly llm: ClaudeConversationService,
+    private readonly composer: ConversationComposerService,
+    private readonly liveInfo: LiveInfoService,
     private readonly grounding: GroundingGuardService,
     private readonly evidenceSvc: ClaimEvidenceService,
     private readonly analytics: AnalyticsService,
@@ -631,10 +641,9 @@ export class ChatOrchestrator {
     // Model-assisted understanding only when the rules found nothing specific to act on.
     let modelInterpreted = false;
     if (
-      (isWeakUnderstanding(u) ||
-        isContextAmbiguous(u, rawMessage, {
-          hasContext: !!st.selectedVin || st.visibleVins.length > 0,
-        })) &&
+      needsModelUnderstanding(u, rawMessage, {
+        hasContext: !!st.selectedVin || st.visibleVins.length > 0,
+      }) &&
       !u.entities.sensitive?.length &&
       this.llm.isEnabled() &&
       !(await this.capabilities.flags(tenantId, s.locationId)).llmDisabled
@@ -648,9 +657,15 @@ export class ChatOrchestrator {
             st.selectedStatus
               ? `selected vehicle status: ${st.selectedStatus}`
               : null,
-            st.pending && st.pending !== 'none'
-              ? `assistant just asked: ${st.pending}`
+            st.lastOffer?.text
+              ? `assistant's last question: ${st.lastOffer.text.slice(0, 160)}`
+              : st.pending && st.pending !== 'none'
+                ? `assistant just asked: ${st.pending}`
+                : null,
+            st.visibleVins.length > 1
+              ? `${st.visibleVins.length} vehicles on screen`
               : null,
+            st.service?.need ? `service need: ${st.service.need}` : null,
             st.appointment
               ? `has ${st.appointment.type} appointment request`
               : null,
@@ -704,7 +719,15 @@ export class ChatOrchestrator {
     // Language: explicit choice or confident detection; stays sticky once chosen.
     if (hasIntent(u, 'LANGUAGE_SWITCH') && u.entities.language) {
       st.language = u.entities.language;
-      st.languageLocked = true;
+      // "hablas español?" is a question, not a standing preference: follow the customer's
+      // current language afterwards. Only an explicit request ("in Spanish please") sticks.
+      st.languageLocked =
+        /\b(?:please|por favor|from now on|de ahora en adelante|switch to|cambia(?:mos)? a|only|solo)\b/i.test(
+          rawMessage,
+        ) ||
+        /^\s*(?:en español|in english|in spanish|english|español)\s*[.!]*\s*$/i.test(
+          rawMessage,
+        );
       t.lang = st.language;
     } else if (
       !st.languageLocked &&
@@ -973,6 +996,8 @@ export class ChatOrchestrator {
         return this.handleChangeOfMind(t);
       case 'RESUME_VEHICLE':
         return this.handleResume(t);
+      case 'LIVE_INFO':
+        return this.handleLiveInfo(t);
       case 'LANGUAGE_SWITCH':
         t.answers.push(
           tr(
@@ -1794,6 +1819,16 @@ export class ChatOrchestrator {
   }
 
   private async handleSearch(t: Turn) {
+    if (t.u.intents.some((i) => i.evidence === 'family needs')) {
+      const max = t.st.criteria.maxPrice ?? t.u.entities.maxPrice;
+      t.answers.push(
+        tr(
+          t.lang,
+          `With the family in mind, here’s what fits${max ? ` under ${money(max)}` : ''}.`,
+          `Pensando en la familia, esto es lo que encaja${max ? ` por menos de ${money(max)}` : ''}.`,
+        ),
+      );
+    }
     if (await this.capBlocked(t, 'inventory')) return;
     this.mergeCriteria(t);
     const c = t.st.criteria;
@@ -2023,6 +2058,26 @@ export class ChatOrchestrator {
             ` por menos de ${money(c.maxPrice)}`,
           )
         : '';
+      // "What's your cheapest Jeep?" — answer the superlative directly from the results.
+      if (
+        shown.length > 1 &&
+        /\b(cheapest|least expensive|lowest[- ]priced|most affordable|most expensive|priciest)\b/i.test(
+          t.message,
+        )
+      ) {
+        const priced = shown.filter((x) => x.price);
+        const pick = /most expensive|priciest/i.test(t.message)
+          ? [...priced].sort((a, b) => b.price! - a.price!)[0]
+          : [...priced].sort((a, b) => a.price! - b.price!)[0];
+        if (pick)
+          t.answers.push(
+            tr(
+              t.lang,
+              `The ${/most expensive|priciest/i.test(t.message) ? 'highest' : 'lowest'}-priced one here is the ${vehicleLabel(pick, true)} at ${money(pick.price!)}${pick.simulated ? ' (demo figure)' : ''}.`,
+              `El de ${/most expensive|priciest/i.test(t.message) ? 'mayor' : 'menor'} precio aquí es el ${vehicleLabel(pick, true)} en ${money(pick.price!)}${pick.simulated ? ' (cifra de demostración)' : ''}.`,
+            ),
+          );
+      }
       // "In stock" is only said about vehicles that are; in-transit units are named as such.
       const transit = shown.filter((x) => x.status === 'IN_TRANSIT').length;
       if (shown.length === 1 && transit === 1) {
@@ -3510,6 +3565,15 @@ export class ChatOrchestrator {
         }
       }
     }
+    if (
+      type === 'SERVICE' &&
+      /\b(check engine|engine light|warning light)\b/i.test(t.message) &&
+      !t.handled.has('WARNING_LIGHT_NOTE')
+    ) {
+      t.handled.add('WARNING_LIGHT_NOTE');
+      const g = generalAnswer(t.message, t.lang);
+      if (g) t.answers.push(g);
+    }
     if (type === 'SERVICE') {
       const need = t.u.entities.serviceNeed ?? st.service?.need;
       st.service = { ...st.service, need };
@@ -4235,7 +4299,14 @@ export class ChatOrchestrator {
 
   private async handleVehicleQuestion(t: Turn) {
     const ref = await this.resolveVehicleReference(t);
-    const v = ref.v;
+    let v = ref.v;
+    // "Is that good?" refers to the vehicle we just estimated, even if nothing was "selected".
+    if (!v && t.u.entities.assessment && t.st.payment.lastEstimate)
+      v =
+        (await this.inventory.getVehicleByVin(
+          t.tenantId,
+          t.st.payment.lastEstimate.vin,
+        )) ?? undefined;
     if (!v && t.u.entities.priceQuestion && t.st.visibleVins.length > 1) {
       const shown = (
         await this.inventory.getVehiclesByVin(t.tenantId, t.st.visibleVins)
@@ -4285,6 +4356,51 @@ export class ChatOrchestrator {
     }
     await this.attachVehicleEvidence(t, [v]);
     const m = t.message.toLowerCase();
+    if (t.u.entities.assessment) {
+      const est = t.st.payment.lastEstimate;
+      const bits: string[] = [];
+      if (est && est.vin === v.vin)
+        bits.push(
+          tr(
+            t.lang,
+            `As a ballpark, ${money(est.monthly)}/mo is an estimate at an example ${est.apr}% rate over ${est.termMonths} months — your real payment depends on your credit, the lender’s rate and taxes and fees.`,
+            `Como referencia, ${money(est.monthly)}/mes es un estimado con una tasa de ejemplo de ${est.apr}% a ${est.termMonths} meses — el pago real depende de su crédito, la tasa del prestamista e impuestos y cargos.`,
+          ),
+        );
+      if (t.st.payment.maxMonthly && est)
+        bits.push(
+          est.monthly <= t.st.payment.maxMonthly
+            ? tr(
+                t.lang,
+                `It’s within the ${money(t.st.payment.maxMonthly)}/mo you mentioned.`,
+                `Está dentro de los ${money(t.st.payment.maxMonthly)}/mes que mencionó.`,
+              )
+            : tr(
+                t.lang,
+                `It’s above the ${money(t.st.payment.maxMonthly)}/mo you mentioned — more down or a longer term would lower it.`,
+                `Está por encima de los ${money(t.st.payment.maxMonthly)}/mes que mencionó — más enganche o un plazo mayor lo bajaría.`,
+              ),
+        );
+      if (v.price && v.msrp && v.msrp > v.price)
+        bits.push(
+          tr(
+            t.lang,
+            `On price, it’s listed ${money(v.msrp - v.price)} under its MSRP of ${money(v.msrp)}${v.simulated ? ' (demo figures)' : ''}.`,
+            `En precio, está ${money(v.msrp - v.price)} por debajo de su MSRP de ${money(v.msrp)}${v.simulated ? ' (cifras de demostración)' : ''}.`,
+          ),
+        );
+      t.sources.add('inventory_feed');
+      t.answers.push(
+        bits.length
+          ? bits.join(' ')
+          : tr(
+              t.lang,
+              'It depends mostly on your budget and how you’ll use it — what matters most to you?',
+              'Depende sobre todo de su presupuesto y del uso que le dará — ¿qué es lo más importante para usted?',
+            ),
+      );
+      return;
+    }
     if (t.u.entities.priceQuestion) {
       // Selling price straight from inventory; never confused with MSRP, payment or OTD.
       t.st.selectedVin = v.vin;
@@ -4598,6 +4714,17 @@ export class ChatOrchestrator {
 
   private async handleKnowledge(t: Turn) {
     if (t.u.entities.managerQuestion) return this.handleManagerQuestion(t);
+    if (t.u.entities.servicePriceQuestion) {
+      // Keep any booking question pending; just answer this honestly.
+      t.answers.push(
+        tr(
+          t.lang,
+          'I don’t have this store’s verified service prices, so I won’t quote a number — the service team gives you the exact price, usually when they confirm the visit.',
+          'No tengo los precios de servicio verificados de esta agencia, así que no voy a dar una cifra — el equipo de servicio le da el precio exacto, normalmente al confirmar la visita.',
+        ),
+      );
+      return;
+    }
     if (
       t.u.intents.some(
         (i) =>
@@ -5351,6 +5478,85 @@ export class ChatOrchestrator {
     }
   }
 
+  /** Compact structured memory for the composer — no phone/email (privacy). */
+  private memorySummary(t: Turn): string[] {
+    const st = t.st;
+    const m: string[] = [];
+    if (st.department) m.push(`department: ${st.department}`);
+    if (st.selectedLabel)
+      m.push(
+        `selected vehicle: ${st.selectedLabel}${st.selectedStock ? ` (stock ${st.selectedStock})` : ''}${st.selectedStatus ? `, status ${st.selectedStatus}` : ''}`,
+      );
+    const c = st.criteria;
+    const crit = [
+      c.model,
+      c.bodyType,
+      c.color,
+      c.maxPrice ? `under $${c.maxPrice.toLocaleString('en-US')}` : null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    if (crit) m.push(`shopping for: ${crit}`);
+    if (st.payment.maxMonthly)
+      m.push(`monthly budget: $${st.payment.maxMonthly}`);
+    if (
+      st.payment.leaseOrPurchase === 'cash' ||
+      st.payment.leaseOrPurchase === 'lease'
+    )
+      m.push(`payment method: ${st.payment.leaseOrPurchase}`);
+    const e = st.payment.lastEstimate;
+    if (e)
+      m.push(
+        `last payment estimate: $${e.monthly}/mo, $${e.downPayment} down, ${e.termMonths} months, example ${e.apr}% APR (estimate)`,
+      );
+    if (st.otd?.requestId)
+      m.push(
+        `out-the-door quote: requested${st.otd.zip ? `, ZIP ${st.otd.zip}` : ', ZIP not given'}`,
+      );
+    if (st.appointment)
+      m.push(
+        `${st.appointment.type.toLowerCase()} appointment: ${st.appointment.status} ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''}`.trim(),
+      );
+    if (st.service?.need || st.service?.vehicle)
+      m.push(
+        `service: ${st.service.need ?? 'need not stated'}${st.service.vehicle ? ` for their ${[st.service.vehicle.year, st.service.vehicle.make, st.service.vehicle.model].filter(Boolean).join(' ')}` : ''}`,
+      );
+    if (st.parts?.need) m.push(`parts: ${st.parts.need}`);
+    if (st.trade?.model)
+      m.push(
+        `trade-in: ${[st.trade.year, st.trade.make, st.trade.model].filter(Boolean).join(' ')}`,
+      );
+    if (st.finance?.creditLinkOffered)
+      m.push(
+        `credit application: ${st.finance.creditPreview ? 'demo preview shown' : 'link offered'} (not submitted, not approved)`,
+      );
+    if (st.handoff?.escalationId)
+      m.push(
+        `staff request: saved${st.handoff.notified ? ', delivery confirmed' : ', delivery not confirmed'}`,
+      );
+    if (st.contact.firstName)
+      m.push(`customer first name: ${st.contact.firstName}`);
+    if (st.contact.phone || st.contact.email)
+      m.push('contact details: on file');
+    return m;
+  }
+
+  /** What each card on screen shows (numbers included) so the sentence agrees with it. */
+  private cardSummaries(t: Turn): string[] {
+    const out: string[] = [];
+    for (const v of (t.vehicles ?? []).slice(0, 6))
+      out.push(
+        `vehicle card: ${vehicleLabel(v, true)}${v.price ? `, $${v.price.toLocaleString('en-US')}` : ''}${v.msrp ? `, MSRP $${v.msrp.toLocaleString('en-US')}` : ''}${v.status ? `, ${v.status}` : ''}${v.simulated ? ', demo vehicle' : ''}${v.mileage != null ? `, ${v.mileage.toLocaleString('en-US')} mi` : ''}`,
+      );
+    for (const c of t.cards) {
+      const { kind, ...rest } = c as Record<string, unknown> & { kind: string };
+      for (const k of ['url', 'id', 'escalationId', 'lines', 'policyVersion'])
+        delete (rest as Record<string, unknown>)[k];
+      out.push(`${kind} card: ${JSON.stringify(rest).slice(0, 400)}`);
+    }
+    return out;
+  }
+
   /** The offer from the immediately preceding assistant turn, if still current. */
   private freshOffer(t: Turn) {
     const o = t.st.lastOffer;
@@ -5558,6 +5764,82 @@ export class ChatOrchestrator {
         return true;
     }
     return false;
+  }
+
+  /**
+   * Weather / sports. Facts only from a live provider (with source + retrieval time). Without
+   * one, say plainly we can't check live — never present memory as current.
+   */
+  private async handleLiveInfo(t: Turn) {
+    const topic =
+      t.u.entities.liveTopic ??
+      (/\b(weather|rain|snow|forecast)\b/i.test(t.message)
+        ? 'weather'
+        : 'sports');
+    if (topic === 'sports') {
+      const r = await this.liveInfo.sports();
+      t.live = `sports: ${r.status} (${r.reason}) — no live scores, results or schedules may be stated`;
+      t.answers.push(
+        tr(
+          t.lang,
+          'I can’t check live scores or schedules — I don’t have a live sports feed connected, so I won’t guess a result.',
+          'No puedo revisar marcadores ni horarios en vivo — no tengo una fuente deportiva conectada, así que no voy a adivinar.',
+        ),
+      );
+      return;
+    }
+    let place = this.liveInfo.resolvePlace(t.message);
+    if (!place && t.locationId) {
+      const loc = await this.prisma.location.findFirst({
+        where: { id: t.locationId, tenantId: t.tenantId },
+        select: { address: true, timezone: true },
+      });
+      place =
+        this.liveInfo.resolvePlace(loc?.address) ??
+        (loc?.timezone === 'America/Chicago' ? 'chicago' : null);
+    }
+    if (!place) {
+      this.ask(
+        t,
+        'none',
+        tr(t.lang, 'Which city should I check?', '¿De qué ciudad?'),
+        3,
+      );
+      return;
+    }
+    const w = await this.liveInfo.weather(place);
+    if (w.status !== 'ok') {
+      t.live = 'weather: unavailable — no forecast may be stated';
+      t.answers.push(
+        w.status === 'unknown_place'
+          ? tr(
+              t.lang,
+              'I can only check live weather for the Chicago area right now.',
+              'Por ahora solo puedo revisar el clima en vivo del área de Chicago.',
+            )
+          : tr(
+              t.lang,
+              'I can’t reach the live weather service right now, so I won’t guess a forecast.',
+              'No puedo consultar el clima en vivo ahora, así que no voy a adivinar.',
+            ),
+      );
+      return;
+    }
+    t.sources.add('live_weather_nws');
+    const lines = w.periods.map(
+      (p) =>
+        `${p.name}: ${p.temperature}°${p.unit}, ${p.shortForecast}${p.precipitationChance != null ? `, ${p.precipitationChance}% chance of precipitation` : ''}${p.wind ? `, wind ${p.wind}` : ''}`,
+    );
+    t.live = `weather for ${w.place} from ${w.source}, retrieved ${w.retrievedAt}:\n${lines.join('\n')}`;
+    const [a, b] = w.periods;
+    t.answers.push(
+      tr(
+        t.lang,
+        `Per the National Weather Service for ${w.place}: ${a.name.toLowerCase()}, ${a.temperature}°${a.unit} and ${a.shortForecast.toLowerCase()}${b ? `; ${b.name.toLowerCase()}, ${b.temperature}°${b.unit} and ${b.shortForecast.toLowerCase()}` : ''}.`,
+        `Según el Servicio Meteorológico Nacional para ${w.place}: ${a.name}, ${a.temperature}°${a.unit}, ${a.shortForecast}${b ? `; ${b.name}, ${b.temperature}°${b.unit}, ${b.shortForecast}` : ''}.`,
+      ),
+    );
+    t.facts.push(...lines.map((l) => `NWS ${w.place} ${l}`));
   }
 
   /** "Let's go back to the Jeep" — restore the shopping vehicle and recap where we were. */
@@ -6015,6 +6297,16 @@ export class ChatOrchestrator {
       if (o && !skipped(o.key)) q = o;
       else if (o) silentPending = o.key; // still awaiting it — just don't nag
     }
+    // Never answer with nothing: if the only thing left to say is the question we asked last
+    // turn, ask it again (an empty "How can I help?" is worse than a repeat).
+    if (
+      !q &&
+      !opts.forcedReply &&
+      !t.answers.length &&
+      !t.narration.length &&
+      quiet
+    )
+      q = quiet;
     if (q && q.key !== 'none')
       st.lastAsked = { key: q.key, turn: st.turnCount + 1 };
     st.lastOffer = q
@@ -6055,54 +6347,62 @@ export class ChatOrchestrator {
 
     // Language layer: polish with LLM (router → fallback). Claims present in the server
     // draft were produced from tool evidence; anything NEW the model adds is stripped.
-    const mode: DealerReplyMode =
-      st.department === 'service'
-        ? 'service'
-        : st.department === 'parts'
-          ? 'parts'
-          : st.department === 'sales'
-            ? 'sales'
-            : 'general';
     let reply = draft;
     let segments = plan.segments.length ? plan.segments : [draft];
     const llmOff = !!(await this.capabilities.flags(t.tenantId, t.locationId))
       .llmDisabled;
     const usePolish =
       !llmOff && !opts.forcedReply && !t.urgent && draft.length > 0;
-    if (usePolish) {
-      const polished = await this.llm.polishDealerReply({
+    // Claude composes the reply from the conversation, memory and tool results; the
+    // validator keeps it grounded. A model-answered knowledge reply is already model-written.
+    if (
+      usePolish &&
+      t.languageModel !== 'answered' &&
+      this.composer.isEnabled()
+    ) {
+      const transcript = (
+        await this.store
+          .recentMessages(t.s.conversationId, 10)
+          .catch(
+            () =>
+              [] as Array<{ role: string; content: string; createdAt: Date }>,
+          )
+      )
+        .filter((m) => m.role === 'USER' || m.role === 'ASSISTANT')
+        .map((m) => ({
+          role: m.role as 'USER' | 'ASSISTANT',
+          content: m.content,
+        }));
+      // the current message is passed separately
+      if (
+        transcript.length &&
+        transcript[transcript.length - 1].role === 'USER'
+      )
+        transcript.pop();
+      const res = await this.composer.compose({
+        message: t.message,
+        transcript,
+        memory: this.memorySummary(t),
         draft,
-        mode,
-        facts: t.facts.join('\n') || undefined,
-        userMessage: redactCreditSensitive(t.message),
+        facts: [
+          ...t.facts,
+          ...verifiedFactsFrom(t.evidence).map(
+            (f) => `${f.claimType}: ${JSON.stringify(f).slice(0, 300)}`,
+          ),
+        ],
+        cards: this.cardSummaries(t),
+        live: t.live,
         language: t.lang,
-        tenantId: t.tenantId,
         assistantName: await this.assistantName(t),
+        tenantId: t.tenantId,
       });
-      if (polished && polished !== draft) {
-        const g = this.grounding.sanitizeCustomerReply({
-          reply: polished,
-          verifiedFacts: verifiedFactsFrom(t.evidence),
-          allowedClaimTypes: detectClaimTypes(draft),
-        });
-        // Cards carry the numbers; the sentence must still say exactly the same ones.
-        // A rewrite cut off mid-sentence (token limit) is never sent.
-        const truncated = !/[.!?…)"”’]\s*$/.test(polished.trim());
-        if (!g.sanitized && truncated) {
-          this.metrics.increment('chat.polish.truncated');
-          t.languageModel = 'discarded';
-        } else if (!g.sanitized && !factsPreserved(draft, polished)) {
-          this.metrics.increment('chat.polish.facts_changed');
-          t.languageModel = 'discarded';
-        } else if (g.sanitized) {
-          // Model added an unverified claim → discard the polish entirely, keep the draft.
-          this.metrics.increment('chat.grounding.sanitized');
-          t.languageModel = 'discarded';
-        } else {
-          reply = stripFiller(polished);
-          segments = [reply];
-          if (t.languageModel === 'none') t.languageModel = 'polished';
-        }
+      if (res.status === 'composed' || res.status === 'repaired') {
+        reply = stripFiller(res.text);
+        segments = [reply];
+        t.languageModel = res.status;
+      } else if (res.status === 'fallback' && res.reasons[0] !== 'no_model') {
+        t.languageModel = 'discarded';
+        t.fallbackReason = res.reasons.join(',');
       }
     }
     if (ack) st.recentOpeners = [...st.recentOpeners, ack].slice(-4);
@@ -6149,6 +6449,7 @@ export class ChatOrchestrator {
       disclaimer: disclaimers.slice(0, 2).join(' ') || undefined,
       languageModel: t.languageModel,
       modelInterpreted: t.modelInterpreted,
+      fallbackReason: t.fallbackReason,
     };
     await this.store.appendMessage(t.s, 'ASSISTANT', reply, {
       type: t.type ?? 'reply',

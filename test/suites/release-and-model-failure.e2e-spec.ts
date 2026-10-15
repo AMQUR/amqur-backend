@@ -6,7 +6,7 @@ import { LlmRouterService } from '../../src/ai/llm-router.service';
 type ChatBody = {
   conversationId: string;
   reply: string;
-  provenance?: { languageModel?: string };
+  provenance?: { languageModel?: string; fallbackReason?: string };
 };
 
 /**
@@ -110,9 +110,9 @@ describe('release markers and model failure handling', () => {
       }));
       const r = await chat('hello there');
       expect(r.status).toBe(201);
-      if (r.body.provenance?.languageModel === 'polished')
-        expect(r.body.reply).toBe(text);
-      else expect(r.body.provenance?.languageModel).toBe('none'); // greeting not polished
+      // Claude composes the reply; the validated text is what the customer sees.
+      expect(r.body.provenance?.languageModel).toBe('composed');
+      expect(r.body.reply).toBe(text);
     });
 
     it('provider failure (timeout / open circuit / spend cap) degrades to the deterministic reply', async () => {
@@ -126,7 +126,9 @@ describe('release markers and model failure handling', () => {
         const r = await chat('What vehicles do you have in stock?');
         expect(r.status).toBe(201);
         expect(r.body.reply.length).toBeGreaterThan(0);
-        expect(r.body.provenance?.languageModel).toBe('none');
+        // model attempted and failed → deterministic reply, with the reason recorded
+        expect(r.body.provenance?.languageModel).toBe('discarded');
+        expect(r.body.provenance?.fallbackReason).toBeTruthy();
         jest.restoreAllMocks();
       }
     });
@@ -143,7 +145,11 @@ describe('release markers and model failure handling', () => {
         const r = await chat(msg);
         expect(r.status).toBe(201);
         expect(r.body.reply.length).toBeGreaterThan(0);
-        expect(r.body.provenance?.languageModel).toBe('none');
+        // model attempted and failed → deterministic reply, with the reason recorded
+        // never a model-written reply; deterministic (urgent error turns skip the model)
+        expect(['none', 'discarded']).toContain(
+          r.body.provenance?.languageModel,
+        );
       }
       expect(route).toHaveBeenCalled();
     });

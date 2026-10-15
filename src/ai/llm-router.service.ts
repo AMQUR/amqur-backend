@@ -22,6 +22,7 @@ export type LlmFailureReason =
   | 'budget_exhausted'
   | 'spend_cap_exhausted'
   | 'spend_cap_unpriced'
+  | 'spend_store_unavailable'
   | 'rate_limited';
 
 export type LlmRouteResult =
@@ -108,6 +109,16 @@ export class LlmRouterService {
   private async spendBlock(
     tenantId?: string,
   ): Promise<LlmFailureReason | null> {
+    // Production spend limits are only real if the shared counter is reachable. If Redis is
+    // configured but down, stop model calls (deterministic replies continue) rather than let
+    // each replica count on its own.
+    if (
+      process.env.NODE_ENV === 'production' &&
+      process.env.REDIS_URL?.trim() &&
+      (this.cache as { isRedisHealthy?: () => boolean }).isRedisHealthy?.() ===
+        false
+    )
+      return 'spend_store_unavailable';
     const k = this.keys(tenantId);
     if ((await this.counter(k.tokens)) >= this.dailyBudget())
       return 'budget_exhausted';

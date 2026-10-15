@@ -322,4 +322,33 @@ describe('LlmRouterService', () => {
       expect((await tcall(r2)).ok).toBe(false);
     });
   });
+
+  it('fails closed in production when the shared spend counter (Redis) is down', async () => {
+    const prev = { env: process.env.NODE_ENV, redis: process.env.REDIS_URL };
+    process.env.NODE_ENV = 'production';
+    process.env.REDIS_URL = 'redis://example:6379';
+    try {
+      const a = withUsage('anthropic', 10, 10);
+      const cache = { ...memCache(), isRedisHealthy: () => false };
+      const r = new LlmRouterService(
+        a as never,
+        provider('openai', async () => ({ text: 'x' }), false) as never,
+        metrics as never,
+        cache as never,
+        cfgWith({}) as never,
+      );
+      const res = await r.route({
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      expect(res).toMatchObject({
+        ok: false,
+        reason: 'spend_store_unavailable',
+      });
+      expect(a.generate).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = prev.env;
+      if (prev.redis === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = prev.redis;
+    }
+  });
 });

@@ -27,6 +27,10 @@ const SLANG: Array<[RegExp, string]> = [
   [/\bgotta\b/g, 'have to'],
   [/\bcuz\b/g, 'because'],
   [/\bidk\b/g, "i don't know"],
+  [/\b(?:smth|sth|somethin)\b/g, 'something'],
+  [/\bwhip\b/g, 'car'],
+  [/\bdoorpayment\b/g, 'door payment'],
+  [/\bdoorprice\b/g, 'door price'],
 ];
 
 const VOICE: Array<[RegExp, string]> = [
