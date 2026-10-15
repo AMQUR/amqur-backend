@@ -126,6 +126,8 @@ export type TurnEntities = {
     | 'who_is_that';
   /** Live-information topic (weather/sports) — answered only from a live source. */
   liveTopic?: 'weather' | 'sports';
+  /** Asks about another store's inventory or data (never fetched across tenants). */
+  otherStore?: boolean;
   /** "Is that good?" about the last number/vehicle discussed. */
   assessment?: boolean;
   /** "How much is an oil change?" — service pricing (never guessed). */
@@ -2191,6 +2193,25 @@ export function understandTurn(
     )
   )
     add('SHOPPING_START', 0.8, 'loose preference');
+
+  // ── "price after everything" / "all said and done" = out-the-door
+  if (
+    /\b(?:price|cost|total|pay|owe)\b.{0,25}\b(?:after everything|everything included|all said and done|with everything|when it'?s all done)\b|\b(?:after everything|all said and done)\b.{0,25}\b(?:price|cost|total|pay|owe)\b/.test(
+      t,
+    )
+  )
+    add('OTD_QUOTE', 0.9, 'out-the-door phrasing (after everything)');
+  // ── another store's inventory/data — answered plainly, never fetched
+  if (
+    /\b(?:your |the )?(?:other|another|sister) (?:store|location|dealership|lot)s?\b|\b(?:at|from) (?:dial )?(?:cdjr|chevy|chevrolet|nissan|infiniti|jeep)(?: of chicago)? (?:south|north)\b|\b(?:south|north) (?:store|location|cdjr)\b/.test(
+      t,
+    )
+  ) {
+    e.otherStore = true;
+    add('KNOWLEDGE_QUESTION', 0.92, 'other store');
+    for (let i = intents.length - 1; i >= 0; i -= 1)
+      if (intents[i].intent === 'INVENTORY_SEARCH') intents.splice(i, 1);
+  }
 
   // A generic "open question" fallback yields to any specific intent found above.
   if (intents.some((i) => i.evidence !== 'open question'))

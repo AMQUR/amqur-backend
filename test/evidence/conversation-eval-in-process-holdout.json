@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-15T01:25:26.195Z",
+  "generatedAt": "2026-10-15T01:49:37.555Z",
   "mode": "in-process-holdout",
   "target": "in-process",
   "turns": 27,
@@ -10,8 +10,8 @@
     "none": 27
   },
   "latencyMs": {
-    "p50": 13,
-    "p90": 23,
+    "p50": 12,
+    "p90": 21,
     "max": 51
   },
   "failures": [
@@ -43,7 +43,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 14,
+      "ms": 13,
       "pass": false,
       "fails": [
         "generic deflection",
@@ -61,7 +61,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 25,
+      "ms": 26,
       "pass": false,
       "fails": [
         "missing meaning /49,870|52,010/"
@@ -78,7 +78,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 9,
+      "ms": 8,
       "pass": false,
       "fails": [
         "generic deflection",
@@ -114,7 +114,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 11,
+      "ms": 9,
       "pass": false,
       "fails": [
         "missing meaning /don.t have|won.t|team|verify|price/i"
@@ -125,23 +125,6 @@
       "journey": "holdout-service",
       "tag": "credit",
       "say": "my credit is kinda trash tbh",
-      "reply": "I want to make sure I get this right — what are you looking for?",
-      "cards": [],
-      "vehicles": 0,
-      "languageModel": "none",
-      "modelInterpreted": false,
-      "fallbackReason": null,
-      "ms": 8,
-      "pass": false,
-      "fails": [
-        "missing meaning /credit|lender|finance/i"
-      ],
-      "critical": []
-    },
-    {
-      "journey": "holdout-offtopic",
-      "tag": "small-talk",
-      "say": "hows your day going",
       "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?",
       "cards": [],
       "vehicles": 0,
@@ -152,6 +135,23 @@
       "pass": false,
       "fails": [
         "generic deflection",
+        "missing meaning /credit|lender|financ/i"
+      ],
+      "critical": []
+    },
+    {
+      "journey": "holdout-offtopic",
+      "tag": "small-talk",
+      "say": "hows your day going",
+      "reply": "I want to make sure I get this right — what are you looking for?",
+      "cards": [],
+      "vehicles": 0,
+      "languageModel": "none",
+      "modelInterpreted": false,
+      "fallbackReason": null,
+      "ms": 7,
+      "pass": false,
+      "fails": [
         "missing meaning /good|well|great|thanks|going/i"
       ],
       "critical": []
@@ -166,7 +166,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 15,
+      "ms": 13,
       "pass": false,
       "fails": [
         "missing meaning /lease|leasing|own|mileage/i"
@@ -183,7 +183,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 10,
+      "ms": 8,
       "pass": false,
       "fails": [
         "generic deflection"
@@ -235,7 +235,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 14,
+      "ms": 13,
       "pass": false,
       "fails": [
         "generic deflection",
@@ -253,7 +253,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 25,
+      "ms": 26,
       "pass": false,
       "fails": [
         "missing meaning /49,870|52,010/"
@@ -272,7 +272,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 17,
+      "ms": 18,
       "pass": true,
       "fails": [],
       "critical": []
@@ -287,7 +287,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 9,
+      "ms": 8,
       "pass": false,
       "fails": [
         "generic deflection",
@@ -323,7 +323,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 13,
+      "ms": 12,
       "pass": true,
       "fails": [],
       "critical": []
@@ -338,7 +338,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 9,
+      "ms": 8,
       "pass": true,
       "fails": [],
       "critical": []
@@ -353,7 +353,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 14,
+      "ms": 13,
       "pass": true,
       "fails": [],
       "critical": []
@@ -383,7 +383,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 11,
+      "ms": 9,
       "pass": false,
       "fails": [
         "missing meaning /don.t have|won.t|team|verify|price/i"
@@ -411,16 +411,17 @@
       "journey": "holdout-service",
       "tag": "credit",
       "say": "my credit is kinda trash tbh",
-      "reply": "I want to make sure I get this right — what are you looking for?",
+      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?",
       "cards": [],
       "vehicles": 0,
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 8,
+      "ms": 7,
       "pass": false,
       "fails": [
-        "missing meaning /credit|lender|finance/i"
+        "generic deflection",
+        "missing meaning /credit|lender|financ/i"
       ],
       "critical": []
     },
@@ -445,7 +446,7 @@
       "journey": "holdout-offtopic",
       "tag": "small-talk",
       "say": "hows your day going",
-      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?",
+      "reply": "I want to make sure I get this right — what are you looking for?",
       "cards": [],
       "vehicles": 0,
       "languageModel": "none",
@@ -454,7 +455,6 @@
       "ms": 7,
       "pass": false,
       "fails": [
-        "generic deflection",
         "missing meaning /good|well|great|thanks|going/i"
       ],
       "critical": []
@@ -469,7 +469,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 11,
+      "ms": 10,
       "pass": true,
       "fails": [],
       "critical": []
@@ -499,7 +499,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 12,
+      "ms": 11,
       "pass": true,
       "fails": [],
       "critical": []
@@ -514,7 +514,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 15,
+      "ms": 13,
       "pass": false,
       "fails": [
         "missing meaning /lease|leasing|own|mileage/i"
@@ -531,7 +531,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 10,
+      "ms": 8,
       "pass": false,
       "fails": [
         "generic deflection"
@@ -548,7 +548,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 23,
+      "ms": 21,
       "pass": true,
       "fails": [],
       "critical": []
@@ -578,7 +578,7 @@
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 14,
+      "ms": 13,
       "pass": true,
       "fails": [],
       "critical": []
@@ -619,13 +619,13 @@
       "journey": "holdout-switch",
       "tag": "resume",
       "say": "actually back to that grand cherokee",
-      "reply": "Good pick — the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4. Would an out-the-door price help, or would you rather see it in person first?",
+      "reply": "Got it, the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4. Would an out-the-door price help, or would you rather see it in person first?",
       "cards": [],
       "vehicles": 1,
       "languageModel": "none",
       "modelInterpreted": false,
       "fallbackReason": null,
-      "ms": 14,
+      "ms": 12,
       "pass": true,
       "fails": [],
       "critical": []

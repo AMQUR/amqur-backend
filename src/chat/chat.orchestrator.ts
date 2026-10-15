@@ -4714,6 +4714,16 @@ export class ChatOrchestrator {
 
   private async handleKnowledge(t: Turn) {
     if (t.u.entities.managerQuestion) return this.handleManagerQuestion(t);
+    if (t.u.entities.otherStore) {
+      t.answers.push(
+        tr(
+          t.lang,
+          'I can only see this store’s inventory and records — I don’t have access to other locations, so I can’t show what they have. Their own website or sales team can help with that, and I’m happy to search here.',
+          'Solo puedo ver el inventario y los registros de esta agencia — no tengo acceso a otras ubicaciones. Su sitio web o su equipo de ventas le pueden ayudar, y con gusto busco aquí.',
+        ),
+      );
+      return;
+    }
     if (t.u.entities.servicePriceQuestion) {
       // Keep any booking question pending; just answer this honestly.
       t.answers.push(
@@ -6351,8 +6361,14 @@ export class ChatOrchestrator {
     let segments = plan.segments.length ? plan.segments : [draft];
     const llmOff = !!(await this.capabilities.flags(t.tenantId, t.locationId))
       .llmDisabled;
+    // Handoff/urgent turns are composed too (the validator keeps the honest delivery status);
+    // only turns where a tool failed keep the fixed error wording.
     const usePolish =
-      !llmOff && !opts.forcedReply && !t.urgent && draft.length > 0;
+      !llmOff &&
+      !opts.forcedReply &&
+      !t.u.intents.some((i) => i.intent === 'SAFETY_URGENT') &&
+      !t.narration.some((n) => /couldn't save that|no pude guardar/.test(n)) &&
+      draft.length > 0;
     // Claude composes the reply from the conversation, memory and tool results; the
     // validator keeps it grounded. A model-answered knowledge reply is already model-written.
     if (

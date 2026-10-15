@@ -1,6 +1,6 @@
 # Conversation evaluation — in-process-holdout
 
-2026-10-15T01:25:26.195Z · 27 turns · pass 17/27 (63%) · critical 0 · latency p50 13 ms, p90 23 ms
+2026-10-15T01:49:37.555Z · 27 turns · pass 17/27 (63%) · critical 0 · latency p50 12 ms, p90 21 ms
 
 Provenance: none 27
 
@@ -20,25 +20,25 @@ Provenance: none 27
 
 **Customer:** which one costs the least
 
-**Assistant** _(none, 14 ms)_: That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?
+**Assistant** _(none, 13 ms)_: That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?
 
 > ❌ generic deflection; missing meaning /\$\d|lowest|cheapest|least/i
 
 **Customer:** ok whats the sticker on the grand cherokee
 
-**Assistant** _(none, 1 vehicle card(s), 25 ms)_: I found one Grand Cherokee — it’s marked in transit, so it isn’t on the lot yet. (Heads up: this demo runs on simulated vehicles, not the dealership’s live inventory.) Want to see what payments might look like on it?
+**Assistant** _(none, 1 vehicle card(s), 26 ms)_: I found one Grand Cherokee — it’s marked in transit, so it isn’t on the lot yet. (Heads up: this demo runs on simulated vehicles, not the dealership’s live inventory.) Want to see what payments might look like on it?
 
 > ❌ missing meaning /49,870|52,010/
 
 **Customer:** and if i did 3 grand down
 
-**Assistant** _(none, cards: payment, 17 ms)_: For the 2025 Jeep Grand Cherokee Limited 4x4 at $49,870, you're looking at roughly $820 a month with $3,000 down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer. Want to adjust the down payment or term?
+**Assistant** _(none, cards: payment, 18 ms)_: For the 2025 Jeep Grand Cherokee Limited 4x4 at $49,870, you're looking at roughly $820 a month with $3,000 down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer. Want to adjust the down payment or term?
 
 
 
 **Customer:** hmm is that a decent number
 
-**Assistant** _(none, 9 ms)_: Sorry, I didn't quite follow — is that about the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4, or something else?
+**Assistant** _(none, 8 ms)_: Sorry, I didn't quite follow — is that about the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4, or something else?
 
 > ❌ generic deflection; missing meaning /estimate|depends|credit|rate|MSRP|budget/i
 
@@ -50,13 +50,13 @@ Provenance: none 27
 
 **Customer:** can i swing by and look at it saturday
 
-**Assistant** _(none, 13 ms)_: What time on Saturday, Oct 17 (open 8 AM–2 PM)?
+**Assistant** _(none, 12 ms)_: What time on Saturday, Oct 17 (open 8 AM–2 PM)?
 
 
 
 **Customer:** nevermind
 
-**Assistant** _(none, 9 ms)_: No problem at all. Want to look at something other than the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4, or change something else?
+**Assistant** _(none, 8 ms)_: No problem at all. Want to look at something other than the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4, or change something else?
 
 
 
@@ -64,7 +64,7 @@ Provenance: none 27
 
 **Customer:** my car is making a grinding noise when i brake
 
-**Assistant** _(none, 14 ms)_: I can help with that. What vehicle are we scheduling the grinding for? Year, make and model is plenty.
+**Assistant** _(none, 13 ms)_: I can help with that. What vehicle are we scheduling the grinding for? Year, make and model is plenty.
 
 
 
@@ -76,7 +76,7 @@ Provenance: none 27
 
 **Customer:** whats a brake job usually run
 
-**Assistant** _(none, 11 ms)_: What day works for you?
+**Assistant** _(none, 9 ms)_: What day works for you?
 
 > ❌ missing meaning /don.t have|won.t|team|verify|price/i
 
@@ -88,9 +88,9 @@ Provenance: none 27
 
 **Customer:** my credit is kinda trash tbh
 
-**Assistant** _(none, 8 ms)_: I want to make sure I get this right — what are you looking for?
+**Assistant** _(none, 7 ms)_: Sorry, I didn't quite catch that — could you tell me a bit more?
 
-> ❌ missing meaning /credit|lender|finance/i
+> ❌ generic deflection; missing meaning /credit|lender|financ/i
 
 **Customer:** what paperwork do i need
 
@@ -102,13 +102,13 @@ Provenance: none 27
 
 **Customer:** hows your day going
 
-**Assistant** _(none, 7 ms)_: Sorry, I didn't quite catch that — could you tell me a bit more?
+**Assistant** _(none, 7 ms)_: I want to make sure I get this right — what are you looking for?
 
-> ❌ generic deflection; missing meaning /good|well|great|thanks|going/i
+> ❌ missing meaning /good|well|great|thanks|going/i
 
 **Customer:** whats the forecast looking like for tonight
 
-**Assistant** _(none, 11 ms)_: Per the National Weather Service for Chicago: tonight, 58°F and mostly cloudy; thursday, 61°F and rain showers.
+**Assistant** _(none, 10 ms)_: Per the National Weather Service for Chicago: tonight, 58°F and mostly cloudy; thursday, 61°F and rain showers.
 
 
 
@@ -120,19 +120,19 @@ Provenance: none 27
 
 **Customer:** whats the difference between 4wd and awd again
 
-**Assistant** _(none, 12 ms)_: Generally, all-wheel drive is always on and automatically shifts power between wheels — great for rain and snow on pavement. Four-wheel drive (4x4) is usually driver-selected and built tougher, with low-range gearing for off-road, deep snow or towing out of tough spots.
+**Assistant** _(none, 11 ms)_: Generally, all-wheel drive is always on and automatically shifts power between wheels — great for rain and snow on pavement. Four-wheel drive (4x4) is usually driver-selected and built tougher, with low-range gearing for off-road, deep snow or towing out of tough spots.
 
 
 
 **Customer:** is leasing smarter than buying
 
-**Assistant** _(none, 15 ms)_: Want me to pull up the dealership's secure credit application? It opens in a new tab, so your financial details stay out of this chat.
+**Assistant** _(none, 13 ms)_: Want me to pull up the dealership's secure credit application? It opens in a new tab, so your financial details stay out of this chat.
 
 > ❌ missing meaning /lease|leasing|own|mileage/i
 
 **Customer:** can you ask the boss to give me a deal
 
-**Assistant** _(none, 10 ms)_: That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?
+**Assistant** _(none, 8 ms)_: That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?
 
 > ❌ generic deflection
 
@@ -140,7 +140,7 @@ Provenance: none 27
 
 **Customer:** necesito una camioneta grande para mi familia
 
-**Assistant** _(none, 1 vehicle card(s), 23 ms)_: Encontré un vehículo que puedo verificar en existencia. (Nota: esta demostración usa vehículos simulados, no el inventario real de la agencia.) ¿Quiere ver cómo quedarían los pagos de eso?
+**Assistant** _(none, 1 vehicle card(s), 21 ms)_: Encontré un vehículo que puedo verificar en existencia. (Nota: esta demostración usa vehículos simulados, no el inventario real de la agencia.) ¿Quiere ver cómo quedarían los pagos de eso?
 
 
 
@@ -152,7 +152,7 @@ Provenance: none 27
 
 **Customer:** ok english now, does it have heated seats
 
-**Assistant** _(none, 1 vehicle card(s), 14 ms)_: The Velvet Red 2025 Jeep Grand Cherokee Limited 4x4 lists heated seats. Want me to estimate a payment on one?
+**Assistant** _(none, 1 vehicle card(s), 13 ms)_: The Velvet Red 2025 Jeep Grand Cherokee Limited 4x4 lists heated seats. Want me to estimate a payment on one?
 
 
 
@@ -170,6 +170,6 @@ Provenance: none 27
 
 **Customer:** actually back to that grand cherokee
 
-**Assistant** _(none, 1 vehicle card(s), 14 ms)_: Good pick — the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4. Would an out-the-door price help, or would you rather see it in person first?
+**Assistant** _(none, 1 vehicle card(s), 12 ms)_: Got it, the Velvet Red 2025 Jeep Grand Cherokee Limited 4x4. Would an out-the-door price help, or would you rather see it in person first?
 
 

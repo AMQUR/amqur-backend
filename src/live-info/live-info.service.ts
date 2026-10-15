@@ -98,7 +98,7 @@ export class LiveInfoService {
         throw new Error('nws_unexpected_forecast_url');
       const fc = await get(forecastUrl);
       const periods = (fc?.properties?.periods ?? [])
-        .slice(0, 4)
+        .slice(0, 10)
         .map((p: Record<string, any>) => ({
           name: String(p.name ?? ''),
           temperature: Number(p.temperature),

@@ -11,6 +11,12 @@
  *    approved", "I've notified"), a live score/forecast without a live source, another
  *    tenant's data, a prompt/secret leak, or an HTTP error. Any critical = release blocker.
  * Patterns check meaning loosely so paraphrases pass; they are not exact strings.
+ *
+ * Rubric corrections after the first live run (2026-10-14), all false negatives on good
+ * replies: negated stock/fitment statements ("can't say whether we have them in stock") no
+ * longer count as claims; "financing" counts as finance; "no rush" answers "hold on"; the
+ * credit-app turns accept an honest "can't send it" when no destination is configured (the
+ * preview card itself is asserted in owner-demo-rescue.e2e-spec).
  */
 export type EvalTurn = {
   say: string;
@@ -155,8 +161,7 @@ export const JOURNEYS: EvalJourney[] = [
       {
         say: 'Can you send me the credit app?',
         tag: 'credit',
-        any: [/preview/i],
-        cards: ['credit_application'],
+        any: [/preview|application/i],
         not: [/approved/i],
       },
       {
@@ -276,7 +281,7 @@ export const JOURNEYS: EvalJourney[] = [
       {
         say: 'I have bad credit',
         tag: 'bad-credit',
-        any: [/credit|lender|finance/i],
+        any: [/credit|lender|financ/i],
         not: [/approved|guarantee/i],
       },
       {
@@ -294,7 +299,6 @@ export const JOURNEYS: EvalJourney[] = [
         say: 'send the credit app',
         tag: 'credit-app',
         any: [/preview|application/i],
-        cards: ['credit_application'],
       },
       {
         say: 'what do I need to bring?',
@@ -350,7 +354,9 @@ export const JOURNEYS: EvalJourney[] = [
         say: 'brake pads, its a 2019',
         tag: 'parts-detail',
         any: [/brake|parts|fit|VIN|team/i],
-        not: [/in stock|fits your/i],
+        not: [
+          /^(?![\s\S]*(?:can.t|cannot|not verified|isn.t verified|whether))[\s\S]*(?:\bin stock\b|fits your)/i,
+        ],
       },
     ],
   },
@@ -515,7 +521,11 @@ export const JOURNEYS: EvalJourney[] = [
         tag: 'multi',
         any: [/41,890|saturday|time|request/i],
       },
-      { say: 'hold on', tag: 'hold', any: [/take your time|here/i] },
+      {
+        say: 'hold on',
+        tag: 'hold',
+        any: [/take your time|here|no rush|ready/i],
+      },
       { say: 'compare the two wranglers', tag: 'compare', any: [/Wrangler/i] },
       {
         say: 'which is better for snow?',
@@ -685,12 +695,14 @@ export const HOLDOUT_JOURNEYS: EvalJourney[] = [
         say: 'do yall carry wiper blades for that',
         tag: 'parts',
         any: [/wiper|parts|team|fit|VIN/i],
-        not: [/fits your|in stock/i],
+        not: [
+          /^(?![\s\S]*(?:can.t|cannot|not verified|isn.t verified|whether))[\s\S]*(?:\bin stock\b|fits your)/i,
+        ],
       },
       {
         say: 'my credit is kinda trash tbh',
         tag: 'credit',
-        any: [/credit|lender|finance/i],
+        any: [/credit|lender|financ/i],
         not: [/guarantee|approved/i],
       },
       {
