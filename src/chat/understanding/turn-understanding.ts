@@ -4,7 +4,10 @@ import {
   SensitiveKind,
 } from '../../common/security/sensitive-data';
 import { classifySocial, SocialAct } from '../dialogue/social';
+import type { CustomerIncident } from '../safety/customer-incident';
+import type { PolicyTopic } from '../dialogue/dealership-facts';
 import { normalizeCustomerText } from './normalize';
+import { applyTurnRepairs } from './turn-repairs';
 
 /**
  * Deterministic, multi-intent turn understanding.
@@ -115,6 +118,21 @@ export type TurnEntities = {
   lotAgeQuestion?: boolean;
   /** "Who is your manager?" — an identity question, not a callback request. */
   managerQuestion?: boolean;
+  /** Customer-reported incident. Not a finding. */
+  incident?: CustomerIncident;
+  /** A dollar amount whose meaning is not yet cash, price, or payment. */
+  statedAmount?: number;
+  statedAmountRole?: 'price' | 'down' | 'otd' | 'unclear';
+  /** "Is this with my taxes?" */
+  taxQuestion?: boolean;
+  /** City they gave for registration ("I'm in Chicago"). */
+  registrationPlace?: string;
+  /** A question that must be answered from verified store records. */
+  policyTopic?: PolicyTopic;
+  /** "How much is my Ferrari worth" — never invent a number. */
+  tradeValuation?: boolean;
+  /** "Trade for a Compass" — the named vehicle is the purchase. */
+  tradeTowardPurchase?: boolean;
   /** Short conversational follow-ups that refer to the previous assistant message. */
   followUp?:
     | 'what_do_you_mean'
@@ -190,7 +208,9 @@ export type PendingQuestion =
   | 'text_consent'
   | 'service_vehicle'
   | 'otd_zip'
-  | 'payment_method';
+  | 'payment_method'
+  | 'figure_meaning'
+  | 'trade_vehicle';
 
 export const MAKES = [
   'acura',
@@ -807,6 +827,10 @@ export function understandTurn(
     hasPaymentEstimate?: boolean;
     hasCriteria?: boolean;
     creditOffered?: boolean;
+    incidentActive?: boolean;
+    incidentSeverity?: CustomerIncident['severity'];
+    /** A trade was started but the trade vehicle may still be incomplete. */
+    tradeOpen?: boolean;
   },
 ): TurnUnderstanding {
   const raw = message.trim();
@@ -2243,6 +2267,16 @@ export function understandTurn(
         for (let i = intents.length - 1; i >= 0; i -= 1)
           if (intents[i].intent === x) intents.splice(i, 1);
   }
+  applyTurnRepairs({
+    raw,
+    normalized: t,
+    pending,
+    incidentActive: ctx.incidentActive,
+    incidentSeverity: ctx.incidentSeverity,
+    tradeOpen: ctx.tradeOpen,
+    entities: e,
+    intents,
+  });
   intents.sort(
     (a, b) => PRIORITY.indexOf(a.intent) - PRIORITY.indexOf(b.intent),
   );

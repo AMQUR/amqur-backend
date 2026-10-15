@@ -152,6 +152,14 @@ export function needsModelUnderstanding(
   message: string,
   ctx: { hasContext: boolean },
 ): boolean {
+  // Safety and a customer-reported incident stay on the deterministic path.
+  if (
+    u.entities.incident ||
+    u.intents.some(
+      (i) => i.intent === 'SAFETY_URGENT' || i.intent === 'COMPLAINT',
+    )
+  )
+    return false;
   if (isWeakUnderstanding(u) || isContextAmbiguous(u, message, ctx))
     return true;
   const words = message.trim().split(/\s+/).length;
@@ -211,6 +219,7 @@ export function mergeInterpretation(
   if (
     m.entities.downPayment !== undefined &&
     e.downPayment === undefined &&
+    e.statedAmount === undefined &&
     (/\d/.test(message) || /\b(grand|thousand|k)\b/i.test(message))
   )
     e.downPayment = m.entities.downPayment;

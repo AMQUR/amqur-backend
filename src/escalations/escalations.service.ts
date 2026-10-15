@@ -170,6 +170,115 @@ export class EscalationsService {
     return { escalation, notified, queued, deduped: false };
   }
 
+  /**
+   * Add a customer-reported detail to the open escalation, or create one.
+   * Does not open a second handoff and does not send another notification.
+   * `notified` is true only when a previous delivery actually succeeded.
+   */
+  async appendCustomerReport(params: {
+    tenantId: string;
+    locationId?: string | null;
+    externalKey: string;
+    reason: string;
+    urgency: EscalationUrgency;
+    line: string;
+    metadata?: Prisma.InputJsonValue;
+  }) {
+    const channelConfigured = Boolean(process.env.CRM_WEBHOOK_URL?.trim());
+    const conv = await this.prisma.conversation.findUnique({
+      where: {
+        tenantId_externalKey: {
+          tenantId: params.tenantId,
+          externalKey: params.externalKey,
+        },
+      },
+      select: { id: true },
+    });
+    const existing = conv?.id
+      ? await this.prisma.escalation.findFirst({
+          where: {
+            tenantId: params.tenantId,
+            conversationId: conv.id,
+            status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : null;
+
+    if (!existing) {
+      const created = await this.create({
+        tenantId: params.tenantId,
+        locationId: params.locationId,
+        externalKey: params.externalKey,
+        reason: params.reason,
+        urgency: params.urgency,
+        summary: params.line,
+        metadata: params.metadata,
+      });
+      return { ...created, channelConfigured };
+    }
+
+    const rank: Record<string, number> = {
+      LOW: 0,
+      NORMAL: 1,
+      HIGH: 2,
+      CRITICAL: 3,
+    };
+    const urgency =
+      (rank[params.urgency] ?? 0) > (rank[existing.urgency] ?? 0)
+        ? params.urgency
+        : existing.urgency;
+    const prior = existing.summary ?? '';
+    const summary = prior.includes(params.line)
+      ? prior
+      : `${prior}${prior ? ' || ' : ''}${params.line}`.slice(0, 4000);
+    const timeline = Array.isArray(
+      (existing.metadata as { timeline?: unknown } | null)?.timeline,
+    )
+      ? [...((existing.metadata as { timeline: unknown[] }).timeline ?? [])]
+      : [];
+    timeline.push({
+      at: new Date().toISOString(),
+      text: params.line.slice(0, 500),
+    });
+    const updated = await this.prisma.escalation.update({
+      where: { id: existing.id },
+      data: {
+        summary,
+        urgency,
+        reason:
+          (rank[params.urgency] ?? 0) > (rank[existing.urgency] ?? 0)
+            ? params.reason
+            : existing.reason,
+        metadata: this.mergeMeta(existing.metadata, {
+          ...(params.metadata &&
+          typeof params.metadata === 'object' &&
+          !Array.isArray(params.metadata)
+            ? (params.metadata as Record<string, unknown>)
+            : {}),
+          timeline: timeline.slice(-20),
+        }),
+      },
+    });
+    await this.auditSafe({
+      tenantId: params.tenantId,
+      action: 'escalation.append',
+      resourceId: existing.id,
+      metadata: {
+        notified: Boolean(existing.notifiedAt),
+        channelConfigured,
+        urgency,
+      },
+    });
+    return {
+      escalation: updated,
+      notified: Boolean(existing.notifiedAt),
+      queued: false,
+      deduped: true,
+      channelConfigured,
+    };
+  }
+
   async acknowledge(params: {
     tenantId: string;
     escalationId: string;

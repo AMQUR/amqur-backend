@@ -145,7 +145,26 @@ export type JourneyState = {
     vin?: string;
     paymentMethod?: 'CASH' | 'FINANCE' | 'LEASE' | 'UNDECIDED';
     zip?: string;
+    /** City the customer gave when they don't have a ZIP yet. */
+    registrationPlace?: string;
     estimated?: boolean;
+  };
+  /**
+   * Dollar figure the customer stated whose role (price, down, OTD) is not settled.
+   * Kept off the selected vehicle until they say what it is.
+   */
+  statedFigure?: {
+    amount: number;
+    role: 'price' | 'down' | 'otd' | 'unclear';
+    vin?: string;
+  };
+  /** Customer-reported incident. Allegations stay unverified. */
+  incident?: {
+    severity: 'dissatisfaction' | 'allegation' | 'danger';
+    safeNow?: boolean;
+    reportedNames: string[];
+    /** Do not ask for a phone number while danger is being described. */
+    withholdContact: boolean;
   };
   /** Conversational memory: greetings exchanged, browsing mode. */
   social?: {

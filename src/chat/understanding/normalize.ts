@@ -15,6 +15,8 @@ const SLANG: Array<[RegExp, string]> = [
   [/\bur\b/g, 'your'],
   [/\br\b(?=\s+(?:you|u|they|we|there|these|those)\b)/g, 'are'],
   [/\b(?:pls|plz|plez)\b/g, 'please'],
+  [/\bpeicw\b/g, 'price'],
+  [/\byour\b(?=\s+not\b)/g, "you're"],
   [/\b(?:thx|thnx|tnx|ty)\b/g, 'thanks'],
   [/\b(?:pmt|pymt|pymnt)s?\b/g, 'payment'],
   [/\bw\/\s?/g, 'with '],

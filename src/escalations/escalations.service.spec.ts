@@ -25,6 +25,43 @@ describe('EscalationsService handoff queue', () => {
     svc = new EscalationsService(prisma, outbox as never);
   });
 
+  it('appends a customer report onto the open escalation without a second notify', async () => {
+    prisma.conversation.findUnique.mockResolvedValue({ id: 'conv1' });
+    prisma.escalation.findFirst.mockResolvedValue({
+      id: 'esc-existing',
+      notifiedAt: null,
+      status: 'OPEN',
+      urgency: 'HIGH',
+      reason: 'Customer reported a complaint (unverified)',
+      summary: '[customer-reported, unverified] dissatisfaction — "mean"',
+      metadata: { timeline: [] },
+    });
+    prisma.escalation.update.mockResolvedValue({
+      id: 'esc-existing',
+      urgency: 'CRITICAL',
+      summary: 'updated',
+    });
+    const result = await svc.appendCustomerReport({
+      tenantId: 't1',
+      locationId: 'loc1',
+      externalKey: 'ext-1',
+      reason: 'Customer reported immediate danger (unverified)',
+      urgency: 'CRITICAL' as never,
+      line: '[customer-reported, unverified] danger — "they tried to hit me"',
+      metadata: { reportedNames: ['Steve'] },
+    });
+    expect(result.deduped).toBe(true);
+    expect(result.notified).toBe(false);
+    expect(result.channelConfigured).toBe(false);
+    expect(prisma.escalation.create).not.toHaveBeenCalled();
+    expect(prisma.escalation.update).toHaveBeenCalled();
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'escalation.append' }),
+      }),
+    );
+  });
+
   it('dedupes open handoff for same conversation', async () => {
     prisma.conversation.findUnique.mockResolvedValue({ id: 'conv1' });
     prisma.escalation.findFirst.mockResolvedValue({
