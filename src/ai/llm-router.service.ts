@@ -38,7 +38,8 @@ const BREAKER_TTL_S = 120;
  *
  * - per-provider hard timeout
  * - circuit breaker shared across API replicas through Redis when available
- *   (falls back to in-process state; Redis loss only degrades, never corrupts)
+ *   (non-production falls back to in-process state; production model calls stop
+ *   if the shared spend counter is missing or down)
  * - latency / token / failure-reason metrics
  * - egress minimization: contact PII, credentials and tokens are redacted before send
  */
@@ -109,16 +110,16 @@ export class LlmRouterService {
   private async spendBlock(
     tenantId?: string,
   ): Promise<LlmFailureReason | null> {
-    // Production spend limits are only real if the shared counter is reachable. If Redis is
-    // configured but down, stop model calls (deterministic replies continue) rather than let
-    // each replica count on its own.
-    if (
-      process.env.NODE_ENV === 'production' &&
-      process.env.REDIS_URL?.trim() &&
-      (this.cache as { isRedisHealthy?: () => boolean }).isRedisHealthy?.() ===
-        false
-    )
-      return 'spend_store_unavailable';
+    // Production spend limits are only real if the shared counter is reachable.
+    // Missing Redis, or Redis configured but down, stops model calls (deterministic
+    // replies continue) rather than letting each replica count on its own.
+    if (process.env.NODE_ENV === 'production') {
+      const configured = !!process.env.REDIS_URL?.trim();
+      const probe = (this.cache as { isRedisHealthy?: () => boolean })
+        .isRedisHealthy;
+      const healthy = typeof probe === 'function' ? probe() : false;
+      if (!configured || !healthy) return 'spend_store_unavailable';
+    }
     const k = this.keys(tenantId);
     if ((await this.counter(k.tokens)) >= this.dailyBudget())
       return 'budget_exhausted';
