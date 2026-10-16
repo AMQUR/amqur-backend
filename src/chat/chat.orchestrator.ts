@@ -784,7 +784,12 @@ export class ChatOrchestrator {
       t.handled.add('HUMAN_HANDOFF');
       t.handled.add('SAFETY_URGENT');
       if (t.u.entities.incident.safeNow) t.handled.add('DECLINE');
-    } else if (t.u.entities.taxQuestion) {
+    } else if (
+      t.u.entities.taxQuestion &&
+      /\b(?:is this|is that|does this|does that|are these)\b/i.test(rawMessage)
+    ) {
+      // A follow-up about a number already on the table. A request for the
+      // total "with taxes and fees" still has to produce the quote.
       await this.handleTaxQuestion(t);
       t.handled.add('OTD_QUOTE');
       t.handled.add('VEHICLE_QUESTION');
@@ -3214,6 +3219,7 @@ export class ChatOrchestrator {
   private async handleOtd(t: Turn) {
     const st = t.st;
     const e = t.u.entities;
+    if (e.taxQuestion) await this.handleTaxQuestion(t);
     if (e.leaseOrPurchase === 'cash')
       st.otd = { ...st.otd, paymentMethod: 'CASH' };
     else if (e.leaseOrPurchase === 'lease')
