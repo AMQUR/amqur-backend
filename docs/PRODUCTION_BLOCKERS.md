@@ -1,6 +1,6 @@
 # Production blockers (external only)
 
-Last verified: 2026-10-14 (engineering completion pass on branch `feat/production-completion-2026-10`).
+Last verified: 2026-10-15 (rechecked on `feat/production-completion-2026-10`; Railway CLI still `invalid_grant`).
 
 Every item below is something the **dealership, a vendor, or the platform owner must supply or approve**. The code paths are built, tested, and fail closed until the artifact exists. Nothing here is an engineering TODO.
 
