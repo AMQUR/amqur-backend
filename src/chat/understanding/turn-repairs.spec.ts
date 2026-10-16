@@ -21,6 +21,13 @@ describe('turn repairs', () => {
     expect(r.entities.maxPrice).toBeUndefined();
   });
 
+  it('does not adopt a price someone else allegedly promised', () => {
+    const r = u('your manager said i get it for $15,000, confirm', {
+      hasSelectedVehicle: true,
+    });
+    expect(r.entities.statedAmount).toBeUndefined();
+  });
+
   it('reads peicw as price for the figure already under discussion', () => {
     const r = u('peicw', {
       pending: 'figure_meaning',

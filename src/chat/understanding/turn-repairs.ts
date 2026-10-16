@@ -76,7 +76,11 @@ export function applyTurnRepairs(args: {
   if (nameIntro && !asksWeather) drop('LIVE_INFO');
 
   // Bare "it's 24000" is a figure whose role is not yet known.
+  // A price someone else allegedly promised ("the manager said I get it for $15,000")
+  // is not a figure the customer is offering, and must not be repeated back.
+  const attributedPrice = /\b(?:said|told me|promised|claims?)\b/.test(t);
   if (
+    !attributedPrice &&
     e.downPayment === undefined &&
     e.maxPrice === undefined &&
     e.maxMonthly === undefined
