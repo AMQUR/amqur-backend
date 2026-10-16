@@ -35,7 +35,7 @@ Verdict for live customers: **NO-GO**. Engineering for the webchat scope is in t
 
 Local commits not on the pull requests at the start of this pass:
 
-- Backend `5506d0d` then `4186027` (ahead of previous PR head `ab06ca3`)
+- Backend head `5e788b8` (includes `5506d0d`, `4186027`, `7e6e8a1`, `5e788b8`; previous PR head was `ab06ca3`)
 - Widget `4e063ed` (ahead of PR head `aaddf35`)
 
 Pull requests, still open, not merged:
@@ -43,7 +43,7 @@ Pull requests, still open, not merged:
 - https://github.com/AMQUR/amqur-backend/pull/28
 - https://github.com/AMQUR/amqur-widget/pull/21
 
-CI on those older heads was green. CI for the new heads starts only after they are pushed. Feature-branch pushes are not in the workflow `push` filters; pull-request synchronize is what runs CI.
+CI on `5e788b8` (run 38846009674): build-test, command-center, docker-build, migrations-empty-db, sbom, and e2e-postgres passed. The simulator's out-the-door and attributed-price failures on the earlier heads were fixed before that run. Widget CI on `4e063ed` (run 38844844022): build passed; staging-e2e skipped. Feature-branch pushes are not in the workflow `push` filters; pull-request synchronize is what runs CI.
 
 Uncommitted eval JSON under `backend/test/evidence/` was already dirty and is not part of this release commit. Root `docs/LOCAL_OWNER_DEMO.md` was already dirty on `main` and was not committed.
 
