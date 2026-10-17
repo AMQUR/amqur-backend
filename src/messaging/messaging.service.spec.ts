@@ -199,3 +199,42 @@ describe('MessagingService.queue idempotency', () => {
     expect(outbox.enqueue).not.toHaveBeenCalled();
   });
 });
+
+describe('MessagingService.previewConsent', () => {
+  const consent = {
+    status: jest.fn(),
+  };
+  const svc = new MessagingService(
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    {} as never,
+    consent as never,
+    { increment: jest.fn() } as never,
+  );
+
+  beforeEach(() => {
+    consent.status.mockReset();
+  });
+
+  it('marks campaign preview ineligible when endpoint opted out', async () => {
+    consent.status.mockResolvedValue({ allowed: false, reason: 'opted_out' });
+
+    await expect(
+      svc.previewConsent({
+        tenantId: 'tenant-1',
+        channel: 'SMS',
+        to: '+15551234567',
+        purpose: 'MARKETING',
+      }),
+    ).resolves.toEqual({ allowed: false, reason: 'opted_out' });
+
+    expect(consent.status).toHaveBeenCalledWith(
+      'tenant-1',
+      'SMS',
+      '+15551234567',
+      'MARKETING',
+    );
+  });
+});

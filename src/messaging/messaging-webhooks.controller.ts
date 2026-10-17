@@ -85,7 +85,7 @@ export class MessagingWebhooksController {
     const from = normalizeEndpoint('SMS', body.From ?? '');
     const text = (body.Body ?? '').trim();
     const kw = (body.OptOutType ?? text).toUpperCase();
-    if (from && (body.OptOutType === 'STOP' || STOP.test(kw))) {
+    if (from && (body.OptOutType === 'STOP' || STOP.test(text))) {
       await this.consent.record({
         tenantId,
         channel: 'SMS',
