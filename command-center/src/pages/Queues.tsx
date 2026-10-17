@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, session } from '../api';
 import { ago, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 
 type Q = {
-  finance: Array<{ id: string; vehicleVin: string | null; downPayment: number | null; desiredPayment: number | null; creditLinkState: string; aprSource: string; status: string; createdAt: string; customerName: string | null }>;
+  finance: Array<{ id: string; conversationId: string | null; locationId: string | null; vehicleVin: string | null; downPayment: number | null; desiredPayment: number | null; creditLinkState: string; aprSource: string; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
   parts: Array<{ id: string; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; installationRequested: boolean; createdAt: string; customerName: string | null }>;
   trades: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; createdAt: string; customerName: string | null }>;
   escalations: Array<{ id: string; reason: string; urgency: string; status: string; notifiedAt: string | null; createdAt: string; conversationId: string | null }>;
@@ -17,8 +17,10 @@ type Q = {
   };
 };
 
+const FINANCE_STATUSES = ['REQUESTED', 'PENDING_STAFF', 'ESTIMATE_SHARED', 'HANDED_OFF', 'CLOSED', 'CANCELLED'] as const;
+
 export function Queues({ locationId }: { locationId: string }) {
-  const { data, error } = useAsync(() => api<Q>(`/ops/queues${locationId ? `?locationId=${locationId}` : ''}`), [locationId]);
+  const { data, error, reload } = useAsync(() => api<Q>(`/ops/queues${locationId ? `?locationId=${locationId}` : ''}`), [locationId]);
   return (
     <div className="page">
       <h1>Work queues</h1>
@@ -101,9 +103,20 @@ export function Queues({ locationId }: { locationId: string }) {
             {!data.finance.length ? <Empty>None open.</Empty> : (
               <ul className="list">
                 {data.finance.map((f) => (
-                  <li key={f.id}>
-                    <span>{f.customerName ?? 'Visitor'} · {f.vehicleVin ?? 'no vehicle'} {f.downPayment ? `· $${f.downPayment.toLocaleString()} down` : ''} {f.desiredPayment ? `· target $${f.desiredPayment}/mo` : ''}</span>
+                  <li key={f.id} className="stack">
+                    <span className="row">
+                      <span>{f.customerName ?? 'Visitor'} · {f.vehicleVin ?? 'no vehicle'} {f.downPayment ? `· $${f.downPayment.toLocaleString()} down` : ''} {f.desiredPayment ? `· target $${f.desiredPayment}/mo` : ''}</span>
+                      <Badge tone={statusTone(f.status)}>{f.status.replace(/_/g, ' ').toLowerCase()}</Badge>
+                    </span>
                     <span className="row"><Badge tone={statusTone(f.creditLinkState)}>credit {f.creditLinkState.toLowerCase()}</Badge><span className="muted small">{ago(f.createdAt)}</span></span>
+                    <FinanceActions
+                      financeId={f.id}
+                      conversationId={f.conversationId}
+                      status={f.status}
+                      notes={f.notes}
+                      locationId={locationId || f.locationId || ''}
+                      onUpdated={() => void reload()}
+                    />
                   </li>
                 ))}
               </ul>
@@ -143,6 +156,145 @@ export function Queues({ locationId }: { locationId: string }) {
         </div>
       )}
     </div>
+  );
+}
+
+type CreditStatus = {
+  enabled: boolean;
+  vault: null | { authorized: boolean; linkType: string };
+  customerFacing: { available: boolean; preview?: boolean; reason?: string };
+};
+
+/** Status, internal notes, and rooftop credit authorization (fail-closed — no invented approvals). */
+function FinanceActions(props: {
+  financeId: string;
+  conversationId: string | null;
+  status: string;
+  notes: string | null;
+  locationId: string;
+  onUpdated: () => void;
+}) {
+  const [status, setStatus] = useState(props.status);
+  const [notes, setNotes] = useState(props.notes ?? '');
+  useEffect(() => {
+    setStatus(props.status);
+    setNotes(props.notes ?? '');
+  }, [props.financeId, props.status, props.notes]);
+  const [convNote, setConvNote] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
+  const [linkType, setLinkType] = useState('DEALER_REUSABLE');
+  const [evidence, setEvidence] = useState('');
+  const role = session.user?.role ?? '';
+  const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(role);
+  const canViewCredit = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(role);
+  const creditLoc = props.locationId || null;
+  const credit = useAsync(
+    () =>
+      creditLoc && canViewCredit
+        ? api<CreditStatus>(`/ops/locations/${creditLoc}/credit-application`)
+        : Promise.resolve(null),
+    [creditLoc, canViewCredit],
+  );
+  const locQ = props.locationId ? `?locationId=${encodeURIComponent(props.locationId)}` : '';
+  const patch = async (body: { status?: string; notes?: string }) => {
+    setMsg(null);
+    try {
+      await api(`/ops/finance-requests/${props.financeId}${locQ}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      setMsg('Saved');
+      props.onUpdated();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const saveConvNote = async () => {
+    if (!props.conversationId || !convNote.trim()) return;
+    setMsg(null);
+    try {
+      await api(`/ops/conversations/${props.conversationId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ text: convNote.trim() }),
+      });
+      setConvNote('');
+      setMsg('Conversation note saved (internal)');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const authorizeCredit = async () => {
+    if (!creditLoc || evidence.trim().length < 6) return;
+    setMsg(null);
+    try {
+      await api(`/ops/locations/${creditLoc}/credit-application/authorize`, {
+        method: 'POST',
+        body: JSON.stringify({ linkType, evidenceRef: evidence.trim() }),
+      });
+      setEvidence('');
+      await credit.reload();
+      setMsg('Authorization recorded — live only if destination is configured');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const cf = credit.data?.customerFacing;
+  return (
+    <span className="stack small">
+      <span className="row">
+        <label>
+          Status
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {FINANCE_STATUSES.map((s) => (
+              <option key={s} value={s}>{s.replace(/_/g, ' ').toLowerCase()}</option>
+            ))}
+          </select>
+        </label>
+        <button className="btn btn--ghost" disabled={status === props.status} onClick={() => void patch({ status })}>Update status</button>
+      </span>
+      <label>
+        Internal notes (finance record)
+        <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Staff-only" />
+      </label>
+      <button className="btn btn--ghost" disabled={notes === (props.notes ?? '')} onClick={() => void patch({ notes })}>Save notes</button>
+      {props.conversationId && (
+        <span className="row">
+          <input value={convNote} onChange={(e) => setConvNote(e.target.value)} placeholder="Conversation note (inbox)" aria-label="Conversation note" />
+          <button className="btn btn--ghost" disabled={!convNote.trim()} onClick={() => void saveConvNote()}>Add inbox note</button>
+        </span>
+      )}
+      {creditLoc && (
+        <span className="stack">
+          <span className="row">
+            <span className="muted">Credit app for rooftop:</span>
+            {canViewCredit ? (
+              cf ? (
+                <Badge tone={cf.available ? (cf.preview ? 'warn' : 'ok') : 'neutral'}>
+                  {cf.available ? (cf.preview ? 'demo preview' : 'live') : `off — ${(cf.reason ?? 'not_ready').replace(/_/g, ' ')}`}
+                </Badge>
+              ) : (
+                <span className="muted">loading…</span>
+              )
+            ) : (
+              <span className="muted">managers configure in settings</span>
+            )}
+            {canViewCredit && <a className="small" href="#/settings">Rooftop settings</a>}
+          </span>
+          {isAdmin && credit.data?.vault && !credit.data.vault.authorized && (
+            <span className="row">
+              <select value={linkType} onChange={(e) => setLinkType(e.target.value)} aria-label="Link type">
+                <option value="DEALER_REUSABLE">Reusable for this rooftop</option>
+                <option value="PUBLIC_REUSABLE">Public reusable link</option>
+                <option value="PER_CUSTOMER">Per-customer link</option>
+              </select>
+              <input value={evidence} onChange={(e) => setEvidence(e.target.value)} placeholder="Written approval ref" aria-label="Approval reference" />
+              <button className="btn" disabled={evidence.trim().length < 6} onClick={() => void authorizeCredit()}>Record authorization</button>
+            </span>
+          )}
+        </span>
+      )}
+      {msg && <span className="muted">{msg}</span>}
+    </span>
   );
 }
 

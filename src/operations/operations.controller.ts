@@ -35,6 +35,10 @@ import { OperationsService } from './operations.service';
 import { ConversationIdService } from '../chat/conversation-id.service';
 import { CreditDestinationAdminService } from '../finance/credit-destination-admin.service';
 import { CREDIT_LINK_TYPES } from '../finance/credit-destination';
+import {
+  FinanceRequestService,
+  STAFF_FINANCE_STATUSES,
+} from '../finance/finance-request.service';
 import { RooftopReadinessService } from './rooftop-readiness';
 import { AppraisalService } from '../trade/appraisal.service';
 import { IsNumber, Max, Min } from 'class-validator';
@@ -101,6 +105,13 @@ class CreditAuthorizeDto {
   @IsString() @MinLength(6) @MaxLength(200) evidenceRef!: string;
 }
 
+class FinanceRequestPatchDto {
+  @IsOptional()
+  @IsIn(STAFF_FINANCE_STATUSES)
+  status?: (typeof STAFF_FINANCE_STATUSES)[number];
+  @IsOptional() @IsString() @MaxLength(4000) notes?: string;
+}
+
 const REPLY_FEEDBACK = [
   'too_long',
   'sounds_robotic',
@@ -133,6 +144,7 @@ export class OperationsController {
     private readonly readiness: RooftopReadinessService,
     private readonly appraisals: AppraisalService,
     private readonly uploads: UploadsService,
+    private readonly financeRequests: FinanceRequestService,
   ) {}
 
   // ── trade-in appraisal workflow (staff records; managers issue offers)
@@ -223,6 +235,25 @@ export class OperationsController {
     @Query('locationId') l?: string,
   ) {
     return this.ops.queues(this.scope(u, t, l));
+  }
+
+  /** Update finance queue item status / internal notes — does not enable credit links. */
+  @Roles(...STAFF)
+  @Patch('finance-requests/:id')
+  patchFinanceRequest(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: FinanceRequestPatchDto,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, undefined, l);
+    return this.financeRequests.updateStaff(
+      s.tenantId,
+      s.locationId,
+      id,
+      u.sub,
+      { status: b.status, notes: b.notes },
+    );
   }
 
   @Roles(...STAFF)

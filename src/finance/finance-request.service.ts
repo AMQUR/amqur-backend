@@ -1,6 +1,19 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { FinanceRequest, FinanceRequestStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+export const STAFF_FINANCE_STATUSES: FinanceRequestStatus[] = [
+  'REQUESTED',
+  'PENDING_STAFF',
+  'ESTIMATE_SHARED',
+  'HANDED_OFF',
+  'CLOSED',
+  'CANCELLED',
+];
 
 /**
  * Finance request capture — never invents APR/approval.
@@ -121,6 +134,58 @@ export class FinanceRequestService {
       orderBy: { createdAt: 'desc' },
       take: Math.min(opts.take ?? 50, 200),
     });
+  }
+
+  /** Staff workflow update — never touches credit link state or APR. */
+  async updateStaff(
+    tenantId: string,
+    locationId: string | null | undefined,
+    financeRequestId: string,
+    userId: string,
+    patch: { status?: FinanceRequestStatus; notes?: string | null },
+  ): Promise<FinanceRequest> {
+    const row = await this.prisma.financeRequest.findFirst({
+      where: {
+        id: financeRequestId,
+        tenantId,
+        ...(locationId ? { locationId } : {}),
+      },
+    });
+    if (!row) throw new NotFoundException('Finance request not found');
+
+    const data: Prisma.FinanceRequestUpdateInput = {};
+    if (patch.status !== undefined) {
+      if (!STAFF_FINANCE_STATUSES.includes(patch.status)) {
+        throw new BadRequestException('Invalid status');
+      }
+      data.status = patch.status;
+    }
+    if (patch.notes !== undefined) {
+      const trimmed = patch.notes?.trim() ?? '';
+      data.notes = trimmed.length ? trimmed.slice(0, 4000) : null;
+    }
+    if (Object.keys(data).length === 0) return row;
+
+    const updated = await this.prisma.financeRequest.update({
+      where: { id: row.id },
+      data,
+    });
+    await this.prisma.auditLog
+      .create({
+        data: {
+          tenantId,
+          userId,
+          action: 'finance_request.update',
+          resource: 'FinanceRequest',
+          resourceId: row.id,
+          metadata: {
+            status: patch.status ?? row.status,
+            notesUpdated: patch.notes !== undefined,
+          },
+        },
+      })
+      .catch(() => undefined);
+    return updated;
   }
 }
 
