@@ -842,6 +842,7 @@ export class OperationsService {
         financialPolicy: true,
         creditApplication: true,
         serviceAmenities: true,
+        messagingPolicy: true,
       },
     });
     if (!loc) throw new NotFoundException('Location not found');
@@ -849,6 +850,13 @@ export class OperationsService {
       where: { id: tenantId },
       select: { financialPolicy: true, creditApplication: true },
     });
+    const mp =
+      loc.messagingPolicy && typeof loc.messagingPolicy === 'object'
+        ? (loc.messagingPolicy as {
+            quietStart?: string;
+            quietEnd?: string;
+          })
+        : {};
     return {
       ...loc,
       effective: {
@@ -860,6 +868,11 @@ export class OperationsService {
         creditApplication: publicCreditView(
           await this.credit.resolve(tenantId, locationId),
         ),
+        messaging: {
+          quietStart: mp.quietStart ?? '21:00',
+          quietEnd: mp.quietEnd ?? '08:00',
+          timezone: loc.timezone,
+        },
       },
       creditApplication: maskCreditJson(loc.creditApplication),
     };
@@ -878,6 +891,7 @@ export class OperationsService {
       financialPolicy?: unknown;
       creditApplication?: unknown;
       serviceAmenities?: Record<string, unknown> | null;
+      messagingPolicy?: Record<string, unknown> | null;
     },
   ) {
     const loc = await this.prisma.location.findFirst({
@@ -970,6 +984,28 @@ export class OperationsService {
               verifiedAt: new Date().toISOString(),
               verifiedBy: userId,
             } as Prisma.InputJsonValue);
+    }
+    if (patch.messagingPolicy !== undefined) {
+      if (patch.messagingPolicy === null) {
+        data.messagingPolicy = Prisma.DbNull;
+      } else {
+        const q = patch.messagingPolicy;
+        const hhmm = (v: unknown) =>
+          typeof v === 'string' && /^\d{2}:\d{2}$/.test(v);
+        if (q.quietStart !== undefined && !hhmm(q.quietStart))
+          throw new BadRequestException('quietStart must be HH:MM');
+        if (q.quietEnd !== undefined && !hhmm(q.quietEnd))
+          throw new BadRequestException('quietEnd must be HH:MM');
+        data.messagingPolicy = {
+          ...(typeof q.quietStart === 'string'
+            ? { quietStart: q.quietStart }
+            : {}),
+          ...(typeof q.quietEnd === 'string' ? { quietEnd: q.quietEnd } : {}),
+          ...(typeof q.maxMarketingPer24h === 'number'
+            ? { maxMarketingPer24h: Math.max(0, Math.min(20, q.maxMarketingPer24h)) }
+            : {}),
+        } as Prisma.InputJsonValue;
+      }
     }
     await this.prisma.location.update({ where: { id: locationId }, data });
     await this.prisma.auditLog.create({

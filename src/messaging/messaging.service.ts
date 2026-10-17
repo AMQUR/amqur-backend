@@ -85,14 +85,20 @@ export class MessagingService implements OnModuleInit {
     const loc = locationId
       ? await this.prisma.location.findFirst({
           where: { id: locationId, tenantId },
-          select: { timezone: true },
+          select: { timezone: true, messagingPolicy: true },
         })
       : null;
     const tz =
       loc && isValidTimeZone(loc.timezone) ? loc.timezone : 'America/Chicago';
-    const [sh, sm] = (policy?.quietStart ?? '21:00').split(':').map(Number);
-    const [eh, em] = (policy?.quietEnd ?? '08:00').split(':').map(Number);
-    return { tz, start: sh * 60 + sm, end: eh * 60 + em };
+    const locPolicy =
+      loc?.messagingPolicy && typeof loc.messagingPolicy === 'object'
+        ? (loc.messagingPolicy as { quietStart?: string; quietEnd?: string })
+        : {};
+    const startStr = policy?.quietStart ?? locPolicy.quietStart ?? '21:00';
+    const endStr = policy?.quietEnd ?? locPolicy.quietEnd ?? '08:00';
+    const [sh, sm] = startStr.split(':').map(Number);
+    const [eh, em] = endStr.split(':').map(Number);
+    return { tz, start: sh * 60 + (sm || 0), end: eh * 60 + (em || 0) };
   }
 
   /** If `now` is inside quiet hours (dealership tz), returns the next allowed instant. */
@@ -221,7 +227,7 @@ export class MessagingService implements OnModuleInit {
     };
   }
 
-  /** Outbox handler: re-check consent at send time, then call the provider. */
+  /** Outbox handler: re-check consent, ownership, quiet hours at send time. */
   private async deliver(id: string) {
     const m = await this.prisma.outboundMessage.findUnique({ where: { id } });
     if (!m) throw new PermanentOutboxError('message_not_found');
@@ -239,6 +245,46 @@ export class MessagingService implements OnModuleInit {
         data: { status: 'SUPPRESSED', suppressReason: `at_send:${c.reason}` },
       });
       return { note: 'suppressed_at_send' };
+    }
+    // Human ownership: never deliver an automated SMS while staff owns the thread.
+    if (m.conversationId) {
+      const conv = await this.prisma.conversation.findFirst({
+        where: { id: m.conversationId, tenantId: m.tenantId },
+        select: { aiPaused: true, handoffState: true },
+      });
+      if (
+        conv &&
+        (conv.aiPaused ||
+          conv.handoffState === 'ASSIGNED' ||
+          conv.handoffState === 'JOINED')
+      ) {
+        await this.prisma.outboundMessage.update({
+          where: { id },
+          data: {
+            status: 'SUPPRESSED',
+            suppressReason: 'at_send:human_owns_thread',
+          },
+        });
+        this.metrics.increment('messaging.suppressed.human_owns_thread');
+        return { note: 'suppressed_human_owns_thread' };
+      }
+    }
+    // Quiet hours re-check (DST-safe). Marketing/campaigns must not slip through
+    // if the outbox fired early or the store timezone shifted.
+    if (m.purpose === 'MARKETING' || m.campaignId) {
+      const quiet = await this.quietHours(m.tenantId, m.locationId);
+      const deferred = MessagingService.nextAllowed(new Date(), quiet);
+      if (deferred) {
+        await this.outbox.enqueue({
+          tenantId: m.tenantId,
+          topic: 'messaging.send',
+          idempotencyKey: `msg:${m.id}:quiet:${deferred.toISOString()}`,
+          payload: { outboundMessageId: m.id },
+          availableAt: deferred,
+        });
+        this.metrics.increment('messaging.deferred_at_send');
+        return { note: 'deferred_quiet_hours', until: deferred.toISOString() };
+      }
     }
     const creds = await this.twilioCredentials(m.tenantId, m.locationId);
     if (!creds) {

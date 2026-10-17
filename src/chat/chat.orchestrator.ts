@@ -87,6 +87,8 @@ import {
   DEFAULT_RAPPORT_CONFIG,
   parseRapportConfig,
 } from './dialogue/contextual-rapport';
+import { PlaybookService } from './playbooks/playbook.service';
+import { PlaybookDepartment } from '@prisma/client';
 import {
   addDays as addDaysLocal,
   formatClock,
@@ -543,6 +545,7 @@ export class ChatOrchestrator {
     private readonly quotes: PriceQuoteService,
     private readonly appraisals: AppraisalService,
     private readonly experiments: ExperimentsService,
+    private readonly playbooks: PlaybookService,
   ) {}
 
   /** First greeting copy, optionally from a RUNNING greeting experiment (tone only). */
@@ -7018,6 +7021,19 @@ export class ChatOrchestrator {
         transcript[transcript.length - 1].role === 'USER'
       )
         transcript.pop();
+      const deptMap: Record<string, PlaybookDepartment> = {
+        sales: PlaybookDepartment.SALES,
+        service: PlaybookDepartment.SERVICE,
+        parts: PlaybookDepartment.PARTS,
+        finance: PlaybookDepartment.FINANCE,
+      };
+      const hints = await this.playbooks
+        .publishedHints(
+          t.tenantId,
+          t.locationId,
+          st.department ? deptMap[st.department] : PlaybookDepartment.GENERAL,
+        )
+        .catch(() => null);
       const res = await this.composer.compose({
         message: t.message,
         transcript,
@@ -7034,6 +7050,17 @@ export class ChatOrchestrator {
         language: t.lang,
         assistantName: await this.assistantName(t),
         tenantId: t.tenantId,
+        styleHints: hints
+          ? {
+              tone: hints.tone,
+              brevity: hints.brevity,
+              oneQuestion: hints.oneQuestion,
+              approvedPhrases: hints.approvedPhrases,
+              forbiddenPhrases: hints.forbiddenPhrases,
+              playbookKey: hints.key,
+              playbookVersion: hints.version,
+            }
+          : undefined,
       });
       if (res.status === 'composed' || res.status === 'repaired') {
         const composed = stripFiller(res.text);
@@ -7097,6 +7124,23 @@ export class ChatOrchestrator {
       }
     }
     st.turnCount += 1;
+
+    // Mid-turn ownership: if staff claimed the thread while we were composing, do not send AI.
+    const owned = await this.prisma.conversation
+      .findFirst({
+        where: { id: t.s.conversationId, tenantId: t.tenantId },
+        select: { aiPaused: true, handoffState: true },
+      })
+      .catch(() => null);
+    if (
+      owned?.aiPaused ||
+      owned?.handoffState === 'ASSIGNED' ||
+      owned?.handoffState === 'JOINED'
+    ) {
+      this.metrics.increment('chat.ai_cancelled_human_owns');
+      await this.store.save(t.s);
+      return this.staffHandlingResponse(t.s);
+    }
 
     const handoffState = t.conversationExtra.handoffState;
     await this.store.save(t.s, handoffState ? { handoffState } : {});

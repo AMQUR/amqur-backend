@@ -126,6 +126,13 @@ function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) 
                   {kind === 'note' ? 'Internal note' : kind === 'staff' ? String(meta.displayName ?? 'Staff') : kind === 'ai' ? 'AI concierge' : kind === 'user' ? 'Customer' : 'System'} · {fmtDate(m.createdAt)}
                 </div>
                 <div>{m.content}</div>
+                {kind === 'ai' && (
+                  <ReplyFeedback
+                    conversationId={id}
+                    messageId={m.id}
+                    onError={(e) => setErr(e)}
+                  />
+                )}
               </li>
             );
           })}
@@ -194,6 +201,60 @@ function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) 
         <input placeholder="Internal note (never shown to the customer)" value={note} onChange={(e) => setNote(e.target.value)} aria-label="Internal note" />
         <button className="btn">Add note</button>
       </form>
+    </div>
+  );
+}
+
+const FEEDBACK: Array<{ label: string; value: string }> = [
+  { label: 'Good', value: 'good_reply' },
+  { label: 'Too long', value: 'too_long' },
+  { label: 'Robotic', value: 'sounds_robotic' },
+  { label: 'Wrong facts', value: 'wrong_facts' },
+  { label: 'Wrong question', value: 'wrong_question' },
+  { label: 'Needed human', value: 'needed_human' },
+  { label: 'Skip weather/sports', value: 'unnecessary_weather_sports' },
+];
+
+function ReplyFeedback({
+  conversationId,
+  messageId,
+  onError,
+}: {
+  conversationId: string;
+  messageId: string;
+  onError: (e: string) => void;
+}) {
+  const [sent, setSent] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (sent) {
+    return <p className="muted small" role="status">Feedback: {sent.replace(/_/g, ' ')}</p>;
+  }
+  return (
+    <div className="row msg__feedback" aria-label="Rate AI reply">
+      {FEEDBACK.map((f) => (
+        <button
+          key={f.value}
+          type="button"
+          className="btn btn--ghost btn--tiny"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void api(`/ops/conversations/${conversationId}/reply-feedback`, {
+              method: 'POST',
+              body: JSON.stringify({
+                conversationId,
+                messageId,
+                label: f.value,
+              }),
+            })
+              .then(() => setSent(f.value))
+              .catch((e) => onError(e instanceof Error ? e.message : 'Feedback failed'))
+              .finally(() => setBusy(false));
+          }}
+        >
+          {f.label}
+        </button>
+      ))}
     </div>
   );
 }

@@ -18,6 +18,8 @@ import { PartsModule } from '../parts/parts.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { ConversationIdService } from './conversation-id.service';
+import { PlaybookService } from './playbooks/playbook.service';
+import { PlaybooksController } from './playbooks/playbooks.controller';
 
 @Module({
   imports: [
@@ -31,7 +33,7 @@ import { ConversationIdService } from './conversation-id.service';
     KnowledgeModule,
     IntegrationsModule,
   ],
-  controllers: [ChatController],
+  controllers: [ChatController, PlaybooksController],
   providers: [
     ChatOrchestrator,
     ChatService,
@@ -42,6 +44,7 @@ import { ConversationIdService } from './conversation-id.service';
     LiveInfoService,
     VinDecoderService,
     ConversationIdService,
+    PlaybookService,
   ],
   exports: [
     ChatOrchestrator,
@@ -49,6 +52,7 @@ import { ConversationIdService } from './conversation-id.service';
     JourneyStore,
     ClaudeConversationService,
     ConversationIdService,
+    PlaybookService,
   ],
 })
 export class ChatModule {}

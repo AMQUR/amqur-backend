@@ -116,6 +116,8 @@ model Tenant {
   websiteAllowedDomains  WebsiteAllowedDomain[]
   financeRequests        FinanceRequest[]
   priceQuoteRequests     PriceQuoteRequest[]
+  conversationPlaybooks  ConversationPlaybook[]
+  promptVersions         PromptVersion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -198,6 +200,11 @@ model Location {
   /// Location public branding overrides (merged over tenant.publicConfig)
   publicConfig Json?
 
+  /// Messaging send policy (staff-only). Shape:
+  /// { quietStart?: "21:00", quietEnd?: "08:00", maxMarketingPer24h?: number }
+  /// Times are local to Location.timezone (DST-safe via zoned-time helpers).
+  messagingPolicy Json?
+
   /// Inventory freshness SLA hours (default 24)
   inventoryFreshnessHours Int @default(24)
 
@@ -226,6 +233,8 @@ model Location {
   websiteAllowedDomains  WebsiteAllowedDomain[]
   financeRequests        FinanceRequest[]
   priceQuoteRequests     PriceQuoteRequest[]
+  conversationPlaybooks  ConversationPlaybook[]
+  promptVersions         PromptVersion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1571,6 +1580,107 @@ model Spotlight {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, locationId, status])
+}
+
+/// Versioned Conversation Studio playbook. Only PUBLISHED versions affect customer replies.
+/// Never overrides truth/safety/consent rules. Drafts require explicit publish + RBAC.
+enum PlaybookStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+  REJECTED
+}
+
+enum PlaybookDepartment {
+  GENERAL
+  SALES
+  SERVICE
+  PARTS
+  FINANCE
+}
+
+model ConversationPlaybook {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  /// Uniqueness helper: locationId or "_" for tenant-wide (Postgres NULL ≠ NULL in unique indexes).
+  locationScope String @default("_")
+
+  /// Stable key within tenant+location (e.g. "sales-first-response")
+  key         String
+  title       String
+  department  PlaybookDepartment @default(GENERAL)
+  status      PlaybookStatus     @default(DRAFT)
+  version     Int                @default(1)
+
+  /// Tone: casual | professional | concise | friendly | premium
+  tone           String  @default("concise")
+  /// Target reply length hint for compose (does not override safety/detail exceptions)
+  brevity        String  @default("short")
+  /// Optional daypart/rapport allowance for this playbook only
+  allowRapport   Boolean @default(false)
+  oneQuestion    Boolean @default(true)
+
+  /// Approved greetings / phrases (string[])
+  approvedPhrases Json?
+  /// Forbidden phrases (string[]) — soft style filter, never silent failure of safety
+  forbiddenPhrases Json?
+  /// Good vs bad training examples: [{ good, bad, note? }]
+  examples         Json?
+  /// Freeform manager coaching notes (not injected as system override for facts)
+  coachingNotes    String?
+
+  /// Points at the previous published version id when rolled back / superseded
+  supersedesId String?
+  publishedAt  DateTime?
+  publishedBy  String?
+  approvedAt   DateTime?
+  approvedBy   String?
+  createdBy    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationScope, key, version])
+  @@index([tenantId, status])
+  @@index([tenantId, locationId, department, status])
+}
+
+/// Immutable prompt/content snapshot for compose/interpret/policy. Publish is explicit.
+model PromptVersion {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  locationScope String @default("_")
+
+  /// compose | interpret | polish | policy | playbook_snapshot
+  kind        String
+  version     String
+  status      PlaybookStatus @default(DRAFT)
+  content     String
+  checksum    String
+  notes       String?
+  publishedAt DateTime?
+  publishedBy String?
+  createdBy   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationScope, kind, version])
+  @@index([tenantId, kind, status])
 }
 
 /// Controlled experiment on customer-facing COPY only (currently: the first greeting).

@@ -58,6 +58,8 @@ class LocationOpsDto {
   @IsOptional() @IsObject() financialPolicy?: Record<string, unknown>;
   @IsOptional() @IsObject() creditApplication?: Record<string, unknown>;
   @IsOptional() @IsObject() serviceAmenities?: Record<string, unknown> | null;
+  /** { quietStart?: "21:00", quietEnd?: "08:00", maxMarketingPer24h?: number } */
+  @IsOptional() @IsObject() messagingPolicy?: Record<string, unknown> | null;
 }
 
 class CreditDestinationDto {
