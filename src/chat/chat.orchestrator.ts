@@ -81,6 +81,7 @@ import {
   chooseReplyWithinBudget,
   CONVERSATION_POLICY_VERSION,
   planConciseResponse,
+  shouldSuppressRankedFollowUp,
   type VerbosityMode,
 } from './dialogue/conversation-policy';
 import {
@@ -6858,15 +6859,15 @@ export class ChatOrchestrator {
     }
     // Natural pacing: do not mechanically ask a soft discovery question after every answer.
     // Critical questions (priority ≤ 2) and empty turns still get a follow-up.
-    const farewell =
-      /\b(thanks?|thank you|bye|goodbye|that'?s all|i'?m (?:all )?good|all set)\b/i.test(
-        t.message,
-      );
     if (
       q &&
-      !opts.forcedReply &&
-      ((farewell && t.answers.length > 0) ||
-        (t.answers.length > 0 && q.priority > 5 && q.key === 'none'))
+      shouldSuppressRankedFollowUp({
+        customerMessage: t.message,
+        hasSubstantiveAnswers: t.answers.length > 0,
+        questionPriority: q.priority,
+        questionKey: q.key,
+        forcedReply: opts.forcedReply,
+      })
     ) {
       silentPending = silentPending ?? (q.key !== 'none' ? q.key : undefined);
       q = undefined;

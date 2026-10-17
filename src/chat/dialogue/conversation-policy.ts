@@ -91,6 +91,31 @@ const DETAILED_HINT =
 const REGULATORY_HINT =
   /\b(apr|interest rate|finance charge|tcpa|consent|privacy|credit (?:score|application)|equal credit|ofac)\b/i;
 
+/** Customer closing / thanks — aligned with orchestrator natural pacing in `finish()`. */
+export const CUSTOMER_FAREWELL_RE =
+  /\b(thanks?|thank you|bye|goodbye|that'?s all|i'?m (?:all )?good|all set)\b/i;
+
+export function isCustomerFarewellMessage(message: string): boolean {
+  return CUSTOMER_FAREWELL_RE.test(message);
+}
+
+/**
+ * Whether the orchestrator should skip asking a ranked follow-up this turn.
+ * After substantive answers: always suppress on customer farewell; otherwise
+ * suppress only soft discovery prompts (`key === 'none'`, priority > 5).
+ */
+export function shouldSuppressRankedFollowUp(p: {
+  customerMessage: string;
+  hasSubstantiveAnswers: boolean;
+  questionPriority: number;
+  questionKey: string;
+  forcedReply?: boolean;
+}): boolean {
+  if (p.forcedReply || !p.hasSubstantiveAnswers) return false;
+  if (isCustomerFarewellMessage(p.customerMessage)) return true;
+  return p.questionPriority > 5 && p.questionKey === 'none';
+}
+
 /** Rough word count that tolerates URLs, MSRP, APR, model names, decimals. */
 export function estimateWords(text: string): number {
   const t = text.trim();
@@ -302,9 +327,7 @@ export function planConciseResponse(
       turnKind === 'complaint',
     hasAnswers: (plan.directAnswer?.length ?? 0) > 0,
     hasQuestion: !!plan.followUpQuestion?.trim(),
-    customerFarewell: /\b(thanks?|thank you|bye|goodbye|that'?s all)\b/i.test(
-      params.customerMessage,
-    ),
+    customerFarewell: isCustomerFarewellMessage(params.customerMessage),
   });
 
   if (params.preserveAll || verbosityMode === 'verbose') {
@@ -375,6 +398,12 @@ export function planConciseResponse(
     // Complaints: no sales-progression question; keep only if it's about human help.
     if (!/\b(human|person|agent|specialist|call|connect|transfer)\b/i.test(followUp))
       followUp = undefined;
+  }
+  if (
+    isCustomerFarewellMessage(params.customerMessage) &&
+    keptAnswers.length > 0
+  ) {
+    followUp = undefined;
   }
 
   const tightened: ResponsePlan = {

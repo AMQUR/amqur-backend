@@ -7,6 +7,7 @@ import {
   chooseReplyWithinBudget,
   decideTurnMode,
   planConciseResponse,
+  shouldSuppressRankedFollowUp,
 } from './conversation-policy';
 
 describe('conversation journey (policy-level e2e)', () => {
@@ -51,6 +52,60 @@ describe('conversation journey (policy-level e2e)', () => {
     expect(
       (planned.plan.directAnswer?.join(' ') ?? '').split(/\?/).length - 1,
     ).toBe(0);
+  });
+
+  it('farewell after answers drops soft follow-ups (priority > 5)', () => {
+    expect(
+      shouldSuppressRankedFollowUp({
+        customerMessage: 'Thanks, that helps!',
+        hasSubstantiveAnswers: true,
+        questionPriority: 9,
+        questionKey: 'none',
+      }),
+    ).toBe(true);
+    expect(
+      shouldSuppressRankedFollowUp({
+        customerMessage: 'Thanks, that helps!',
+        hasSubstantiveAnswers: true,
+        questionPriority: 2,
+        questionKey: 'contact_phone',
+      }),
+    ).toBe(true);
+    const planned = planConciseResponse(
+      {
+        directAnswer: ['Happy to help — we are open until 8 tonight.'],
+        followUpQuestion: 'Anything else I can look up for you?',
+      },
+      { customerMessage: 'Thanks, bye!' },
+    );
+    expect(planned.plan.followUpQuestion).toBeUndefined();
+  });
+
+  it('substantive answer without farewell still drops soft discovery (priority > 5, key none)', () => {
+    expect(
+      shouldSuppressRankedFollowUp({
+        customerMessage: 'What are your hours?',
+        hasSubstantiveAnswers: true,
+        questionPriority: 10,
+        questionKey: 'none',
+      }),
+    ).toBe(true);
+    expect(
+      shouldSuppressRankedFollowUp({
+        customerMessage: 'What are your hours?',
+        hasSubstantiveAnswers: true,
+        questionPriority: 2,
+        questionKey: 'contact_method',
+      }),
+    ).toBe(false);
+    expect(
+      shouldSuppressRankedFollowUp({
+        customerMessage: 'What are your hours?',
+        hasSubstantiveAnswers: false,
+        questionPriority: 10,
+        questionKey: 'none',
+      }),
+    ).toBe(false);
   });
 
   it('9–10: staff ownership → wait mode drops sales follow-up', () => {
