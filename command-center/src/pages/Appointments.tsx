@@ -1,14 +1,29 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { fmtDate, useAsync } from '../hooks';
-import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
+import { Badge, Card, Empty, ErrorNote, Stat, statusTone } from '../ui';
+
+type Outcomes = {
+  window: string;
+  counts: {
+    completed: number;
+    noShow: number;
+    confirmedOnBook: number;
+    awaitingConfirmation: number;
+    cancelled: number;
+  };
+  showRate: number | null;
+  note: string;
+};
 
 type Appt = { id: string; type: string; status: string; requestedDate: string | null; requestedTime: string | null; requestedAt: string | null; scheduledAt: string | null; provider: string; availabilityVerified: boolean; customerName: string | null; customerPhone: string | null; customerEmail: string | null; vehicleVin: string | null; serviceType: string | null; transportation: string | null; timezone: string };
 
 export function Appointments({ locationId }: { locationId: string }) {
   const [status, setStatus] = useState('');
   const qs = new URLSearchParams({ ...(locationId ? { locationId } : {}), ...(status ? { status } : {}) }).toString();
+  const locQ = locationId ? `?locationId=${locationId}` : '';
   const { data, error, reload } = useAsync(() => api<Appt[]>(`/appointments?${qs}`), [qs]);
+  const outcomes = useAsync(() => api<Outcomes>(`/ops/appointment-outcomes${locQ}`), [locQ]);
   const [err, setErr] = useState<string | null>(null);
   const act = async (id: string, to: string, extra: Record<string, string> = {}) => {
     setErr(null);
@@ -31,7 +46,32 @@ export function Appointments({ locationId }: { locationId: string }) {
           <option key={s}>{s}</option>
         ))}
       </select>
-      <ErrorNote error={error ?? err} />
+      <ErrorNote error={error ?? err ?? outcomes.error} />
+      {outcomes.data && (
+        <Card title="Visit outcomes · 7 days">
+          <div className="stats">
+            <Stat label="Completed" value={outcomes.data.counts.completed} hint="staff-recorded" />
+            <Stat label="No-show" value={outcomes.data.counts.noShow} hint="staff-recorded" />
+            <Stat
+              label="Show rate"
+              value={
+                outcomes.data.showRate != null
+                  ? `${Math.round(outcomes.data.showRate * 100)}%`
+                  : '—'
+              }
+              hint={
+                outcomes.data.showRate != null
+                  ? 'completed ÷ (completed + no-show)'
+                  : 'mark visits Completed or No-show'
+              }
+            />
+            <Stat label="Confirmed on book" value={outcomes.data.counts.confirmedOnBook} />
+            <Stat label="Awaiting confirm" value={outcomes.data.counts.awaitingConfirmation} />
+            <Stat label="Cancelled" value={outcomes.data.counts.cancelled} hint="7d" />
+          </div>
+          <p className="muted small">{outcomes.data.note}</p>
+        </Card>
+      )}
       <Card>
         {!data?.length ? (
           <Empty>No appointments.</Empty>

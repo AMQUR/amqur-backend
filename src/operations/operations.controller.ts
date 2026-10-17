@@ -246,6 +246,16 @@ export class OperationsController {
   }
 
   @Roles(...STAFF)
+  @Get('appointment-outcomes')
+  appointmentOutcomes(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.appointmentOutcomes(this.scope(u, t, l));
+  }
+
+  @Roles(...STAFF)
   @Get('inbox')
   inbox(
     @CurrentUser() u: AuthUser,

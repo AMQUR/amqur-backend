@@ -278,3 +278,46 @@ describe('OperationsService.recordReplyFeedback', () => {
     expect(prisma.conversationPlaybook.update).not.toHaveBeenCalled();
   });
 });
+
+describe('OperationsService.appointmentOutcomes', () => {
+  it('returns show rate from persisted completed and no-show counts', async () => {
+    const prisma = {
+      appointment: {
+        count: jest
+          .fn()
+          .mockResolvedValueOnce(3)
+          .mockResolvedValueOnce(1)
+          .mockResolvedValueOnce(5)
+          .mockResolvedValueOnce(2)
+          .mockResolvedValueOnce(0),
+      },
+    };
+    const svc = makeOperationsService(prisma);
+    const r = await svc.appointmentOutcomes({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+    });
+    expect(r.counts).toEqual({
+      completed: 3,
+      noShow: 1,
+      confirmedOnBook: 5,
+      awaitingConfirmation: 2,
+      cancelled: 0,
+    });
+    expect(r.showRate).toBe(0.75);
+    expect(r.window).toBe('7d');
+    expect(prisma.appointment.count).toHaveBeenCalledTimes(5);
+  });
+
+  it('returns null show rate when no recorded outcomes', async () => {
+    const prisma = {
+      appointment: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const svc = makeOperationsService(prisma);
+    const r = await svc.appointmentOutcomes({
+      tenantId: 'tenant-1',
+      locationId: null,
+    });
+    expect(r.showRate).toBeNull();
+  });
+});

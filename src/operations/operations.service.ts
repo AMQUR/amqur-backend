@@ -928,6 +928,67 @@ export class OperationsService {
     };
   }
 
+  /**
+   * Manager read of staff-recorded visit outcomes from persisted Appointment rows.
+   * Show rate is completed ÷ (completed + no-show) in the window when that sum > 0.
+   */
+  async appointmentOutcomes(scope: Scope) {
+    const base = { tenantId: scope.tenantId, ...this.loc(scope) };
+    const since = new Date(Date.now() - 7 * 86_400_000);
+    const [completed, noShow, confirmedOnBook, awaitingConfirmation, cancelled] =
+      await Promise.all([
+        this.prisma.appointment.count({
+          where: {
+            ...base,
+            status: 'COMPLETED',
+            OR: [
+              { completedAt: { gte: since } },
+              { completedAt: null, updatedAt: { gte: since } },
+            ],
+          },
+        }),
+        this.prisma.appointment.count({
+          where: {
+            ...base,
+            status: 'NO_SHOW',
+            updatedAt: { gte: since },
+          },
+        }),
+        this.prisma.appointment.count({
+          where: { ...base, status: 'CONFIRMED' },
+        }),
+        this.prisma.appointment.count({
+          where: {
+            ...base,
+            status: { in: ['REQUESTED', 'PENDING_CONFIRMATION'] },
+          },
+        }),
+        this.prisma.appointment.count({
+          where: {
+            ...base,
+            status: 'CANCELLED',
+            canceledAt: { gte: since },
+          },
+        }),
+      ]);
+    const recorded = completed + noShow;
+    const showRate =
+      recorded > 0 ? Math.round((completed / recorded) * 1000) / 1000 : null;
+    return {
+      window: '7d' as const,
+      since: since.toISOString(),
+      counts: {
+        completed,
+        noShow,
+        confirmedOnBook,
+        awaitingConfirmation,
+        cancelled,
+      },
+      showRate,
+      note: 'Counts use persisted appointment statuses staff mark Completed or No-show. Show rate is completed ÷ (completed + no-show) in the window — not sales conversion or DMS sold attribution.',
+    };
+  }
+
   private surveyProviderConnected(): boolean {
     return Prisma.dmmf.datamodel.models.some(
       (m) => m.name === 'CustomerSurvey',
