@@ -1,4 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SecretVaultService } from '../integrations/core/secret-vault.service';
 import { OutboxService } from '../integrations/core/outbox.service';
@@ -212,34 +213,85 @@ export class MessagingService implements OnModuleInit {
     if (recent >= cap) return suppress('frequency_cap');
     const quiet = await this.quietHours(p.tenantId, p.locationId, p.policy);
     const deferred = MessagingService.nextAllowed(now, quiet);
-    const row = await this.prisma.$transaction(async (tx) => {
-      const m = await tx.outboundMessage.create({
-        data: {
-          tenantId: p.tenantId,
-          locationId: p.locationId ?? null,
-          conversationId: p.conversationId ?? null,
-          leadId: p.leadId ?? null,
-          campaignId: p.campaignId ?? null,
-          campaignVersion: p.campaignVersion ?? null,
-          channel: 'SMS',
-          endpoint,
-          purpose: p.purpose,
-          body: p.body.slice(0, 1600),
-          status: 'QUEUED',
-          provider: 'TWILIO',
-          idempotencyKey: p.idempotencyKey ?? null,
+    if (p.idempotencyKey) {
+      const existing = await this.prisma.outboundMessage.findUnique({
+        where: {
+          tenantId_idempotencyKey: {
+            tenantId: p.tenantId,
+            idempotencyKey: p.idempotencyKey,
+          },
         },
       });
-      await this.outbox.enqueue({
-        tenantId: p.tenantId,
-        topic: 'messaging.send',
-        idempotencyKey: `msg:${m.id}`,
-        payload: { outboundMessageId: m.id },
-        tx,
-        availableAt: deferred ?? undefined,
+      if (existing) {
+        if (existing.status === 'QUEUED') {
+          return {
+            status: 'QUEUED',
+            id: existing.id,
+            ...(deferred ? { deferredUntil: deferred.toISOString() } : {}),
+          };
+        }
+        // Already processed under this key — do not enqueue a second send.
+        return {
+          status: 'SUPPRESSED',
+          id: existing.id,
+          reason: `duplicate_idempotency:${existing.status.toLowerCase()}`,
+        };
+      }
+    }
+    let row: { id: string };
+    try {
+      row = await this.prisma.$transaction(async (tx) => {
+        const m = await tx.outboundMessage.create({
+          data: {
+            tenantId: p.tenantId,
+            locationId: p.locationId ?? null,
+            conversationId: p.conversationId ?? null,
+            leadId: p.leadId ?? null,
+            campaignId: p.campaignId ?? null,
+            campaignVersion: p.campaignVersion ?? null,
+            channel: 'SMS',
+            endpoint,
+            purpose: p.purpose,
+            body: p.body.slice(0, 1600),
+            status: 'QUEUED',
+            provider: 'TWILIO',
+            idempotencyKey: p.idempotencyKey ?? null,
+          },
+        });
+        await this.outbox.enqueue({
+          tenantId: p.tenantId,
+          topic: 'messaging.send',
+          idempotencyKey: `msg:${m.id}`,
+          payload: { outboundMessageId: m.id },
+          tx,
+          availableAt: deferred ?? undefined,
+        });
+        return m;
       });
-      return m;
-    });
+    } catch (e: unknown) {
+      if (
+        p.idempotencyKey &&
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        const winner = await this.prisma.outboundMessage.findUnique({
+          where: {
+            tenantId_idempotencyKey: {
+              tenantId: p.tenantId,
+              idempotencyKey: p.idempotencyKey,
+            },
+          },
+        });
+        if (winner?.status === 'QUEUED') {
+          return {
+            status: 'QUEUED',
+            id: winner.id,
+            ...(deferred ? { deferredUntil: deferred.toISOString() } : {}),
+          };
+        }
+      }
+      throw e;
+    }
     this.metrics.increment('messaging.queued');
     return {
       status: 'QUEUED',
