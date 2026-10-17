@@ -47,6 +47,7 @@ import { PrivacyModule } from './privacy/privacy.module';
 import { ActionPagesModule } from './action-pages/action-pages.module';
 import { DealsModule } from './deals/deals.module';
 import { ReviewsModule } from './reviews/reviews.module';
+import { DocumentsModule } from './documents/documents.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -119,6 +120,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     ActionPagesModule,
     DealsModule,
     ReviewsModule,
+    DocumentsModule,
   ],
 
   providers: [

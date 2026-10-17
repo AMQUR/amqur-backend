@@ -5,6 +5,15 @@ import type {
   ProviderContext,
   TradeProvider,
 } from '../integrations/contracts/provider.interfaces';
+import {
+  DisabledTradeValuationProvider,
+  tradeValuationBlocked,
+  type GetValuationParams,
+  type GetValuationResult,
+} from '../integrations/trade/trade-valuation.provider';
+
+/** IntegrationConnection.capability for licensed trade valuation APIs. */
+export const TRADE_VALUATION_CAPABILITY = 'trade_valuation';
 
 /** Stub — never invent appraisal values. */
 export class DisabledTradeProvider implements TradeProvider {
@@ -31,6 +40,7 @@ export class DisabledTradeProvider implements TradeProvider {
 @Injectable()
 export class TradeService {
   private readonly provider = new DisabledTradeProvider();
+  private readonly valuationProvider = new DisabledTradeValuationProvider();
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -77,6 +87,53 @@ export class TradeService {
         appraisalValue: null,
       },
     });
+  }
+
+  /** Licensed provider valuation only — never invents dollar amounts. */
+  async getValuation(
+    ctx: ProviderContext,
+    input: Omit<GetValuationParams, 'tenantId' | 'locationId'>,
+  ): Promise<GetValuationResult> {
+    const gate = await this.resolveValuationGate(
+      ctx.tenantId,
+      ctx.locationId ?? null,
+    );
+    if (!gate.allowed) {
+      return tradeValuationBlocked(gate.reason);
+    }
+    return this.valuationProvider.getValuation({
+      tenantId: ctx.tenantId,
+      locationId: ctx.locationId ?? null,
+      ...input,
+    });
+  }
+
+  private async resolveValuationGate(
+    tenantId: string,
+    locationId?: string | null,
+  ): Promise<
+    | { allowed: true }
+    | { allowed: false; reason: 'not_connected' | 'not_configured' }
+  > {
+    const conn = await this.prisma.integrationConnection.findFirst({
+      where: {
+        tenantId,
+        capability: TRADE_VALUATION_CAPABILITY,
+        enabled: true,
+        liveReady: true,
+        OR: locationId
+          ? [{ locationId }, { locationId: null }]
+          : [{ locationId: null }],
+      },
+      select: { id: true },
+    });
+    if (!conn) {
+      return { allowed: false, reason: 'not_connected' };
+    }
+    if (!this.valuationProvider.isLiveConfigured()) {
+      return { allowed: false, reason: 'not_configured' };
+    }
+    return { allowed: true };
   }
 
   /** Never invent appraisal — only returns verified values from provider. */
