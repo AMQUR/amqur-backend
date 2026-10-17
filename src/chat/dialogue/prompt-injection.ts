@@ -17,7 +17,7 @@ export type PressureKind =
 export const PRESSURE_PATTERNS: Array<{ kind: PressureKind; re: RegExp }> = [
   {
     kind: 'system_prompt',
-    re: /\b(system prompt|your instructions|your rules|developer message|reveal (?:your|the) prompt|ignore (?:all|previous|your) (?:rules|instructions))\b/i,
+    re: /\b(system prompt|your instructions|your rules|developer message|reveal (?:your|the) prompt|ignore (?:all(?:\s+previous)?|previous|your) (?:rules|instructions))\b/i,
   },
   {
     kind: 'approval_claim',
