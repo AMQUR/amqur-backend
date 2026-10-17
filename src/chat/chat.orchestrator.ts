@@ -31,6 +31,7 @@ import {
   AppointmentRequestResult,
   AppointmentService,
 } from '../appointments/appointment.service';
+import { referenceNow } from '../common/time/reference-now';
 import {
   HoursProfile,
   StoreHoursService,
@@ -615,6 +616,7 @@ export class ChatOrchestrator {
         ? input.language
         : (st.language ?? 'en');
     const hoursTz = 'America/Chicago';
+    const chatNow = referenceNow();
     let u = understandTurn(rawMessage, {
       pending: st.pending,
       hasVisibleVehicles: st.visibleVins.length > 0,
@@ -625,6 +627,7 @@ export class ChatOrchestrator {
           st.appointment.status,
         ),
       activeDepartment: st.department ?? null,
+      now: chatNow,
       timeZone: (await this.locationTz(tenantId, s.locationId)) ?? hoursTz,
       knownModels: st.visibleModels ?? [],
       knownTrims: st.visibleTrims ?? [],
@@ -1122,13 +1125,20 @@ export class ChatOrchestrator {
   private noteSimulated(t: Turn, vehicles: InventoryVehicle[]) {
     if (!vehicles.some((v) => v.simulated) || t.st.social?.demoNoted) return;
     t.st.social = { ...t.st.social, demoNoted: true };
-    t.narration.push(
-      tr(
-        t.lang,
-        '(Heads up: this demo runs on simulated vehicles, not the dealership’s live inventory.)',
-        '(Nota: esta demostración usa vehículos simulados, no el inventario real de la agencia.)',
-      ),
+    const tag = tr(
+      t.lang,
+      ' (Simulated demo inventory.)',
+      ' (Inventario simulado de demostración.)',
     );
+    if (t.narration.length) t.narration[t.narration.length - 1] += tag;
+    else
+      t.narration.push(
+        tr(
+          t.lang,
+          'This demo uses simulated vehicles, not the dealership’s live inventory.',
+          'Esta demostración usa vehículos simulados, no el inventario real de la agencia.',
+        ),
+      );
   }
 
   /**
@@ -1594,12 +1604,28 @@ export class ChatOrchestrator {
           `Me alegra que esté bien. Dejo ahí los pasos de seguridad.${names.length ? ` No lo voy a enviar de vuelta con ${names.join(', ')}.` : ''} Si aún quiere ayuda con un vehículo, dígame y seguimos con otra persona.`,
         ),
       );
+    } else if (inc.continuing && inc.reportedName) {
+      t.answers.push(
+        tr(
+          t.lang,
+          `I added the name ${inc.reportedName} to the same report — that's what you reported, not something I've verified.`,
+          `Agregué el nombre ${inc.reportedName} al mismo reporte — es lo que usted reportó, no algo que yo haya verificado.`,
+        ),
+      );
+    } else if (inc.continuing) {
+      t.answers.push(
+        tr(
+          t.lang,
+          `I added that to the same report — it's what you reported, not a confirmed fact.`,
+          `Agregué eso al mismo reporte — es lo que usted reportó, no un hecho confirmado.`,
+        ),
+      );
     } else {
       t.answers.push(
         tr(
           t.lang,
-          `I'm sorry that happened. I'm recording this as what you reported, not as a confirmed fact.${inc.reportedName ? ` I'll note the name ${inc.reportedName} on that report.` : ''}`,
-          `Lamento que haya pasado. Lo registro como lo que usted reportó, no como un hecho confirmado.${inc.reportedName ? ` Anoto el nombre ${inc.reportedName} en ese reporte.` : ''}`,
+          `I'm sorry that happened. I'm recording this as what you reported, not as a confirmed fact, and I have not contacted the staff or emergency services.${inc.reportedName ? ` I'll note the name ${inc.reportedName} on that report.` : ''}`,
+          `Lamento que haya pasado. Lo registro como lo que usted reportó, no como un hecho confirmado, y no he contactado al personal ni a servicios de emergencia.${inc.reportedName ? ` Anoto el nombre ${inc.reportedName} en ese reporte.` : ''}`,
         ),
       );
     }
@@ -1686,8 +1712,13 @@ export class ChatOrchestrator {
           ? 'A staff notification was already delivered for this conversation. I added what you just said to that same record. I have not contacted the police.'
           : recorded.queued
             ? 'The staff notification is still retrying. I added this to the same record. I have not contacted emergency services.'
-            : 'I saved this for the team. Delivery has not been confirmed, so I am not saying that anyone was contacted.';
-      t.narration.push(tr(t.lang, delivery, delivery));
+            : 'I saved this for the team. Delivery has not been confirmed, and I have not contacted the staff or emergency services.';
+      const last = t.answers.length - 1;
+      if (last >= 0) {
+        t.answers[last] = `${t.answers[last]} ${delivery}`;
+      } else {
+        t.answers.push(tr(t.lang, delivery, delivery));
+      }
     }
     if (
       inc.severity !== 'danger' &&
@@ -1735,8 +1766,8 @@ export class ChatOrchestrator {
             )
           : tr(
               t.lang,
-              `The ${label} is advertised at ${money(v.price)}, which is not ${money(amount)}. I'll treat ${money(amount)} as a price you have in mind, not as the out-the-door total and not as a monthly payment. Taxes are not included in either number.`,
-              `El ${label} está anunciado en ${money(v.price)}, no en ${money(amount)}. Tomo ${money(amount)} como un precio que usted tiene en mente, no como el precio final ni como un pago mensual. Ninguno incluye impuestos.`,
+              `The ${label} is advertised at ${money(v.price)}, which is not ${money(amount)}. I'll treat ${money(amount)} as a price you have in mind, not as the out-the-door total — it does not include taxes or fees.`,
+              `El ${label} está anunciado en ${money(v.price)}, no en ${money(amount)}. Tomo ${money(amount)} como un precio que usted tiene en mente, no como el precio final — no incluye impuestos ni cargos.`,
             ),
       );
       return;
@@ -1748,17 +1779,13 @@ export class ChatOrchestrator {
           `El ${label} está anunciado en ${money(v.price)}. `,
         )
       : '';
-    this.ask(
-      t,
-      'figure_meaning',
-      tr(
-        t.lang,
-        `${advertised}${money(amount)} could be the price you want to pay, a down payment, or an out-the-door total. Which one is it?`,
-        `${advertised}${money(amount)} puede ser el precio que quiere pagar, un enganche o el precio final. ¿Cuál es?`,
-      ),
-      1,
-      'choice',
+    const clarify = tr(
+      t.lang,
+      `${money(amount)} — ${advertised ? `the ${label} is advertised at ${money(v!.price!)}. ` : ''}Is that the price you want to pay, a down payment, or an out-the-door total?`,
+      `${money(amount)} — ${advertised ? `el ${label} está anunciado en ${money(v!.price!)}. ` : ''}¿Es el precio que quiere pagar, un enganche o el precio final?`,
     );
+    t.answers.push(clarify);
+    this.ask(t, 'figure_meaning', clarify, 1, 'choice');
   }
 
   /** "Is this with my taxes?" — answered from the policy, not guessed. */
@@ -1817,6 +1844,29 @@ export class ChatOrchestrator {
 
   // ───────────────────────────────────────── trade
 
+  /** Reuse the open trade on this thread so valuation follow-ups don't spawn duplicates. */
+  private async hydrateTradeFromConversation(t: Turn) {
+    const st = t.st;
+    if (st.trade?.requestId) return;
+    const row = await this.prisma.tradeRequest.findFirst({
+      where: {
+        tenantId: t.tenantId,
+        conversationId: t.s.conversationId,
+        status: { notIn: ['CLOSED', 'CANCELLED'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!row) return;
+    st.trade = {
+      ...st.trade,
+      requestId: row.id,
+      year: st.trade?.year ?? row.year ?? undefined,
+      make: st.trade?.make ?? row.make ?? undefined,
+      model: st.trade?.model ?? row.model ?? undefined,
+      mileage: st.trade?.mileage ?? row.mileage ?? undefined,
+    };
+  }
+
   private async handleTrade(t: Turn) {
     if (await this.capBlocked(t, 'leadCapture')) return;
     const st = t.st;
@@ -1827,8 +1877,10 @@ export class ChatOrchestrator {
         Object.entries(e).filter(([, v]) => v !== undefined),
       ),
     };
+    await this.hydrateTradeFromConversation(t);
     const tr0 = st.trade!;
     const toward = !!t.u.entities.tradeTowardPurchase;
+    const valuationAsk = !!t.u.entities.tradeValuation;
     if (!tr0.year && !tr0.make && !tr0.model && !tr0.requestId && !toward) {
       this.ask(
         t,
@@ -1892,19 +1944,21 @@ export class ChatOrchestrator {
           ` con ${tr0.mileage.toLocaleString('es-US')} millas`,
         )
       : '';
-    t.narration.push(
-      toward
-        ? tr(
-            t.lang,
-            `The ${label}${miles} stays your trade. I won't treat it as the vehicle you're buying, and I can't invent what it's worth.`,
-            `El ${label}${miles} sigue siendo su vehículo a cuenta. No lo tomo como el que va a comprar, y no puedo inventar cuánto vale.`,
-          )
-        : tr(
-            t.lang,
-            `I've noted the ${label}${miles} as your trade-in.`,
-            `Anoté su ${label}${miles} como vehículo a cuenta.`,
-          ),
-    );
+    if (!(valuationAsk && tr0.requestId)) {
+      t.narration.push(
+        toward
+          ? tr(
+              t.lang,
+              `The ${label}${miles} stays your trade. I won't treat it as the vehicle you're buying, and I can't invent what it's worth.`,
+              `El ${label}${miles} sigue siendo su vehículo a cuenta. No lo tomo como el que va a comprar, y no puedo inventar cuánto vale.`,
+            )
+          : tr(
+              t.lang,
+              `I've noted the ${label}${miles} as your trade-in.`,
+              `Anoté su ${label}${miles} como vehículo a cuenta.`,
+            ),
+      );
+    }
     const value = await this.appraisals.customerValue(
       t.tenantId,
       tr0.requestId!,
@@ -1917,7 +1971,7 @@ export class ChatOrchestrator {
       const until = value.expiresAt
         ? dateLabel(value.expiresAt.toISOString().slice(0, 10), t.lang)
         : null;
-      t.narration.push(
+      const valueMsg =
         value.kind === 'FINAL_OFFER'
           ? tr(
               t.lang,
@@ -1934,8 +1988,8 @@ export class ChatOrchestrator {
                 t.lang,
                 `A market estimate puts it around ${amt} — that's an estimate, not an offer.`,
                 `Una estimación de mercado lo ubica en ${amt} — es una estimación, no una oferta.`,
-              ),
-      );
+              );
+      t.answers.push(valueMsg);
       t.facts.push(`Trade value (${value.kind}, dealership record): ${amt}`);
       t.evidence.push(
         this.evidenceSvc.verifiedConfig(
@@ -1948,7 +2002,7 @@ export class ChatOrchestrator {
         ),
       );
     } else {
-      t.narration.push(
+      t.answers.push(
         tr(
           t.lang,
           "I can't put a value on it here — the dealership appraises it, usually with a quick look in person.",
@@ -2424,7 +2478,7 @@ export class ChatOrchestrator {
         t.narration.push(
           tr(
             t.lang,
-            `I found one ${what}${under} — it’s marked in transit, so it isn’t on the lot yet.`,
+            `I found one ${what}${under} — it’s marked in transit, so it isn’t here yet.`,
             `Encontré un ${esColorLabel(what)}${under} — aparece en tránsito, así que aún no está en el lote.`,
           ),
         );
@@ -2433,7 +2487,7 @@ export class ChatOrchestrator {
           tr(
             t.lang,
             transit === shown.length
-              ? `I found ${shown.length} ${plural}${under} — all marked in transit, so none are on the lot yet. Tell me which one catches your eye.`
+              ? `I found ${shown.length} ${plural}${under} — all marked in transit, so none are here yet. Tell me which one catches your eye.`
               : `I found ${shown.length} ${plural}${under} — ${transit} marked in transit, the rest in stock. Tell me which one catches your eye.`,
             `Encontré ${shown.length} opciones${under} — ${transit === shown.length ? 'todas' : transit} en tránsito. Dígame cuál le llama la atención.`,
           ),
@@ -2469,7 +2523,7 @@ export class ChatOrchestrator {
     }
     this.noteSimulated(t, shown);
     if (stale) {
-      t.narration.push(
+      t.answers.push(
         tr(
           t.lang,
           "Heads up: some of this inventory data hasn't refreshed recently, so the team will confirm availability.",
@@ -3213,14 +3267,29 @@ export class ChatOrchestrator {
   private async handleOtd(t: Turn) {
     const st = t.st;
     const e = t.u.entities;
+    if (
+      e.policyTopic === 'cash_vs_finance' &&
+      !t.handled.has('KNOWLEDGE_QUESTION')
+    ) {
+      await this.handlePolicyTopic(t);
+      t.handled.add('KNOWLEDGE_QUESTION');
+    }
     if (e.taxQuestion) await this.handleTaxQuestion(t);
     if (e.leaseOrPurchase === 'cash')
       st.otd = { ...st.otd, paymentMethod: 'CASH' };
     else if (e.leaseOrPurchase === 'lease')
       st.otd = { ...st.otd, paymentMethod: 'LEASE' };
     if (e.zip) st.otd = { ...st.otd, zip: e.zip };
-    if (e.registrationPlace)
+    if (e.registrationPlace) {
       st.otd = { ...st.otd, registrationPlace: e.registrationPlace };
+      t.answers.push(
+        tr(
+          t.lang,
+          `I've noted ${e.registrationPlace} for registration.`,
+          `Anoté ${e.registrationPlace} para el registro.`,
+        ),
+      );
+    }
     let v: InventoryVehicle | null = null;
     if (st.selectedVin)
       v = await this.inventory.getVehicleByVin(t.tenantId, st.selectedVin);
@@ -3335,7 +3404,11 @@ export class ChatOrchestrator {
       missingInputs: est.computable ? [] : est.missingInputs,
       preliminary: true,
     });
-    if (method === 'CASH' && t.u.entities.leaseOrPurchase === 'cash')
+    if (
+      method === 'CASH' &&
+      (t.u.entities.leaseOrPurchase === 'cash' ||
+        t.u.entities.policyTopic === 'cash_vs_finance')
+    )
       t.answers.push(
         tr(
           t.lang,
@@ -3404,15 +3477,13 @@ export class ChatOrchestrator {
               `El precio anunciado del ${label} es ${money(v.price)}${v.simulated ? ' (cifra de demostración)' : ''}.`,
             )
           : '';
+      const missingMsg = tr(
+        t.lang,
+        `For the full out-the-door number I still need ${list('en')} — I won’t guess those, so I’ve saved a written-quote request for the sales team to fill in.`,
+        `Para el precio final completo todavía falta ${list('es')} — no voy a adivinarlos, así que guardé una solicitud de cotización por escrito para el equipo de ventas.`,
+      );
       if (first) {
-        if (priceFact) t.answers.push(priceFact);
-        t.narration.push(
-          tr(
-            t.lang,
-            `For the full out-the-door number I still need ${list('en')} — I won’t guess those, so I’ve saved a written-quote request for the sales team to fill in.`,
-            `Para el precio final completo todavía falta ${list('es')} — no voy a adivinarlos, así que guardé una solicitud de cotización por escrito para el equipo de ventas.`,
-          ),
-        );
+        t.answers.push(priceFact ? `${priceFact} ${missingMsg}` : missingMsg);
       } else {
         t.narration.push(
           e.zip
@@ -4119,6 +4190,7 @@ export class ChatOrchestrator {
           .filter(Boolean)
           .join(' | ') || null,
       source: 'chat',
+      now: referenceNow(),
     });
     if (res.status === 'saved' && st.parts?.inquiryId && type === 'SERVICE') {
       await this.parts.linkInstallAppointment(
@@ -4440,30 +4512,33 @@ export class ChatOrchestrator {
         ),
       );
     } else if (!wasExisting) {
-      t.narration.push(
-        tr(
-          t.lang,
-          `I've started a parts request for ${what}${forVeh}.`,
-          `Inicié una solicitud de refacciones para ${what}${forVeh}.`,
-        ),
+      const askedPrice = /\b(how much|price|cost|quote|cu[aá]nto)\b/i.test(
+        t.message,
+      );
+      t.answers.push(
+        askedPrice
+          ? tr(
+              t.lang,
+              `I've started a parts request for ${what}${forVeh}, and I can't quote a price or confirm fitment here — that depends on the exact part for your VIN`,
+              `Inicié una solicitud de refacciones para ${what}${forVeh}, y no puedo dar precio ni confirmar compatibilidad aquí — depende de la pieza exacta para su VIN`,
+            )
+          : tr(
+              t.lang,
+              `I've started a parts request for ${what}${forVeh}. The parts team confirms fitment, price, and availability before anything is ordered.`,
+              `Inicié una solicitud de refacciones para ${what}${forVeh}. El equipo de refacciones confirma compatibilidad, precio y disponibilidad antes de ordenar.`,
+            ),
       );
     }
     const askedPrice = /\b(how much|price|cost|quote|cu[aá]nto)\b/i.test(
       t.message,
     );
-    if (!wasExisting || askedPrice)
-      t.narration.push(
-        askedPrice
-          ? tr(
-              t.lang,
-              "I can't quote a price or confirm fitment here — that depends on the exact part for your VIN. Installed price through service is also separate from the part price.",
-              'No puedo dar precio ni confirmar compatibilidad aquí — depende de la pieza exacta para su VIN. El precio instalado en servicio es aparte del precio de la pieza.',
-            )
-          : tr(
-              t.lang,
-              'The parts team confirms fitment, price, and availability before anything is ordered.',
-              'El equipo de refacciones confirma compatibilidad, precio y disponibilidad antes de ordenar.',
-            ),
+    if (wasExisting && askedPrice)
+      t.answers.push(
+        tr(
+          t.lang,
+          "I can't quote a price or confirm fitment here — that depends on the exact part for your VIN. Installed price through service is also separate from the part price.",
+          'No puedo dar precio ni confirmar compatibilidad aquí — depende de la pieza exacta para su VIN. El precio instalado en servicio es aparte del precio de la pieza.',
+        ),
       );
     t.cards.push({
       kind: 'parts',
@@ -6939,13 +7014,16 @@ export class ChatOrchestrator {
       }
     }
 
-    const ack = chooseAcknowledgement({
-      sentiment: t.u.sentiment,
-      intents: t.u.intents.map((i) => i.intent),
-      isCorrection: t.isCorrection,
-      lang: t.lang,
-      recentOpeners: st.recentOpeners,
-    });
+    const ack =
+      t.answers.length > 0
+        ? undefined
+        : chooseAcknowledgement({
+            sentiment: t.u.sentiment,
+            intents: t.u.intents.map((i) => i.intent),
+            isCorrection: t.isCorrection,
+            lang: t.lang,
+            recentOpeners: st.recentOpeners,
+          });
     const preserveAll =
       !!opts.forcedReply ||
       !!t.lockReply ||

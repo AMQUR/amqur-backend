@@ -376,7 +376,8 @@ export function planConciseResponse(
         ? 1
         : turnKind === 'appointment' ||
             turnKind === 'human_handoff' ||
-            turnKind === 'complaint'
+            turnKind === 'complaint' ||
+            turnKind === 'trade'
           ? 1
           : 0
       : 2;
@@ -504,7 +505,7 @@ export function chooseReplyWithinBudget(params: {
  * it is the only question and fits.
  */
 const CAVEAT =
-  /\b(estimate|request|preview|in transit|not confirmed|illustrative|example)\b/i;
+  /\b(estimate|request|preview|in transit|not confirmed|illustrative|example|walk-in|walk in|appointment|without an appointment|simulated|reported|not contacted|can't quote|cannot quote)\b/i;
 
 export function trimToSentenceBudget(
   text: string,

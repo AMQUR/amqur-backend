@@ -27,7 +27,7 @@ const ALLEGATION =
   /\b(?:yelled|screamed|shouted|cursed|swore|harass\w*|threatened|steal|stole|stolen|theft|robbed|racist|discriminat\w*|groped|touched me)\b/;
 
 const DISSATISFACTION =
-  /\b(?:mean to me|rude to me|disrespect\w*|treated me (?:badly|poorly|like)|terrible (?:service|experience)|awful (?:service|experience)|worst (?:experience|service)|so rude|was rude|were rude)\b/;
+  /\b(?:mean to me|was mean to me|were mean to me|rude to me|disrespect\w*|treated me (?:badly|poorly|like)|terrible (?:service|experience)|awful (?:service|experience)|worst (?:experience|service)|so rude|was rude|were rude)\b/;
 
 const NAME =
   /\b(?:his|her|their|(?:the )?(?:manager|employee|salesperson|salesman|guy|person)(?:'s)?)\s+name\s+(?:is|was)\s+([a-z][a-z'-]{1,30})\b|\bnamed\s+([a-z][a-z'-]{1,30})\b/i;

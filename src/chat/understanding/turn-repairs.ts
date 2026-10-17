@@ -107,7 +107,8 @@ export function applyTurnRepairs(args: {
   }
   if (
     args.pending === 'figure_meaning' &&
-    /^\s*(?:price|the price|selling price|sticker)\s*[.!?]*\s*$/.test(t)
+    (/^\s*(?:price|the price|selling price|sticker)\s*[.!?]*\s*$/.test(t) ||
+      /^\s*peicw\s*[.!?]*\s*$/i.test(args.raw))
   ) {
     e.statedAmountRole = 'price';
     add('OTD_QUOTE', 0.92, 'figure is a price');

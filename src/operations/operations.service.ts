@@ -440,9 +440,6 @@ export class OperationsService {
     toUserId: string,
     actorRole?: string,
   ) {
-    if (fromUserId === toUserId) {
-      throw new BadRequestException('Cannot transfer to yourself');
-    }
     const c = await this.prisma.conversation.findFirst({
       where: { id, tenantId: scope.tenantId, ...this.loc(scope) },
     });
@@ -459,6 +456,9 @@ export class OperationsService {
       throw new ForbiddenException(
         'Only the current owner can transfer this conversation',
       );
+    }
+    if (fromUserId === toUserId) {
+      throw new BadRequestException('Cannot transfer to yourself');
     }
     const target = await this.prisma.user.findFirst({
       where: {

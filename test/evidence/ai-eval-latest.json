@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-10-15T01:28:49.442Z",
+  "generatedAt": "2026-10-17T05:41:23.113Z",
   "cases": 25,
   "passRate": 0.96,
   "severe": 0,
   "findings": [
     {
-      "case": "sales-in-transit",
+      "case": "sales-stale",
       "turn": 0,
       "severity": "EXPECT",
-      "rule": "reply_forbidden:/on the lot|in stock now/i",
-      "reply": "I found one 1500 — it’s marked in transit, so it isn’t on the lot yet. Curious what it would run per month?"
+      "rule": "reply_missing:/hasn't refreshed|confirm availability|out of date/i",
+      "reply": "Here's the one Bronco I can verify in stock right now. Curious what it would run per month?"
     }
   ],
   "results": [
@@ -31,7 +31,7 @@
     {
       "id": "sales-stale",
       "category": "sales",
-      "pass": true
+      "pass": false
     },
     {
       "id": "sales-sold",
@@ -41,7 +41,7 @@
     {
       "id": "sales-in-transit",
       "category": "sales",
-      "pass": false
+      "pass": true
     },
     {
       "id": "sales-compare-budget-payment",

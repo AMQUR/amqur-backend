@@ -878,7 +878,7 @@ export function understandTurn(
 
   // ── trade-in (parse BEFORE desired vehicle so "2021 Accord to trade" isn't the shopping target)
   const tradeCue =
-    /\b(trade[- ]?in|trading in|to trade|my trade|trade my|trade it|appraisal|appraise|what'?s my (?:car|truck|vehicle) worth|i (?:have|got|own) an? (?:\d{4} )?[a-z-]+ (?:with|to trade|that i)|i'?ve got an? \d{4}|tengo un[ao]? \d{4}|intercambio|dar a cuenta)\b/;
+    /\b(trade[- ]?in|trading in|to trade|my trade|trade my|trade it|appraisal|appraise|what'?s my (?:trade[- ]?in|car|truck|vehicle) worth|i (?:have|got|own) an? (?:\d{4} )?[a-z-]+ (?:with|to trade|that i)|i'?ve got an? \d{4}|tengo un[ao]? \d{4}|intercambio|dar a cuenta)\b/;
   let tradeSpan = '';
   if (
     tradeCue.test(t) ||
@@ -1099,7 +1099,15 @@ export function understandTurn(
     add('SERVICE_APPOINTMENT', 0.88, 'answers service vehicle question');
   }
   const zip = /\b(\d{5})(?:-\d{4})?\b/.exec(raw);
-  if (zip && (pending === 'otd_zip' || /\bzip\b/i.test(raw))) {
+  const statedFigure =
+    /\b(?:it(?:'s|s)|its|that(?:'s|s)?|for)\s+\$?\s*(\d{1,3}(?:,\d{3})+|\d{4,6})\b/.test(
+      raw,
+    );
+  if (
+    zip &&
+    (pending === 'otd_zip' || /\bzip\b/i.test(raw)) &&
+    !(pending === 'otd_zip' && statedFigure)
+  ) {
     e.zip = zip[1];
     if (pending === 'otd_zip')
       add('OTD_QUOTE', 0.9, 'answers registration zip');

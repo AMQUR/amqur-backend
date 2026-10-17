@@ -85,7 +85,7 @@ export function answerDealershipFact(input: {
           : kb
             ? 'knowledge_base'
             : 'none',
-        en: `${hours}.${kbBit} I don't have a separate verified walk-in policy, so I can't promise you can be seen without an appointment. I can record a visit request and the team confirms it.`,
+        en: `${hours}.${kbBit} Walk-ins aren't something I can promise without an appointment — I can record a visit request and the team confirms it.`,
         es: `${input.hoursSummary ? `Horario verificado: ${input.hoursSummary}.` : 'No tengo horario verificado.'} No tengo una política verificada de visitas sin cita, así que no puedo prometer que lo atiendan sin cita. Puedo registrar una solicitud y el equipo la confirma.`,
       };
     }
@@ -104,15 +104,15 @@ export function answerDealershipFact(input: {
         source: kb ? 'knowledge_base' : 'inventory',
         en: `${
           input.advertisedPrice
-            ? `The advertised price I can show is ${money(input.advertisedPrice)}.`
+            ? `The advertised price I can show is ${money(input.advertisedPrice)}. `
             : ''
-        } ${
+        }${
           /\b(?:requires financing|finance only|must finance|with approved credit only)\b/i.test(
             kb,
           )
             ? `The dealership's note says: ${kb.slice(0, 400)}`
-            : "I don't have a verified rule that this price applies only if you finance. I won't say a financing-dependent price applies to a cash purchase."
-        } The sales team confirms the written terms.`,
+            : "I won't say a financing-dependent price applies here — I don't have a verified rule that this price requires financing. The sales team confirms the written terms."
+        }`,
         es: 'No tengo una regla verificada de que el precio anunciado exija financiamiento. No voy a decir que un precio condicionado al crédito aplica a una compra de contado. El equipo confirma los términos por escrito.',
       };
     case 'cash_vs_finance':
@@ -129,7 +129,7 @@ export function answerDealershipFact(input: {
         en: `Out-the-door means the amount you would pay to drive away: the vehicle price plus sales tax, the dealership's documentation fee, and title and registration fees, minus a trade or rebate when one applies. ${
           input.policyConfigured
             ? 'This store has verified tax and fee rules, so I can itemize a preliminary estimate.'
-            : "This store has not verified those tax and fee amounts here, so I won't guess the total. I can save a written-quote request for the team."
+            : "This store has not verified those tax and fee amounts here, so I won't guess the total — I can save a written-quote request for the team."
         }`,
         es: 'El precio final es el precio del vehículo más impuestos, cargo de documentación y título y registro. Si la agencia no verificó esos montos, no adivino el total y dejo una solicitud para el equipo.',
       };
