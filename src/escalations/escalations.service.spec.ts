@@ -11,6 +11,7 @@ describe('EscalationsService handoff queue', () => {
       update: jest.fn(),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    $transaction: jest.fn(async (fn: (tx: typeof prisma) => unknown) => fn(prisma)),
   };
 
   const outbox = {
@@ -60,6 +61,67 @@ describe('EscalationsService handoff queue', () => {
         data: expect.objectContaining({ action: 'escalation.append' }),
       }),
     );
+  });
+
+  it('parallel handoff requests create only one open escalation', async () => {
+    const OPEN = ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] as const;
+    const store: Array<{
+      id: string;
+      conversationId: string;
+      status: string;
+      notifiedAt: null;
+      urgency: string;
+    }> = [];
+    let seq = 0;
+    let chain = Promise.resolve();
+
+    prisma.conversation.findUnique.mockResolvedValue({ id: 'conv1' });
+    prisma.$transaction.mockImplementation((fn: (tx: typeof prisma) => unknown) => {
+      chain = chain.then(() => fn(prisma));
+      return chain;
+    });
+    prisma.escalation.findFirst.mockImplementation(
+      async ({ where }: { where: { conversationId?: string; status?: { in: string[] } } }) => {
+        const statuses = where.status?.in ?? [...OPEN];
+        return (
+          store.find(
+            (e) =>
+              e.conversationId === where.conversationId &&
+              statuses.includes(e.status),
+          ) ?? null
+        );
+      },
+    );
+    prisma.escalation.create.mockImplementation(
+      async ({ data }: { data: { conversationId: string } }) => {
+        const esc = {
+          id: `esc-${++seq}`,
+          conversationId: data.conversationId,
+          status: 'OPEN',
+          notifiedAt: null,
+          urgency: 'NORMAL',
+        };
+        store.push(esc);
+        return esc;
+      },
+    );
+
+    const params = {
+      tenantId: 't1',
+      locationId: 'loc1',
+      externalKey: 'ext-1',
+      reason: 'staff_handoff',
+    };
+    const [first, second] = await Promise.all([
+      svc.create(params),
+      svc.create(params),
+    ]);
+
+    expect(store).toHaveLength(1);
+    expect(prisma.escalation.create).toHaveBeenCalledTimes(1);
+    expect(first.deduped).toBe(false);
+    expect(second.deduped).toBe(true);
+    expect(second.escalation.id).toBe(first.escalation.id);
   });
 
   it('dedupes open handoff for same conversation', async () => {

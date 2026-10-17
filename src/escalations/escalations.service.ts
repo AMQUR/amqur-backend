@@ -65,36 +65,56 @@ export class EscalationsService {
     });
 
     // Duplicate prevention: one open logical handoff per conversation.
-    if (conv?.id) {
-      const existing = await this.prisma.escalation.findFirst({
-        where: {
-          tenantId: params.tenantId,
-          conversationId: conv.id,
-          status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
-      if (existing) {
-        return {
-          escalation: existing,
-          notified: Boolean(existing.notifiedAt),
-          queued: false,
-          deduped: true,
-        };
-      }
+    const openHandoff = conv?.id
+      ? await this.prisma.$transaction(async (tx) => {
+          const existing = await tx.escalation.findFirst({
+            where: {
+              tenantId: params.tenantId,
+              conversationId: conv.id,
+              status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          });
+          if (existing) {
+            return { escalation: existing, deduped: true as const };
+          }
+          const created = await tx.escalation.create({
+            data: {
+              tenantId: params.tenantId,
+              locationId: params.locationId ?? null,
+              conversationId: conv.id,
+              reason: params.reason,
+              urgency: params.urgency ?? EscalationUrgency.NORMAL,
+              summary: params.summary,
+              metadata: params.metadata,
+            },
+          });
+          return { escalation: created, deduped: false as const };
+        })
+      : null;
+
+    if (openHandoff?.deduped) {
+      return {
+        escalation: openHandoff.escalation,
+        notified: Boolean(openHandoff.escalation.notifiedAt),
+        queued: false,
+        deduped: true,
+      };
     }
 
-    const escalation = await this.prisma.escalation.create({
-      data: {
-        tenantId: params.tenantId,
-        locationId: params.locationId ?? null,
-        conversationId: conv?.id ?? null,
-        reason: params.reason,
-        urgency: params.urgency ?? EscalationUrgency.NORMAL,
-        summary: params.summary,
-        metadata: params.metadata,
-      },
-    });
+    const escalation =
+      openHandoff?.escalation ??
+      (await this.prisma.escalation.create({
+        data: {
+          tenantId: params.tenantId,
+          locationId: params.locationId ?? null,
+          conversationId: conv?.id ?? null,
+          reason: params.reason,
+          urgency: params.urgency ?? EscalationUrgency.NORMAL,
+          summary: params.summary,
+          metadata: params.metadata,
+        },
+      }));
 
     let notified = false;
     let queued = false;
