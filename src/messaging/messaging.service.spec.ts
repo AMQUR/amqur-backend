@@ -198,6 +198,43 @@ describe('MessagingService.queue idempotency', () => {
     expect(tx.outboundMessage.create).toHaveBeenCalledTimes(1);
     expect(outbox.enqueue).not.toHaveBeenCalled();
   });
+
+  it('suppresses MARKETING campaign sends when SMS STOP opted out the endpoint', async () => {
+    consent.status.mockResolvedValue({ allowed: false, reason: 'opted_out' });
+    prisma.outboundMessage.create.mockResolvedValue({ id: 'sup-marketing-1' });
+
+    const result = await svc.queue({
+      ...baseQueue,
+      purpose: 'MARKETING',
+      campaignId: 'camp-1',
+      campaignVersion: 1,
+      idempotencyKey: 'campaign:camp-1:v1:lead-1',
+    });
+
+    expect(result).toMatchObject({
+      status: 'SUPPRESSED',
+      id: 'sup-marketing-1',
+      reason: 'opted_out',
+    });
+    expect(consent.status).toHaveBeenCalledWith(
+      'tenant-1',
+      'SMS',
+      '+15551234567',
+      'MARKETING',
+    );
+    expect(tx.outboundMessage.create).not.toHaveBeenCalled();
+    expect(outbox.enqueue).not.toHaveBeenCalled();
+    expect(prisma.outboundMessage.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'SUPPRESSED',
+          suppressReason: 'opted_out',
+          purpose: 'MARKETING',
+          campaignId: 'camp-1',
+        }),
+      }),
+    );
+  });
 });
 
 describe('MessagingService.queue location messagingPolicy quiet hours', () => {
