@@ -13,7 +13,8 @@ import {
 } from './meta-lead-payload';
 
 /**
- * Fail-closed Meta Lead Ads webhook intake (storage only — no live CRM sync).
+ * Fail-closed Meta Lead Ads webhook intake (WebhookInbox only at HTTP boundary).
+ * Lead materialization runs in MetaLeadsInboxProcessor (Graph fetch + LeadsService).
  *
  * Required env (production):
  *   META_APP_SECRET — Meta app secret for X-Hub-Signature-256 verification

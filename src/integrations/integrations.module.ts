@@ -15,9 +15,12 @@ import { InventoryFeedModule } from '../inventory-feed/inventory-feed.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NormalizedInventoryHttpProvider } from './normalized-inventory/normalized-inventory-http.provider';
 import { CrmSyncService } from './crm/crm-sync.service';
+import { LeadsModule } from '../leads/leads.module';
+import { MetaGraphLeadClientService } from './meta/meta-graph-lead.client';
+import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
 
 @Module({
-  imports: [InventoryFeedModule, InventoryModule],
+  imports: [InventoryFeedModule, InventoryModule, LeadsModule],
   controllers: [IntegrationsHealthController, MetaLeadsWebhookController],
   providers: [
     SecretVaultService,
@@ -26,6 +29,8 @@ import { CrmSyncService } from './crm/crm-sync.service';
     OutboxProcessorService,
     WebhookInboxService,
     MetaLeadsWebhookService,
+    MetaGraphLeadClientService,
+    MetaLeadsInboxProcessor,
     TekionProvider,
     VAutoFeedProvider,
     NormalizedInventoryHttpProvider,
@@ -45,6 +50,7 @@ import { CrmSyncService } from './crm/crm-sync.service';
     InventoryIngestionService,
     TekionCrmWritebackService,
     CrmSyncService,
+    MetaLeadsInboxProcessor,
   ],
 })
 export class IntegrationsModule {}

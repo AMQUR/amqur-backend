@@ -283,6 +283,108 @@ export class LeadsService {
       },
     });
   }
+
+  /**
+   * Meta Lead Ads materialization — only verified Graph / webhook ids and field_data.
+   * Idempotent on metaLeadgenId (same as WebhookInbox.externalEventId). No CRM writeback.
+   */
+  async upsertFromMetaLeadgen(p: {
+    tenantId: string;
+    leadgenId: string;
+    webhookInboxId: string;
+    firstName?: string;
+    lastName?: string;
+    phone?: string;
+    email?: string;
+    zipCode?: string;
+    metaContext?: {
+      pageId?: string;
+      formId?: string;
+      adId?: string;
+      adgroupId?: string;
+      graphLeadId?: string;
+    };
+    needsStaffReview: boolean;
+  }) {
+    const email = normalizeEmail(p.email);
+    const phone = normalizePhone(p.phone);
+    const scoreReasons = {
+      metaLeadgenId: p.leadgenId,
+      webhookInboxId: p.webhookInboxId,
+      needsStaffReview: p.needsStaffReview,
+      metaContext: p.metaContext ?? {},
+    };
+
+    const existing = await this.prisma.lead.findFirst({
+      where: {
+        tenantId: p.tenantId,
+        scoreReasons: {
+          path: ['metaLeadgenId'],
+          equals: p.leadgenId,
+        },
+      },
+    });
+    if (existing) {
+      return { lead: existing, created: false as const };
+    }
+
+    const set = <T>(v: T | undefined | null) =>
+      v === undefined || v === null || v === '' ? undefined : v;
+
+    const data = {
+      firstName: set(p.firstName),
+      lastName: set(p.lastName),
+      phone: phone ?? undefined,
+      email: email ?? undefined,
+      zipCode: set(p.zipCode),
+      scoreReasons: scoreReasons as Prisma.InputJsonValue,
+      scoreVersion: 'meta_leadgen_v1',
+      source: 'meta_leadgen',
+      utmSource: 'meta',
+      utmMedium: 'lead_ad',
+      utmCampaign: p.metaContext?.adId?.slice(0, 120),
+      notes: p.needsStaffReview
+        ? 'Meta Lead Ads: staff review required (incomplete lead fields or Graph fetch unavailable).'
+        : undefined,
+    };
+
+    const status = resolveLeadStatus({
+      score: 0,
+      stage: 'cold',
+      phone: phone ?? undefined,
+      email: email ?? undefined,
+    });
+
+    const flags = await this.flags.resolve(p.tenantId, null);
+    const assignedUserId = await resolveNewLeadAssignee(this.prisma, flags, {
+      tenantId: p.tenantId,
+      locationId: null,
+    });
+
+    const lead = await this.prisma.lead.create({
+      data: {
+        tenantId: p.tenantId,
+        ...data,
+        score: 0,
+        stage: LeadStage.COLD,
+        status,
+        assignedUserId,
+      },
+    });
+    return { lead, created: true as const };
+  }
+
+  async findByMetaLeadgenId(tenantId: string, leadgenId: string) {
+    return this.prisma.lead.findFirst({
+      where: {
+        tenantId,
+        scoreReasons: {
+          path: ['metaLeadgenId'],
+          equals: leadgenId,
+        },
+      },
+    });
+  }
 }
 
 /** Promote open leads toward QUALIFIED from real signals — never invent CRM outcomes. */
