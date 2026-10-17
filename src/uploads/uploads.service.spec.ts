@@ -81,6 +81,37 @@ describe('UploadsService conversation attachments', () => {
     expect(prisma.fileObject.findMany).not.toHaveBeenCalled();
   });
 
+  it('listConversationAttachments returns CLEAN files with downloadPath', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    prisma.fileObject.findMany.mockResolvedValue([
+      {
+        ...cleanFile,
+        conversationId: 'conv-1',
+      },
+    ]);
+
+    const result = await svc.listConversationAttachments('tenant-a', 'conv-1');
+
+    expect(prisma.fileObject.findMany).toHaveBeenCalledWith({
+      where: { tenantId: 'tenant-a', conversationId: 'conv-1', deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        originalName: true,
+        mimeType: true,
+        byteSize: true,
+        purpose: true,
+        scannedStatus: true,
+        conversationId: true,
+        createdAt: true,
+      },
+    });
+    expect(result.attachments).toHaveLength(1);
+    expect(result.attachments[0].id).toBe('file-1');
+    expect(result.attachments[0].scannedStatus).toBe(FileScanStatus.CLEAN);
+    expect(result.attachments[0].downloadPath).toContain('/uploads/file-1/download');
+  });
+
   it('attachToConversation links a CLEAN file', async () => {
     prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1', locationId: 'loc-1' });
     prisma.fileObject.findFirst.mockResolvedValue(cleanFile);
