@@ -363,6 +363,51 @@ describe('OperationsService.missedOpportunities', () => {
   });
 });
 
+describe('OperationsService.recentKnowledgeMisses', () => {
+  it('returns persisted knowledge_miss rows without conversation identifiers', async () => {
+    const occurredAt = new Date('2026-10-10T12:00:00.000Z');
+    const prisma = {
+      analyticsEvent: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 'ev-1',
+            occurredAt,
+            locationId: 'loc-1',
+            properties: { count: 0 },
+          },
+        ]),
+      },
+    };
+    const svc = makeOperationsService(prisma);
+    const r = await svc.recentKnowledgeMisses({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+    });
+    expect(r.window).toBe('7d');
+    expect(r.total).toBe(1);
+    expect(r.events).toEqual([
+      {
+        id: 'ev-1',
+        occurredAt,
+        locationId: 'loc-1',
+        kbHits: 0,
+      },
+    ]);
+    expect(prisma.analyticsEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-1',
+          locationId: 'loc-1',
+          eventType: 'knowledge_miss',
+        }),
+        select: expect.not.objectContaining({
+          conversationExternalKey: expect.anything(),
+        }),
+      }),
+    );
+  });
+});
+
 describe('OperationsService.listInventory', () => {
   it('delegates GET /ops/inventory to browseForStaff with scope and filters', async () => {
     const browseForStaff = jest.fn().mockResolvedValue([]);

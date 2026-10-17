@@ -361,6 +361,17 @@ export class OperationsController {
     return this.ops.missedOpportunities(this.scope(u, t, l));
   }
 
+  /** Recent knowledge_miss analytics for Knowledge page triage (manager+). */
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('knowledge-misses')
+  knowledgeMisses(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.recentKnowledgeMisses(this.scope(u, t, l));
+  }
+
   @Roles(...STAFF)
   @Get('appointment-outcomes')
   appointmentOutcomes(

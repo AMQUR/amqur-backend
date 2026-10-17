@@ -5,6 +5,13 @@ import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 
 type Doc = { id: string; title: string; status: string; visibility: string; version: number; locationId: string | null; effectiveAt: string | null; expiresAt: string | null; approvedAt: string | null; lastVerifiedAt: string | null; canonicalUrl: string | null; updatedAt: string; source: { sourceType: string; authorityLevel: string } | null };
 type Hit = { title: string; content: string; score: number };
+type KnowledgeMissFeed = {
+  window: string;
+  since: string;
+  total: number;
+  events: Array<{ id: string; occurredAt: string; locationId: string | null; kbHits: number }>;
+  note: string;
+};
 
 const NEXT: Record<string, Array<{ to: string; label: string; manager?: boolean }>> = {
   DRAFT: [{ to: 'PENDING_REVIEW', label: 'Submit for review' }, { to: 'APPROVED', label: 'Approve', manager: true }],
@@ -16,13 +23,21 @@ const NEXT: Record<string, Array<{ to: string; label: string; manager?: boolean 
 };
 
 export function Knowledge({ locationId }: { locationId: string }) {
+  const isManager = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(session.user?.role ?? '');
   const docs = useAsync(() => api<Doc[]>(`/knowledge/documents${locationId ? `?locationId=${locationId}` : ''}`), [locationId]);
+  const missQs = locationId ? `?locationId=${locationId}` : '';
+  const misses = useAsync(
+    () =>
+      isManager
+        ? api<KnowledgeMissFeed>(`/ops/knowledge-misses${missQs}`)
+        : Promise.resolve(null),
+    [missQs, isManager],
+  );
   const [editing, setEditing] = useState<{ id?: string; title: string; content: string; visibility: string; effectiveAt: string; expiresAt: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Hit[] | null>(null);
   const [url, setUrl] = useState('');
-  const isManager = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(session.user?.role ?? '');
   const run = async (fn: () => Promise<unknown>) => {
     setErr(null);
     try {
@@ -40,7 +55,33 @@ export function Knowledge({ locationId }: { locationId: string }) {
     <div className="page">
       <h1>Knowledge</h1>
       <p className="muted">Only <Badge tone="ok">PUBLISHED</Badge> + <Badge>CUSTOMER</Badge> documents inside their effective window are available to the customer assistant. Edits to published content return it to draft for review.</p>
-      <ErrorNote error={docs.error ?? err} />
+      <ErrorNote error={docs.error ?? err ?? misses.error} />
+      {isManager && misses.data && (
+        <Card
+          title={`Recent knowledge misses · ${misses.data.window}`}
+          actions={
+            <a className="btn btn--ghost" href="#/studio">Conversation Studio</a>
+          }
+        >
+          {misses.data.total === 0 ? (
+            <Empty>No knowledge_miss analytics in this window — the assistant had KB coverage or knowledge was not exercised.</Empty>
+          ) : (
+            <ul className="list">
+              {misses.data.events.map((e) => (
+                <li key={e.id}>
+                  <strong>{fmtDate(e.occurredAt)}</strong>
+                  <span className="muted small">
+                    {' '}
+                    · {e.kbHits} customer-visible KB hits
+                    {e.locationId && !locationId ? ` · rooftop ${e.locationId.slice(0, 8)}…` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="muted small">{misses.data.note}</p>
+        </Card>
+      )}
       <div className="row">
         <button className="btn btn--primary" onClick={() => setEditing({ title: '', content: '', visibility: 'CUSTOMER', effectiveAt: '', expiresAt: '' })}>New document</button>
         {isManager && (

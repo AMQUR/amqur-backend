@@ -1123,6 +1123,45 @@ export class OperationsService {
     };
   }
 
+  /**
+   * Recent knowledge_miss analytics for manager triage — persisted events only (no PII).
+   */
+  async recentKnowledgeMisses(scope: Scope) {
+    const since = new Date(Date.now() - 7 * 86_400_000);
+    const rows = await this.prisma.analyticsEvent.findMany({
+      where: {
+        tenantId: scope.tenantId,
+        ...this.loc(scope),
+        eventType: 'knowledge_miss',
+        occurredAt: { gte: since },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: 20,
+      select: {
+        id: true,
+        occurredAt: true,
+        locationId: true,
+        properties: true,
+      },
+    });
+    return {
+      window: '7d',
+      since: since.toISOString(),
+      total: rows.length,
+      events: rows.map((e) => ({
+        id: e.id,
+        occurredAt: e.occurredAt,
+        locationId: e.locationId,
+        kbHits:
+          typeof (e.properties as { count?: unknown } | null)?.count ===
+          'number'
+            ? (e.properties as { count: number }).count
+            : 0,
+      })),
+      note: 'Analytics events only — no customer message text or contact identifiers.',
+    };
+  }
+
   async integrations(scope: Scope) {
     const conns = await this.prisma.integrationConnection.findMany({
       where: { tenantId: scope.tenantId },
