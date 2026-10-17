@@ -31,6 +31,7 @@ if (!process.env.RAILWAY_API_TOKEN) {
 
 const sourceService = environment === 'staging' ? 'api' : 'prod-api';
 const targetService = environment === 'staging' ? 'worker' : 'prod-worker';
+/** Boot/crypto parity only — never copy LLM, Twilio, Tekion, or monitoring secrets. */
 const KEYS = ['CORS_ORIGINS', 'INTEGRATION_ENCRYPTION_KEY'];
 
 function railwayJson(args) {
