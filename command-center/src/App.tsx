@@ -23,6 +23,7 @@ import { DocumentSigning } from './pages/DocumentSigning';
 import { TradeValuation } from './pages/TradeValuation';
 import { Leads } from './pages/Leads';
 import { Inventory } from './pages/Inventory';
+import { Surveys } from './pages/Surveys';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -34,6 +35,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'knowledge', label: 'Knowledge' },
   { id: 'studio', label: 'Conversation Studio', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'campaigns', label: 'Campaigns', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
+  { id: 'surveys', label: 'CSI surveys', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] },
   { id: 'action-pages', label: 'Action pages', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'sold-deals', label: 'Sold deals', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'reviews', label: 'Reviews (GBP)', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
@@ -117,6 +119,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'knowledge' && <Knowledge locationId={locationId} />}
         {route === 'studio' && <ConversationStudio locationId={locationId} />}
         {route === 'campaigns' && <Campaigns locationId={locationId} />}
+        {route === 'surveys' && <Surveys locationId={locationId} />}
         {route === 'action-pages' && <ActionPages locationId={locationId} />}
         {route === 'sold-deals' && <SoldDeals locationId={locationId} />}
         {route === 'reviews' && <Reviews locationId={locationId} />}
