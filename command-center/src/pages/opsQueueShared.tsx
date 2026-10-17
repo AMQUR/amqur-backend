@@ -100,6 +100,37 @@ type CreditStatus = {
   customerFacing: { available: boolean; preview?: boolean; reason?: string };
 };
 
+/** Ack missed no-show / cancel recovery — no outbound SMS. */
+export function MissedRecoveryActions(props: {
+  appointmentId: string;
+  locationId: string;
+  onUpdated: () => void;
+}) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const locQ = props.locationId ? `?locationId=${encodeURIComponent(props.locationId)}` : '';
+  const ack = async () => {
+    setMsg(null);
+    try {
+      await api(`/ops/appointment-requests/${props.appointmentId}${locQ}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ acknowledgeMissedRecovery: true }),
+      });
+      setMsg('Recovery acked');
+      props.onUpdated();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  return (
+    <span className="row small">
+      <button type="button" className="btn btn--ghost" onClick={() => void ack()}>
+        Ack recovery follow-up
+      </button>
+      {msg && <span className="muted">{msg}</span>}
+    </span>
+  );
+}
+
 /** Status and internal notes — never claims repair-order / DMS readiness. */
 export function AppointmentRequestActions(props: {
   appointmentId: string;

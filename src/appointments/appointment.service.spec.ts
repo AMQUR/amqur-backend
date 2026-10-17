@@ -260,6 +260,49 @@ describe('AppointmentService.updateStaff', () => {
       data: { status: 'ACKNOWLEDGED' },
     });
   });
+
+  it('persists missed recovery ack on no-show appointments', async () => {
+    prisma.appointment.findFirst.mockResolvedValue({
+      id: 'appt-1',
+      status: AppointmentStatus.NO_SHOW,
+      type: 'SERVICE',
+      conversationId: null,
+      provenance: { source: 'staff' },
+    });
+    prisma.appointment.update.mockResolvedValue({
+      id: 'appt-1',
+      status: AppointmentStatus.NO_SHOW,
+    });
+    await svc.updateStaff('tenant-1', 'loc-1', 'appt-1', 'user-1', {
+      acknowledgeMissedRecovery: true,
+    });
+    expect(prisma.appointment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'appt-1' },
+        data: expect.objectContaining({
+          provenance: expect.objectContaining({
+            recoveryAcknowledgedAt: expect.any(String),
+            recoveryAckBy: 'staff:user-1',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('rejects recovery ack when appointment is not no-show or cancelled', async () => {
+    prisma.appointment.findFirst.mockResolvedValue({
+      id: 'appt-1',
+      status: AppointmentStatus.CONFIRMED,
+      type: 'SALES',
+      conversationId: null,
+      provenance: null,
+    });
+    await expect(
+      svc.updateStaff('tenant-1', 'loc-1', 'appt-1', 'user-1', {
+        acknowledgeMissedRecovery: true,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
 });
 
 describe('AppointmentService.staffTransition', () => {

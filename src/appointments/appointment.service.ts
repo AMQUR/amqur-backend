@@ -712,6 +712,7 @@ export class AppointmentService {
       notes?: string | null;
       scheduledAt?: string;
       acknowledgeEscalation?: boolean;
+      acknowledgeMissedRecovery?: boolean;
     },
   ): Promise<Appointment> {
     const row = await this.prisma.appointment.findFirst({
@@ -771,10 +772,33 @@ export class AppointmentService {
       }
     }
 
+    if (patch.acknowledgeMissedRecovery) {
+      const status = updated.status;
+      if (status !== 'NO_SHOW' && status !== 'CANCELLED') {
+        throw new BadRequestException(
+          'Recovery ack applies to no-show or cancelled appointments only',
+        );
+      }
+      const prov = {
+        ...((updated.provenance as Record<string, unknown> | null) ?? {}),
+      };
+      updated = await this.prisma.appointment.update({
+        where: { id: row.id },
+        data: {
+          provenance: {
+            ...prov,
+            recoveryAcknowledgedAt: new Date().toISOString(),
+            recoveryAckBy: `staff:${userId}`,
+          },
+        },
+      });
+    }
+
     if (
       notesChanged ||
       (patch.status !== undefined && patch.status !== row.status) ||
-      patch.acknowledgeEscalation
+      patch.acknowledgeEscalation ||
+      patch.acknowledgeMissedRecovery
     ) {
       await this.prisma.auditLog
         .create({
@@ -785,9 +809,10 @@ export class AppointmentService {
             resource: 'Appointment',
             resourceId: row.id,
             metadata: {
-              status: patch.status ?? row.status,
+              status: patch.status ?? updated.status,
               notesUpdated: notesChanged,
               escalationAcknowledged: !!patch.acknowledgeEscalation,
+              missedRecoveryAcknowledged: !!patch.acknowledgeMissedRecovery,
               type: row.type,
             },
           },

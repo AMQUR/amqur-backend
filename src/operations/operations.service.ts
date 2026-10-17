@@ -63,6 +63,42 @@ import { assignableStaffWhere } from '../leads/round-robin';
 
 type Scope = { tenantId: string; locationId: string | null };
 
+/** Rolling window for no-show / cancelled recovery queues (matches missed-opportunity framing). */
+export const MISSED_APPOINTMENT_RECOVERY_WINDOW_MS = 7 * 86_400_000;
+
+export function missedAppointmentRecoveryAcked(
+  provenance: unknown | null | undefined,
+): boolean {
+  if (!provenance || typeof provenance !== 'object') return false;
+  const at = (provenance as { recoveryAcknowledgedAt?: unknown })
+    .recoveryAcknowledgedAt;
+  return typeof at === 'string' && at.length > 0;
+}
+
+export function filterUnackedMissedRecoveries<
+  T extends { provenance?: unknown | null },
+>(rows: T[]): T[] {
+  return rows.filter((r) => !missedAppointmentRecoveryAcked(r.provenance));
+}
+
+export function missedAppointmentRecoveryWhere(
+  base: { tenantId: string; locationId?: string },
+  since: Date,
+): Prisma.AppointmentWhereInput {
+  return {
+    ...base,
+    OR: [
+      { status: 'NO_SHOW', updatedAt: { gte: since } },
+      { status: 'CANCELLED', canceledAt: { gte: since } },
+      {
+        status: 'CANCELLED',
+        canceledAt: null,
+        updatedAt: { gte: since },
+      },
+    ],
+  };
+}
+
 const OPEN_HANDOFF = ['REQUESTED', 'QUEUED', 'ASSIGNED', 'JOINED'];
 const HANDOFF_REASSIGN_ROLES = new Set(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
@@ -732,14 +768,16 @@ export class OperationsService {
           conversationId: true,
         },
       }),
-      this.prisma.appointment.findMany({
-        where: {
-          ...base,
-          status: 'NO_SHOW',
-        },
-        orderBy: { updatedAt: 'desc' },
-        take: 50,
-      }),
+      this.prisma.appointment
+        .findMany({
+          where: missedAppointmentRecoveryWhere(
+            base,
+            new Date(Date.now() - MISSED_APPOINTMENT_RECOVERY_WINDOW_MS),
+          ),
+          orderBy: { updatedAt: 'desc' },
+          take: 100,
+        })
+        .then((rows) => filterUnackedMissedRecoveries(rows).slice(0, 50)),
     ]);
 
     const unanswered = unansweredInbound
@@ -846,9 +884,9 @@ export class OperationsService {
         href: '#/queues',
       },
       {
-        key: 'missed_appointments',
+        key: 'missed_appointment_recovery',
         count: p.missedAppointments?.length ?? 0,
-        href: '#/appointments',
+        href: '#/queues',
       },
       {
         key: 'open_handoffs',

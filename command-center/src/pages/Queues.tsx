@@ -6,6 +6,7 @@ import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 import {
   AppointmentRequestActions,
   FinanceActions,
+  MissedRecoveryActions,
   PartsActions,
   type OpsQueuesPayload,
 } from './opsQueueShared';
@@ -54,13 +55,16 @@ export function Queues({ locationId }: { locationId: string }) {
               </ul>
             )}
           </Card>
-          <Card title={`Missed appointments (${data.prioritized?.missedAppointments.length ?? 0})`}>
-            {!data.prioritized?.missedAppointments.length ? <Empty>None recorded.</Empty> : (
+          <Card title={`Missed appointment recovery (${data.prioritized?.missedAppointments.length ?? 0})`}>
+            {!data.prioritized?.missedAppointments.length ? <Empty>None needing follow-up.</Empty> : (
               <ul className="list">
                 {data.prioritized.missedAppointments.map((a) => (
-                  <li key={a.id}>
-                    <span>{a.type} · {a.requestedDate ?? '—'}</span>
-                    <Badge tone="bad">{a.status}</Badge>
+                  <li key={a.id} className="stack">
+                    <span className="row">
+                      <span>{a.type} · {a.requestedDate ?? '—'}</span>
+                      <Badge tone="bad">{a.status}</Badge>
+                    </span>
+                    <MissedRecoveryActions appointmentId={a.id} locationId={locationId} onUpdated={() => void reload()} />
                   </li>
                 ))}
               </ul>

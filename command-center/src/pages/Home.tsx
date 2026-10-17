@@ -60,7 +60,7 @@ const MISSED_OP_HREF: Record<string, string> = {
   unansweredInbound: '#/inbox',
   aiUncertainReplies: '#/queues',
   overdueLeads: '#/queues',
-  missedAppointments: '#/appointments',
+  missedAppointments: '#/queues',
   partsOpen: '#/parts',
   financeOpen: '#/finance',
   zeroInventoryResults: '#/inventory',

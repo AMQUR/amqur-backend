@@ -4,7 +4,12 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
-import { OperationsService } from './operations.service';
+import {
+  filterUnackedMissedRecoveries,
+  missedAppointmentRecoveryAcked,
+  missedAppointmentRecoveryWhere,
+  OperationsService,
+} from './operations.service';
 
 function spySurveyProviderConnected(
   svc: OperationsService,
@@ -766,7 +771,78 @@ describe('OperationsService.executiveExplain', () => {
   });
 });
 
+describe('missed appointment recovery helpers', () => {
+  it('detects recovery ack in appointment provenance', () => {
+    expect(missedAppointmentRecoveryAcked(null)).toBe(false);
+    expect(
+      missedAppointmentRecoveryAcked({ recoveryAcknowledgedAt: '2026-10-01T00:00:00.000Z' }),
+    ).toBe(true);
+  });
+
+  it('filters acked rows out of the recovery queue', () => {
+    const rows = filterUnackedMissedRecoveries([
+      { id: 'a1', provenance: null },
+      { id: 'a2', provenance: { recoveryAcknowledgedAt: '2026-10-01T00:00:00.000Z' } },
+    ]);
+    expect(rows.map((r) => r.id)).toEqual(['a1']);
+  });
+
+  it('builds prisma where for NO_SHOW and recent CANCELLED', () => {
+    const since = new Date('2026-10-10T00:00:00.000Z');
+    expect(
+      missedAppointmentRecoveryWhere({ tenantId: 'tenant-1', locationId: 'loc-1' }, since),
+    ).toEqual({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      OR: [
+        { status: 'NO_SHOW', updatedAt: { gte: since } },
+        { status: 'CANCELLED', canceledAt: { gte: since } },
+        { status: 'CANCELLED', canceledAt: null, updatedAt: { gte: since } },
+      ],
+    });
+  });
+});
+
 describe('OperationsService.dailyBrief', () => {
+  it('surfaces missed appointment recovery with queues deep link', async () => {
+    const prisma = {
+      appointment: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const svc = makeOperationsService(prisma);
+    jest.spyOn(svc, 'overview').mockResolvedValue({
+      window: '7d',
+      outcomes: { leadsCaptured: 0, confirmedAppointments: 0 },
+      attention: {
+        openHandoffs: 0,
+        appointmentsAwaitingConfirmation: 0,
+        partsOpen: 0,
+        financeOpen: 0,
+      },
+      aiQuality: {
+        inventoryMisses: 0,
+        knowledgeMisses: 0,
+        replyFeedback: { total: 0 },
+      },
+    } as Awaited<ReturnType<OperationsService['overview']>>);
+    jest.spyOn(svc, 'queues').mockResolvedValue({
+      prioritized: {
+        unansweredInbound: [],
+        aiUncertain: [],
+        overdueLeads: [],
+        missedAppointments: [{ id: 'a1' }, { id: 'a2' }],
+      },
+    } as unknown as Awaited<ReturnType<OperationsService['queues']>>);
+    spySurveyProviderConnected(svc, false);
+
+    const r = await svc.dailyBrief({ tenantId: 'tenant-1', locationId: null });
+
+    expect(r.priorities).toContainEqual({
+      key: 'missed_appointment_recovery',
+      count: 2,
+      href: '#/queues',
+    });
+  });
+
   it('surfaces AI miss analytics as brief priorities with deep links', async () => {
     const prisma = {
       appointment: { count: jest.fn().mockResolvedValue(0) },

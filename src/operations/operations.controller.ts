@@ -137,6 +137,8 @@ class AppointmentRequestPatchDto {
   /** ISO instant when confirming; defaults to requestedAt if omitted. */
   @IsOptional() @IsString() @MaxLength(40) scheduledAt?: string;
   @IsOptional() @IsBoolean() acknowledgeEscalation?: boolean;
+  /** Marks no-show / cancelled follow-up as handled — persists on appointment provenance only. */
+  @IsOptional() @IsBoolean() acknowledgeMissedRecovery?: boolean;
 }
 
 const REPLY_FEEDBACK = [
@@ -359,6 +361,7 @@ export class OperationsController {
       notes: b.notes,
       scheduledAt: b.scheduledAt,
       acknowledgeEscalation: b.acknowledgeEscalation,
+      acknowledgeMissedRecovery: b.acknowledgeMissedRecovery,
     });
   }
 
