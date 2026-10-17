@@ -71,6 +71,20 @@ export class DealerGroupsService {
    * Aggregate counts only — no lead/vehicle/conversation payloads.
    * Requires GROUP_VIEWER+ membership (or SUPER_ADMIN).
    */
+  /** Staff reply feedback good-rate from persisted `ai.reply_feedback` analytics events. */
+  private replyFeedbackGoodRate(
+    events: Array<{ properties: unknown }>,
+  ): number | null {
+    if (events.length === 0) return null;
+    let good = 0;
+    for (const row of events) {
+      const label =
+        (row.properties as { label?: string } | null)?.label ?? 'unknown';
+      if (label === 'good_reply') good++;
+    }
+    return Number((good / events.length).toFixed(4));
+  }
+
   async reportingSummary(params: {
     dealerGroupId: string;
     actorUserId: string;
@@ -157,6 +171,8 @@ export class DealerGroupsService {
         creditOffered,
         creditClicked,
         parts,
+        openHandoffs,
+        replyFeedbackEvents,
         liveVehicles,
         staleVehicles,
         syntheticVehicles,
@@ -186,6 +202,20 @@ export class DealerGroupsService {
           },
         }),
         this.prisma.partsInquiry.count({ where: w }),
+        this.prisma.escalation.count({
+          where: {
+            tenantId: t.id,
+            status: { in: ['OPEN', 'ACKNOWLEDGED'] },
+          },
+        }),
+        this.prisma.analyticsEvent.findMany({
+          where: {
+            tenantId: t.id,
+            eventType: 'ai.reply_feedback',
+            occurredAt: { gte: since },
+          },
+          select: { properties: true },
+        }),
         this.prisma.vehicle.count({
           where: {
             tenantId: t.id,
@@ -222,12 +252,14 @@ export class DealerGroupsService {
           creditLinksOffered: creditOffered,
           creditLinksClicked: creditClicked,
           partsInquiries: parts,
+          openHandoffs,
         },
         rates: {
           leadPerConversation: rate(leads, conversations),
           appointmentConfirmation: rate(apptConfirmed, apptRequested),
           handoffDelivery: rate(handoffsNotified, handoffs),
           creditClickThrough: rate(creditClicked, creditOffered),
+          replyFeedbackGoodRate: this.replyFeedbackGoodRate(replyFeedbackEvents),
         },
         inventory: {
           liveVehicles,
@@ -245,6 +277,71 @@ export class DealerGroupsService {
         'Counts of persisted records only. "Appointments confirmed" counts staff/provider confirmations, never requests.',
         'AI operating cost, sales attribution and staff response-time SLAs are not reported: no verified source is connected yet.',
       ],
+    };
+  }
+
+  /**
+   * Per-rooftop operational snapshot (fixed 7d window for flow metrics; open handoffs are current).
+   * Same membership gate as comparison — aggregate counts only.
+   */
+  async rooftopMetrics(params: {
+    dealerGroupId: string;
+    actorUserId: string;
+    isSuperAdmin: boolean;
+  }) {
+    if (!params.isSuperAdmin) {
+      await this.assertMembership(params.actorUserId, params.dealerGroupId);
+    }
+    const since7d = new Date(Date.now() - 7 * 86_400_000);
+    const tenants = await this.prisma.tenant.findMany({
+      where: { dealerGroupId: params.dealerGroupId },
+      select: { id: true, slug: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    const rooftops = [];
+    for (const t of tenants) {
+      const [leads7d, confirmedAppts7d, openHandoffs, replyFeedbackEvents] =
+        await Promise.all([
+          this.prisma.lead.count({
+            where: { tenantId: t.id, createdAt: { gte: since7d } },
+          }),
+          this.prisma.appointment.count({
+            where: {
+              tenantId: t.id,
+              status: 'CONFIRMED',
+              createdAt: { gte: since7d },
+            },
+          }),
+          this.prisma.escalation.count({
+            where: {
+              tenantId: t.id,
+              status: { in: ['OPEN', 'ACKNOWLEDGED'] },
+            },
+          }),
+          this.prisma.analyticsEvent.findMany({
+            where: {
+              tenantId: t.id,
+              eventType: 'ai.reply_feedback',
+              occurredAt: { gte: since7d },
+            },
+            select: { properties: true },
+          }),
+        ]);
+      rooftops.push({
+        tenant: t,
+        leads7d,
+        confirmedAppts7d,
+        openHandoffs,
+        replyFeedbackGoodRate:
+          this.replyFeedbackGoodRate(replyFeedbackEvents),
+      });
+    }
+    return {
+      dealerGroupId: params.dealerGroupId,
+      windowDays: 7,
+      since: since7d.toISOString(),
+      rooftops,
+      note: 'Counts from persisted records only. Open handoffs are escalations in OPEN or ACKNOWLEDGED status.',
     };
   }
 

@@ -26,6 +26,7 @@ const ROWS: Array<[string, string]> = [
   ['creditLinksOffered', 'Credit links offered'],
   ['creditLinksClicked', 'Credit links clicked'],
   ['partsInquiries', 'Parts inquiries'],
+  ['openHandoffs', 'Open handoffs'],
 ];
 const pct = (v: number | null) => (v == null ? '—' : `${Math.round(v * 100)}%`);
 
@@ -76,6 +77,12 @@ export function Group() {
                   <tr>
                     <th scope="row">Handoff delivery rate</th>
                     {cmp.data.stores.map((s) => <td key={s.tenant.id}>{pct(s.rates.handoffDelivery)}</td>)}
+                  </tr>
+                  <tr>
+                    <th scope="row">AI reply feedback (% good)</th>
+                    {cmp.data.stores.map((s) => (
+                      <td key={s.tenant.id}>{pct(s.rates.replyFeedbackGoodRate ?? null)}</td>
+                    ))}
                   </tr>
                   <tr>
                     <th scope="row">Live vehicles (stale)</th>

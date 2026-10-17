@@ -34,6 +34,16 @@ export class DealerGroupsController {
     });
   }
 
+  @Get(':id/rooftops')
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  rooftops(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    return this.groups.rooftopMetrics({
+      dealerGroupId: id,
+      actorUserId: user.sub,
+      isSuperAdmin: user.role === 'SUPER_ADMIN',
+    });
+  }
+
   @Get(':id/comparison')
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
   comparison(
