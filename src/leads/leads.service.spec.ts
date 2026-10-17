@@ -8,6 +8,7 @@ describe('LeadsService.assignManual', () => {
       findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
     },
+    conversation: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     user: { findFirst: jest.fn() },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
@@ -57,6 +58,10 @@ describe('LeadsService.assignManual', () => {
         data: { assignedUserId: 'staff-1' },
       }),
     );
+    expect(prisma.conversation.updateMany).toHaveBeenCalledWith({
+      where: { id: 'conv-1' },
+      data: { assignedUserId: 'staff-1' },
+    });
     expect(prisma.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: 'lead.assign',

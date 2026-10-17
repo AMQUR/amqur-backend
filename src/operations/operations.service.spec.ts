@@ -510,6 +510,7 @@ describe('OperationsService.missedOpportunities', () => {
       window: '7d',
       since: '2026-10-01T00:00:00.000Z',
       aiQuality: { inventoryMisses: 2, knowledgeMisses: 1, replyFeedback: {} },
+      attention: { partsOpen: 3, financeOpen: 2 },
     } as Awaited<ReturnType<OperationsService['overview']>>);
     jest.spyOn(svc, 'queues').mockResolvedValue({
       prioritized: {
@@ -527,6 +528,8 @@ describe('OperationsService.missedOpportunities', () => {
       aiUncertainReplies: 2,
       overdueLeads: 0,
       missedAppointments: 1,
+      partsOpen: 3,
+      financeOpen: 2,
     });
     expect(r.aiMissSignals).toEqual({
       zeroInventoryResults: 2,
@@ -534,9 +537,9 @@ describe('OperationsService.missedOpportunities', () => {
       unansweredInbound: 1,
     });
     expect(r.totals).toEqual({
-      prioritizedQueueItems: 4,
+      prioritizedQueueItems: 9,
       analyticsMissEvents: 3,
-      combinedAttention: 7,
+      combinedAttention: 12,
     });
     expect(r.note).toMatch(/persisted queues and analytics/);
   });

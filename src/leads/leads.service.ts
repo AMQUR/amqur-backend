@@ -101,6 +101,8 @@ export class LeadsService {
       },
     });
 
+    await this.syncConversationAssignee(lead.conversationId, next);
+
     await this.prisma.auditLog
       .create({
         data: {
@@ -119,6 +121,23 @@ export class LeadsService {
       .catch(() => undefined);
 
     return updated;
+  }
+
+  /**
+   * Keep Inbox "Mine" (conversation.assignedUserId) aligned with lead ownership.
+   * Does not pause AI or change handoff — takeover remains explicit.
+   */
+  private async syncConversationAssignee(
+    conversationId: string | null | undefined,
+    assignedUserId: string | null,
+  ) {
+    if (!conversationId) return;
+    await this.prisma.conversation
+      .updateMany({
+        where: { id: conversationId },
+        data: { assignedUserId },
+      })
+      .catch(() => undefined);
   }
 
   list(tenantId: string, opts?: { status?: LeadStatus; take?: number }) {
@@ -252,7 +271,7 @@ export class LeadsService {
       locationId: params.locationId,
     });
 
-    return this.prisma.lead.create({
+    const created = await this.prisma.lead.create({
       data: {
         tenantId: params.tenantId,
         locationId: params.locationId ?? null,
@@ -271,6 +290,10 @@ export class LeadsService {
         assignedUserId,
       },
     });
+    if (assignedUserId) {
+      await this.syncConversationAssignee(conversationDbId, assignedUserId);
+    }
+    return created;
   }
 
   /**
@@ -375,7 +398,7 @@ export class LeadsService {
       tenantId: p.tenantId,
       locationId: p.locationId,
     });
-    return this.prisma.lead.create({
+    const created = await this.prisma.lead.create({
       data: {
         ...data,
         tenantId: p.tenantId,
@@ -386,6 +409,10 @@ export class LeadsService {
         assignedUserId,
       },
     });
+    if (assignedUserId) {
+      await this.syncConversationAssignee(p.conversationId, assignedUserId);
+    }
+    return created;
   }
 
   /**

@@ -824,6 +824,16 @@ export class OperationsService {
         count: overview.attention.appointmentsAwaitingConfirmation,
         href: '#/appointments',
       },
+      {
+        key: 'parts_open',
+        count: overview.attention.partsOpen,
+        href: '#/queues',
+      },
+      {
+        key: 'finance_open',
+        count: overview.attention.financeOpen,
+        href: '#/queues',
+      },
     ].filter((x) => x.count > 0);
 
     const headlines: string[] = [];
@@ -1145,6 +1155,8 @@ export class OperationsService {
       aiUncertainReplies: p.aiUncertain.length,
       overdueLeads: p.overdueLeads.length,
       missedAppointments: p.missedAppointments.length,
+      partsOpen: overview.attention.partsOpen,
+      financeOpen: overview.attention.financeOpen,
     };
     const aiMissSignals = {
       zeroInventoryResults: overview.aiQuality.inventoryMisses,

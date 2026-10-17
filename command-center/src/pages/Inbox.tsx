@@ -128,6 +128,17 @@ function Conversation({
       ),
     [locationId],
   );
+  const copilot = useAsync(
+    () =>
+      api<{
+        recommendedReply?: string;
+        nextBestAction?: string;
+        disclaimer?: string;
+        reviewRequired?: boolean;
+        error?: string;
+      }>(`/copilot/conversations/${id}`),
+    [id],
+  );
   useEffect(() => {
     const t = window.setInterval(() => void d.reload(), 8000);
     return () => window.clearInterval(t);
@@ -233,6 +244,33 @@ function Conversation({
             )}
             {c.summary.nextBestAction && <p className="nba">Next: {c.summary.nextBestAction}</p>}
             {c.lead?.scoreReasons && <p className="muted small">Why: {c.lead.scoreReasons.map((r) => r.signal.replace(/_/g, ' ')).join(', ')}</p>}
+          </Card>
+          <Card title="Staff assist">
+            {copilot.data?.error === 'NOT_FOUND' ? (
+              <p className="muted small">Conversation not found for assist.</p>
+            ) : (
+              <>
+                {copilot.data?.nextBestAction && (
+                  <p className="nba">Suggested next: {copilot.data.nextBestAction}</p>
+                )}
+                {copilot.data?.recommendedReply && (
+                  <p className="small">{copilot.data.recommendedReply}</p>
+                )}
+                {copilot.data?.recommendedReply && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => setText(copilot.data!.recommendedReply!)}
+                  >
+                    Insert draft into reply
+                  </button>
+                )}
+                <p className="muted small">
+                  {copilot.data?.disclaimer ??
+                    'AI suggestions are advisory. Staff must review before sending.'}
+                </p>
+              </>
+            )}
           </Card>
           {c.appointments.length > 0 && (
             <Card title="Appointments">
