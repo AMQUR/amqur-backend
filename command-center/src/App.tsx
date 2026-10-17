@@ -21,11 +21,13 @@ import { Reviews } from './pages/Reviews';
 import { CallQa } from './pages/CallQa';
 import { DocumentSigning } from './pages/DocumentSigning';
 import { TradeValuation } from './pages/TradeValuation';
+import { Leads } from './pages/Leads';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
   { id: 'inbox', label: 'Inbox' },
   { id: 'appointments', label: 'Appointments' },
+  { id: 'leads', label: 'Leads' },
   { id: 'queues', label: 'Service · Parts · Finance' },
   { id: 'knowledge', label: 'Knowledge' },
   { id: 'studio', label: 'Conversation Studio', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
@@ -107,6 +109,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'home' && <Home locationId={locationId} />}
         {route === 'inbox' && <Inbox locationId={locationId} />}
         {route === 'appointments' && <Appointments locationId={locationId} />}
+        {route === 'leads' && <Leads locationId={locationId} />}
         {route === 'queues' && <Queues locationId={locationId} />}
         {route === 'knowledge' && <Knowledge locationId={locationId} />}
         {route === 'studio' && <ConversationStudio locationId={locationId} />}
