@@ -191,6 +191,8 @@ export type JourneyState = {
   /** customer questions we could not answer yet — resolved before pushing a CTA */
   openQuestions: string[];
   recentOpeners: string[];
+  /** How many optional rapport openers were used (daypart/weather); capped by policy. */
+  rapportCount?: number;
   lastReplySig?: string;
   /** last follow-up question asked (key + turn number) — used to avoid nagging */
   lastAsked?: { key: PendingQuestion; turn: number };

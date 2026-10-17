@@ -60,6 +60,19 @@ describe('validateComposedReply', () => {
       }).ok,
     ).toBe(false);
   });
+  it('rejects walls of text and stacked questions', () => {
+    const wall =
+      'Thank you so much for reaching out today. I would be more than happy to help you find the perfect vehicle. We have many options across our inventory and financing team. Please share your budget and preferred time.';
+    expect(validateComposedReply({ ...base, reply: wall }).ok).toBe(false);
+    expect(
+      validateComposedReply({
+        draft: 'We have two matches.',
+        facts: [],
+        customerText: ['wrangler'],
+        reply: 'We have two. What color? What budget?',
+      }).ok,
+    ).toBe(false);
+  });
   it('lets the customer’s own numbers be repeated', () => {
     expect(
       validateComposedReply({

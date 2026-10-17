@@ -25,6 +25,8 @@ describe('FeatureFlagsService', () => {
     expect(f.payments).toBe(false);
     expect(f.chat).toBe(PLATFORM_FEATURE_DEFAULTS.chat);
     expect(f.voiceAi).toBe(false);
+    expect(f.verboseReplies).toBe(false);
+    expect(f.contextualRapport).toBe(false);
   });
 
   it('tenant overrides enable inventory', async () => {

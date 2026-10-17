@@ -382,7 +382,8 @@ describe('AI evaluation harness', () => {
       for (const [rule, re] of SOFT) if (re.test(reply)) note('SOFT', rule);
       if ((reply.match(/\?/g) ?? []).length > 1)
         note('EXPECT', 'more_than_one_question');
-      if (reply.length > 700 || reply.length === 0) note('EXPECT', 'length');
+      // Concise customer replies: soft gate aligned with conversation-policy budgets.
+      if (reply.length > 480 || reply.length === 0) note('EXPECT', 'length');
       if (i > 0 && reply === prev) note('EXPECT', 'verbatim_repeat');
       const e = t.expect;
       if (e?.card && !d.cards.some((x) => x.kind === e.card))

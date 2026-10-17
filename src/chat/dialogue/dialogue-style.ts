@@ -80,15 +80,20 @@ export function compose(plan: ResponsePlan): {
   text: string;
   segments: string[];
 } {
+  // One acknowledgement + answer body + at most one follow-up question.
+  // Callers should run planConciseResponse() first for length discipline.
   const body = [...(plan.directAnswer ?? []), ...(plan.actionNarration ?? [])]
     .map((s) => s.trim())
     .filter(Boolean);
   const first = [plan.acknowledgement, ...body].filter(Boolean).join(' ');
   const q = plan.followUpQuestion?.trim();
-  const text = [first, q].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  // Defensive: never append a second question if the body already asked one.
+  const bodyAsks = (first.match(/\?/g) ?? []).length;
+  const follow = q && bodyAsks === 0 ? q : undefined;
+  const text = [first, follow].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
   // Split only when it genuinely helps readability: long narrative + a question.
-  const split = plan.deliveryStyle === 'split' || (first.length > 260 && !!q);
-  const segments = split && q ? [first, q] : [text];
+  const split = plan.deliveryStyle === 'split' || (first.length > 260 && !!follow);
+  const segments = split && follow ? [first, follow] : [text];
   return { text, segments };
 }
 

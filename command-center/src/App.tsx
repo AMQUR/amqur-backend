@@ -13,6 +13,7 @@ import { Ops } from './pages/Ops';
 import { Security } from './pages/Security';
 import { Group } from './pages/Group';
 import { Spotlights } from './pages/Spotlights';
+import { ConversationStudio } from './pages/ConversationStudio';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -20,6 +21,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'appointments', label: 'Appointments' },
   { id: 'queues', label: 'Service · Parts · Finance' },
   { id: 'knowledge', label: 'Knowledge' },
+  { id: 'studio', label: 'Conversation Studio', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'spotlights', label: 'Spotlights' },
   { id: 'integrations', label: 'Integrations', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'settings', label: 'Rooftop settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
@@ -92,6 +94,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'appointments' && <Appointments locationId={locationId} />}
         {route === 'queues' && <Queues locationId={locationId} />}
         {route === 'knowledge' && <Knowledge locationId={locationId} />}
+        {route === 'studio' && <ConversationStudio locationId={locationId} />}
         {route === 'integrations' && <Integrations />}
         {route === 'settings' && <Settings locationId={locationId} />}
         {route === 'ops' && <Ops />}

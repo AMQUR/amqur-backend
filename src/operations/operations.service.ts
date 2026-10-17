@@ -1125,15 +1125,112 @@ export class OperationsService {
   // ───────────── emergency AI controls (no redeploy)
 
   /**
-   * Store-level emergency switch. `chat:false` stops the assistant for this rooftop (widget
-   * shows the dealership's contact path); `llmDisabled:true` keeps the deterministic concierge
-   * but makes zero language-model calls. Effective on the next message; audited.
+   * Staff teaching signal on an AI reply. Aggregated for Conversation Studio —
+   * never auto-publishes new behavior.
+   */
+  async recordReplyFeedback(
+    scope: Scope,
+    userId: string,
+    input: {
+      conversationId: string;
+      messageId?: string;
+      label: string;
+      note?: string;
+    },
+  ) {
+    const c = await this.prisma.conversation.findFirst({
+      where: {
+        id: input.conversationId,
+        tenantId: scope.tenantId,
+        ...this.loc(scope),
+      },
+      select: { id: true, locationId: true, externalKey: true },
+    });
+    if (!c) throw new NotFoundException('Conversation not found');
+    if (input.messageId) {
+      const m = await this.prisma.message.findFirst({
+        where: {
+          id: input.messageId,
+          conversationId: c.id,
+          role: 'ASSISTANT',
+        },
+        select: { id: true },
+      });
+      if (!m) throw new NotFoundException('Assistant message not found');
+    }
+    await this.prisma.$transaction([
+      this.prisma.analyticsEvent.create({
+        data: {
+          tenantId: scope.tenantId,
+          locationId: c.locationId,
+          eventType: 'ai.reply_feedback',
+          conversationExternalKey: c.externalKey,
+          properties: {
+            label: input.label,
+            messageId: input.messageId ?? null,
+            hasNote: !!input.note,
+          } as Prisma.InputJsonValue,
+        },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          tenantId: scope.tenantId,
+          userId,
+          action: 'ai.reply_feedback',
+          resource: 'Conversation',
+          resourceId: c.id,
+          metadata: {
+            label: input.label,
+            messageId: input.messageId ?? null,
+            note: input.note?.slice(0, 500) ?? null,
+          } as Prisma.InputJsonValue,
+        },
+      }),
+    ]);
+    return { ok: true as const, label: input.label };
+  }
+
+  /**
+   * Conversation Studio read model for a rooftop (effective location flags + policy version).
+   */
+  async getAiControl(tenantId: string, locationId: string) {
+    const loc = await this.prisma.location.findFirst({
+      where: { id: locationId, tenantId },
+      select: { id: true, name: true, featureFlags: true },
+    });
+    if (!loc) throw new NotFoundException('Location not found');
+    const f = (loc.featureFlags ?? {}) as Record<string, unknown>;
+    return {
+      locationId: loc.id,
+      name: loc.name,
+      policyVersion: 'conv-policy-v1-2026-10',
+      composePromptVersion: 'compose-v2-2026-10-short',
+      chat: f.chat !== false,
+      llmDisabled: f.llmDisabled === true,
+      verboseReplies: f.verboseReplies === true,
+      contextualRapport: f.contextualRapport === true,
+      conciseDefault: f.verboseReplies !== true,
+    };
+  }
+
+  /**
+   * Store-level emergency switch + Conversation Studio toggles.
+   * `chat:false` stops the assistant for this rooftop; `llmDisabled:true` keeps the
+   * deterministic concierge but makes zero language-model calls.
+   * `verboseReplies` / `contextualRapport` control reply length and optional rapport.
+   * Effective on the next message; audited.
    */
   async setAiControl(
     tenantId: string,
     locationId: string,
     userId: string,
-    patch: { chat?: boolean; llmDisabled?: boolean; reason: string },
+    patch: {
+      chat?: boolean;
+      llmDisabled?: boolean;
+      verboseReplies?: boolean;
+      contextualRapport?: boolean;
+      reason: string;
+    },
   ) {
     const loc = await this.prisma.location.findFirst({
       where: { id: locationId, tenantId },
@@ -1146,6 +1243,12 @@ export class OperationsService {
       ...(typeof patch.chat === 'boolean' ? { chat: patch.chat } : {}),
       ...(typeof patch.llmDisabled === 'boolean'
         ? { llmDisabled: patch.llmDisabled }
+        : {}),
+      ...(typeof patch.verboseReplies === 'boolean'
+        ? { verboseReplies: patch.verboseReplies }
+        : {}),
+      ...(typeof patch.contextualRapport === 'boolean'
+        ? { contextualRapport: patch.contextualRapport }
         : {}),
     };
     await this.prisma.$transaction([
@@ -1168,6 +1271,8 @@ export class OperationsService {
           metadata: {
             chat: next.chat ?? null,
             llmDisabled: next.llmDisabled ?? null,
+            verboseReplies: next.verboseReplies ?? null,
+            contextualRapport: next.contextualRapport ?? null,
             reason: patch.reason.slice(0, 300),
           } as Prisma.InputJsonValue,
         },
@@ -1177,6 +1282,9 @@ export class OperationsService {
       locationId: loc.id,
       chat: next.chat !== false,
       llmDisabled: next.llmDisabled === true,
+      verboseReplies: next.verboseReplies === true,
+      contextualRapport: next.contextualRapport === true,
+      conciseDefault: next.verboseReplies !== true,
     };
   }
 

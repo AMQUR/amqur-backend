@@ -77,6 +77,17 @@ import {
   tr,
 } from './dialogue/dialogue-style';
 import {
+  chooseReplyWithinBudget,
+  CONVERSATION_POLICY_VERSION,
+  planConciseResponse,
+  type VerbosityMode,
+} from './dialogue/conversation-policy';
+import {
+  decideRapport,
+  DEFAULT_RAPPORT_CONFIG,
+  parseRapportConfig,
+} from './dialogue/contextual-rapport';
+import {
   addDays as addDaysLocal,
   formatClock,
   parseIsoDate,
@@ -6879,6 +6890,39 @@ export class ChatOrchestrator {
         }
       : undefined;
     st.pending = q?.key ?? silentPending ?? 'none';
+    const flags = await this.capabilities.flags(t.tenantId, t.locationId);
+    const verboseReplies = flags.verboseReplies === true;
+    const rapportEnabled = flags.contextualRapport === true;
+
+    // Optional daypart opener (never invents weather/sports; task turns skipped).
+    let rapportPrefix: string | undefined;
+    if (rapportEnabled && !opts.forcedReply && !t.socialPrefix) {
+      const rapport = decideRapport({
+        config: {
+          ...DEFAULT_RAPPORT_CONFIG,
+          ...parseRapportConfig({ enabled: true }),
+          enabled: true,
+        },
+        customerMessage: t.message,
+        isTaskTurn:
+          t.answers.length > 0 ||
+          t.cards.length > 0 ||
+          t.u.intents.some((i) =>
+            /INVENTORY|VEHICLE|PAYMENT|APPOINTMENT|TRADE|SERVICE|PARTS|PRICE|FINANCE|CREDIT/.test(
+              i.intent,
+            ),
+          ),
+        priorRapportCount: st.rapportCount ?? 0,
+        verifiedWeather: t.live?.includes('weather') ? t.live : undefined,
+        verifiedSports: t.live?.includes('sports') ? t.live : undefined,
+        lang: t.lang,
+      });
+      if (rapport.inject && rapport.opener) {
+        rapportPrefix = rapport.opener;
+        st.rapportCount = (st.rapportCount ?? 0) + 1;
+      }
+    }
+
     const ack = chooseAcknowledgement({
       sentiment: t.u.sentiment,
       intents: t.u.intents.map((i) => i.intent),
@@ -6886,20 +6930,49 @@ export class ChatOrchestrator {
       lang: t.lang,
       recentOpeners: st.recentOpeners,
     });
-    const plan = compose({
-      acknowledgement: opts.forcedReply ? undefined : (t.socialPrefix ?? ack),
-      directAnswer: opts.forcedReply ? [opts.forcedReply] : t.answers,
-      actionNarration: opts.forcedReply ? [] : t.narration,
-      followUpQuestion: opts.forcedReply ? undefined : q?.text,
-    });
+    const preserveAll =
+      !!opts.forcedReply ||
+      !!t.lockReply ||
+      t.u.intents.some((i) => i.intent === 'SAFETY_URGENT') ||
+      t.narration.some((n) => /couldn't save that|no pude guardar/.test(n));
+    const planned = planConciseResponse(
+      {
+        acknowledgement: opts.forcedReply
+          ? undefined
+          : (t.socialPrefix ?? rapportPrefix ?? ack),
+        directAnswer: opts.forcedReply ? [opts.forcedReply] : t.answers,
+        actionNarration: opts.forcedReply ? [] : t.narration,
+        followUpQuestion: opts.forcedReply ? undefined : q?.text,
+      },
+      {
+        customerMessage: t.message,
+        verboseRepliesFlag: verboseReplies,
+        intents: t.u.intents.map((i) => i.intent),
+        hasCards: t.cards.length > 0,
+        preserveAll,
+      },
+    );
+    const plan = compose(planned.plan);
+    const verbosityMode: VerbosityMode = planned.verbosityMode;
     let draft =
       plan.text || tr(t.lang, 'How can I help?', '¿En qué le puedo ayudar?');
+    if (!verboseReplies && !preserveAll) {
+      // Deterministic path: keep complete sentences within the concise budget.
+      const budgeted = chooseReplyWithinBudget({
+        draft,
+        mode: verbosityMode,
+      });
+      draft = budgeted.text;
+    }
     if (signature(draft) === st.lastReplySig && !q) {
       // Same question asked again: keep the facts, but don't answer like a recording.
       draft = `${draft} ${tr(t.lang, 'Is there anything else I can help you with?', '¿Hay algo más en lo que le pueda ayudar?')}`;
     } else if (signature(draft) === st.lastReplySig && q) {
       // Re-asking the same thing: never drop the question itself. Say why we're asking again.
-      const said = t.answers.concat(t.narration).join(' ').trim();
+      const said = (planned.plan.directAnswer ?? [])
+        .concat(planned.plan.actionNarration ?? [])
+        .join(' ')
+        .trim();
       draft = said
         ? `${said} ${tr(t.lang, 'Or is there something else I can help with?', '¿O hay algo más en lo que le pueda ayudar?')}`
         : `${tr(t.lang, 'Sorry, I still need one detail —', 'Perdón, aún me falta un dato —')} ${q.text.charAt(0).toLowerCase()}${q.text.slice(1)}`;
@@ -6909,8 +6982,7 @@ export class ChatOrchestrator {
     // draft were produced from tool evidence; anything NEW the model adds is stripped.
     let reply = draft;
     let segments = plan.segments.length ? plan.segments : [draft];
-    const llmOff = !!(await this.capabilities.flags(t.tenantId, t.locationId))
-      .llmDisabled;
+    const llmOff = !!flags.llmDisabled;
     // Handoff/urgent turns are composed too (the validator keeps the honest delivery status);
     // only turns where a tool failed keep the fixed error wording.
     const usePolish =
@@ -6964,12 +7036,43 @@ export class ChatOrchestrator {
         tenantId: t.tenantId,
       });
       if (res.status === 'composed' || res.status === 'repaired') {
-        reply = stripFiller(res.text);
+        const composed = stripFiller(res.text);
+        const picked = chooseReplyWithinBudget({
+          composed,
+          draft,
+          mode: verbosityMode,
+        });
+        reply = picked.text;
         segments = [reply];
         t.languageModel = res.status;
+        if (picked.source === 'draft') {
+          this.metrics.increment('chat.compose.budget_fallback');
+          t.fallbackReason = [
+            t.fallbackReason,
+            'length_budget',
+            CONVERSATION_POLICY_VERSION,
+          ]
+            .filter(Boolean)
+            .join(',');
+        } else {
+          this.metrics.increment('chat.compose.budget_ok');
+        }
       } else if (res.status === 'fallback' && res.reasons[0] !== 'no_model') {
         t.languageModel = 'discarded';
         t.fallbackReason = res.reasons.join(',');
+      }
+    }
+    // Final concise guard on deterministic / fallback path
+    if (!verboseReplies && !preserveAll) {
+      const finalPick = chooseReplyWithinBudget({
+        composed: reply,
+        draft,
+        mode: verbosityMode,
+      });
+      reply = finalPick.text;
+      segments = [reply];
+      if (planned.length.warnings.length) {
+        this.metrics.increment('chat.policy.length_warning');
       }
     }
     if (ack) st.recentOpeners = [...st.recentOpeners, ack].slice(-4);

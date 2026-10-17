@@ -47,7 +47,23 @@ export function validateComposedReply(params: {
   const d = params.draft;
   if (!r) return { ok: false, reasons: ['empty'] };
   if (!/[.!?…)"”’]\s*$/.test(r)) reasons.push('truncated');
-  if (r.length > 1400) reasons.push('too_long');
+  // Concise customer replies: reject walls of text so the orchestrator falls
+  // back to the (policy-tightened) server draft. Detailed asks can still pass
+  // via a higher ceiling when the draft itself is long.
+  const draftLen = d.trim().length;
+  const maxLen = draftLen > 500 ? 900 : 480;
+  if (r.length > maxLen) reasons.push('too_long');
+  const qMarks = (r.replace(/https?:\/\/\S+/gi, '').match(/\?/g) ?? []).length;
+  if (qMarks > 1) reasons.push('multiple_questions');
+  const sentenceApprox = r
+    .replace(/\b(U\.S|U\.K|Inc|Ltd|Dr|Mr|Mrs|Ms)\./gi, (m) =>
+      m.replace(/\./g, ''),
+    )
+    .split(/(?<=[.!?…])\s+/)
+    .filter((s) => s.trim()).length;
+  if (draftLen <= 500 && sentenceApprox > 2) reasons.push('too_many_sentences');
+  if (/\b(i'?d be more than happy|great question|absolutely[!])/i.test(r))
+    reasons.push('banned_filler');
 
   const allowed = new Set(
     [d, ...params.facts, ...params.customerText, params.liveText ?? ''].flatMap(

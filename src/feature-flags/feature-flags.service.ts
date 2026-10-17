@@ -22,6 +22,16 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   chat: true, // widget shell; inventory/payments still gated
   /** Emergency switch: true = no LLM calls at all; deterministic concierge only. */
   llmDisabled: false,
+  /**
+   * Opt into longer customer replies. Default false = concise 1–2 sentence policy.
+   * Tenants that historically relied on longer essays can set this true while migrating.
+   */
+  verboseReplies: false,
+  /**
+   * Optional daypart/weather/sports rapport. Default off; never invents live facts.
+   * Weather/sports still require LiveInfoService verification when enabled.
+   */
+  contextualRapport: false,
   inventory: false,
   payments: false,
   vehicleCompare: false,

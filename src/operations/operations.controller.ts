@@ -72,6 +72,10 @@ class CreditDestinationDto {
 class AiControlDto {
   @IsOptional() @IsBoolean() chat?: boolean;
   @IsOptional() @IsBoolean() llmDisabled?: boolean;
+  /** Opt into longer replies; default platform behavior is concise 1–2 sentences. */
+  @IsOptional() @IsBoolean() verboseReplies?: boolean;
+  /** Optional daypart/rapport; never invents weather/sports. */
+  @IsOptional() @IsBoolean() contextualRapport?: boolean;
   @IsString() @MinLength(3) @MaxLength(300) reason!: string;
 }
 class AppraisalDto {
@@ -88,6 +92,23 @@ class OfferDto {
 class CreditAuthorizeDto {
   @IsIn(CREDIT_LINK_TYPES) linkType!: CreditLinkType;
   @IsString() @MinLength(6) @MaxLength(200) evidenceRef!: string;
+}
+
+const REPLY_FEEDBACK = [
+  'too_long',
+  'sounds_robotic',
+  'wrong_facts',
+  'wrong_question',
+  'good_reply',
+  'needed_human',
+  'unnecessary_weather_sports',
+] as const;
+
+class ReplyFeedbackDto {
+  @IsString() @MinLength(1) @MaxLength(64) conversationId!: string;
+  @IsOptional() @IsString() @MaxLength(64) messageId?: string;
+  @IsIn(REPLY_FEEDBACK) label!: (typeof REPLY_FEEDBACK)[number];
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
 
 const STAFF = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] as const;
@@ -302,6 +323,30 @@ export class OperationsController {
     @Query('email') email?: string,
   ) {
     return this.ops.customerProfile(this.scope(u), { phone, email });
+  }
+
+  /** Staff feedback on an AI reply (Conversation Studio teaching signal). Never auto-publishes. */
+  @Roles(...STAFF)
+  @Post('conversations/:id/reply-feedback')
+  replyFeedback(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: ReplyFeedbackDto,
+  ) {
+    return this.ops.recordReplyFeedback(this.scope(u), u.sub, {
+      conversationId: id,
+      messageId: b.messageId,
+      label: b.label,
+      note: b.note,
+    });
+  }
+
+  /** Conversation Studio + emergency AI controls for a rooftop. */
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('locations/:id/ai-control')
+  getAiControl(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    const s = this.scope(u, undefined, id);
+    return this.ops.getAiControl(s.tenantId, s.locationId ?? id);
   }
 
   /** Emergency kill switch — managers can stop the AI for their rooftop instantly. */
