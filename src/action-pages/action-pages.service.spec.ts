@@ -112,4 +112,76 @@ describe('ActionPagesService', () => {
       ref: 'trade-1',
     });
   });
+
+  it('completePublic routes PARTS_INTAKE to PartsInquiryService', async () => {
+    const token = 'c'.repeat(24);
+    const update = jest.fn().mockResolvedValue({});
+    const partsInquiry = {
+      upsertFromActionPage: jest.fn().mockResolvedValue({ id: 'parts-1' }),
+    };
+    const prisma = {
+      customerActionPage: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce({
+            id: 'p-parts',
+            tenantId: 't1',
+            locationId: 'loc-1',
+            kind: 'PARTS_INTAKE',
+            title: 'Parts request',
+            description: null,
+            formSchema: null,
+            staffMeta: {},
+            status: 'OPEN',
+            expiresAt: new Date(Date.now() + 86_400_000),
+          })
+          .mockResolvedValueOnce({
+            id: 'p-parts',
+            tenantId: 't1',
+            locationId: 'loc-1',
+            conversationId: 'conv-1',
+            leadId: null,
+            kind: 'PARTS_INTAKE',
+            staffMeta: {},
+            status: 'OPEN',
+            expiresAt: new Date(Date.now() + 86_400_000),
+          }),
+        update,
+      },
+      tenant: {
+        findUnique: jest.fn().mockResolvedValue({ name: 'Demo', slug: 'demo' }),
+      },
+      analyticsEvent: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const svc = new ActionPagesService(
+      prisma as never,
+      undefined,
+      undefined,
+      undefined,
+      partsInquiry as never,
+    );
+    const res = await svc.completePublic(token, {
+      partDescription: 'Front wiper blades',
+      vin: '1HGCM82633A004352',
+      name: 'Alex',
+      phone: '555-0100',
+    });
+    expect(res.ok).toBe(true);
+    expect(partsInquiry.upsertFromActionPage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 't1',
+        locationId: 'loc-1',
+        conversationId: 'conv-1',
+        actionPageId: 'p-parts',
+        description: 'Front wiper blades',
+        vin: '1HGCM82633A004352',
+        customer: expect.objectContaining({ name: 'Alex', phone: '555-0100' }),
+      }),
+    );
+    expect(update.mock.calls[0][0].data.staffMeta.domainRouting).toEqual({
+      routed: true,
+      kind: 'PARTS_INTAKE',
+      ref: 'parts-1',
+    });
+  });
 });

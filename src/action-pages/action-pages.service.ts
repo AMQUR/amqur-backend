@@ -11,11 +11,13 @@ import { AppointmentService } from '../appointments/appointment.service';
 import { FinanceRequestService } from '../finance/finance-request.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TradeService } from '../trade/trade.service';
+import { PartsInquiryService } from '../parts/parts-inquiry.service';
 import { parseIsoDate } from '../common/time/zoned-time';
 
 const KINDS = [
   'SCHEDULE',
   'TRADE_INTAKE',
+  'PARTS_INTAKE',
   'DOCUMENT_UPLOAD',
   'FINANCE_INFO',
   'CONTACT_UPDATE',
@@ -50,6 +52,7 @@ export class ActionPagesService {
     @Optional() private readonly appointments?: AppointmentService,
     @Optional() private readonly trade?: TradeService,
     @Optional() private readonly finance?: FinanceRequestService,
+    @Optional() private readonly partsInquiry?: PartsInquiryService,
   ) {}
 
   async create(p: {
@@ -274,6 +277,64 @@ export class ActionPagesService {
           customerPhone: asString(safe.phone) ?? asString(safe.customerPhone),
           customerEmail: asString(safe.email) ?? asString(safe.customerEmail),
           notes: asString(safe.notes),
+        });
+        return { routed: true, kind: row.kind, ref: created.id };
+      }
+      if (row.kind === 'PARTS_INTAKE' && this.partsInquiry) {
+        const description =
+          asString(safe.partDescription) ??
+          asString(safe.description) ??
+          asString(safe.partsDescription) ??
+          asString(safe.suspectedPart) ??
+          asString(safe.notes);
+        if (!description) {
+          return {
+            routed: false,
+            kind: row.kind,
+            reason: 'missing_description',
+          };
+        }
+        const installRaw = (
+          asString(safe.installationRequested) ??
+          asString(safe.install) ??
+          ''
+        ).toLowerCase();
+        const preferredRaw = (
+          asString(safe.preferredAction) ?? ''
+        ).toUpperCase();
+        const preferredAction = (
+          ['INFO', 'QUOTE', 'RESERVE', 'ORDER', 'INSTALL'] as const
+        ).includes(preferredRaw as 'INFO')
+          ? (preferredRaw as 'INFO' | 'QUOTE' | 'RESERVE' | 'ORDER' | 'INSTALL')
+          : installRaw === 'yes' || installRaw === 'true'
+            ? 'INSTALL'
+            : null;
+        const created = await this.partsInquiry.upsertFromActionPage({
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          conversationId: row.conversationId,
+          actionPageId: row.id,
+          description,
+          partNumber: asString(safe.partNumber),
+          suspectedPart:
+            asString(safe.suspectedPart) ?? asString(safe.partName),
+          vin: asString(safe.vin),
+          vehicle: {
+            year: asNumber(safe.year) ?? undefined,
+            make: asString(safe.make) ?? undefined,
+            model: asString(safe.model) ?? undefined,
+          },
+          preferredAction,
+          installationRequested:
+            safe.installationRequested === true ||
+            installRaw === 'yes' ||
+            installRaw === 'true' ||
+            preferredAction === 'INSTALL',
+          customer: {
+            name: asString(safe.name) ?? asString(safe.customerName),
+            phone: asString(safe.phone) ?? asString(safe.customerPhone),
+            email: asString(safe.email) ?? asString(safe.customerEmail),
+          },
         });
         return { routed: true, kind: row.kind, ref: created.id };
       }

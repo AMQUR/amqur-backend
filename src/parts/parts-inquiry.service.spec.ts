@@ -4,6 +4,83 @@ import { PartsInquiryService } from './parts-inquiry.service';
 
 const VALID_VIN = '1HGCM82633A004352';
 
+describe('PartsInquiryService.upsertFromActionPage', () => {
+  const prisma = {
+    partsInquiry: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
+    escalation: {
+      findFirst: jest.fn(),
+      create: jest.fn().mockResolvedValue({ id: 'esc-ap' }),
+    },
+    analyticsEvent: {
+      create: jest.fn().mockResolvedValue({}),
+    },
+  };
+
+  const svc = new PartsInquiryService(prisma as never);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.escalation.findFirst.mockResolvedValue(null);
+  });
+
+  it('creates PENDING_STAFF inquiry and queues PARTS_ADVISOR when conversation linked', async () => {
+    prisma.partsInquiry.findUnique.mockResolvedValue(null);
+    prisma.partsInquiry.create.mockResolvedValue({
+      id: 'pi-ap',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      status: PartsInquiryStatus.PENDING_STAFF,
+      suspectedPart: null,
+      partNumber: 'ABC123',
+      partDescription: 'Oil filter',
+      vin: VALID_VIN,
+    });
+
+    await svc.upsertFromActionPage({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      actionPageId: 'page-1',
+      description: 'Oil filter',
+      partNumber: 'ABC123',
+      vin: VALID_VIN,
+    });
+
+    expect(prisma.partsInquiry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          idempotencyKey: 'action_page:page-1',
+          status: PartsInquiryStatus.PENDING_STAFF,
+          fitmentVerified: false,
+          priceVerified: false,
+          provenance: expect.objectContaining({ source: 'action_page' }),
+        }),
+      }),
+    );
+    expect(prisma.escalation.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns existing row for the same action page idempotency key', async () => {
+    prisma.partsInquiry.findUnique.mockResolvedValue({
+      id: 'pi-existing',
+      status: PartsInquiryStatus.FITMENT_PENDING,
+    });
+
+    const row = await svc.upsertFromActionPage({
+      tenantId: 'tenant-1',
+      actionPageId: 'page-1',
+      description: 'Bulb',
+    });
+
+    expect(row.id).toBe('pi-existing');
+    expect(prisma.partsInquiry.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('PartsInquiryService.notifyPartsAdvisor (via upsertForConversation)', () => {
   const prisma = {
     partsInquiry: {

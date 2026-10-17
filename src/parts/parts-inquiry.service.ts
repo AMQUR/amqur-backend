@@ -73,6 +73,74 @@ export class PartsInquiryService {
     });
   }
 
+  /** Idempotent intake from a completed customer action page (no fitment/price inference). */
+  async upsertFromActionPage(p: {
+    tenantId: string;
+    locationId?: string | null;
+    conversationId?: string | null;
+    actionPageId: string;
+    description: string;
+    partNumber?: string | null;
+    suspectedPart?: string | null;
+    vin?: string | null;
+    vehicle?: { year?: number; make?: string; model?: string } | null;
+    preferredAction?: PartsUpsertInput['preferredAction'];
+    installationRequested?: boolean;
+    customer?: PartsUpsertInput['customer'];
+  }): Promise<PartsInquiry> {
+    const idempotencyKey = `action_page:${p.actionPageId}`;
+    const existing = await this.prisma.partsInquiry.findUnique({
+      where: {
+        tenantId_idempotencyKey: { tenantId: p.tenantId, idempotencyKey },
+      },
+    });
+    if (existing) return existing;
+
+    const vin =
+      p.vin && isValidVinFormat(p.vin.toUpperCase())
+        ? p.vin.toUpperCase()
+        : null;
+    const nextStatus =
+      vin || p.partNumber
+        ? PartsInquiryStatus.PENDING_STAFF
+        : PartsInquiryStatus.FITMENT_PENDING;
+
+    const created = await this.prisma.partsInquiry.create({
+      data: {
+        tenantId: p.tenantId,
+        locationId: p.locationId ?? null,
+        conversationId: p.conversationId ?? null,
+        idempotencyKey,
+        partDescription: p.description.slice(0, 500),
+        suspectedPart: p.suspectedPart ?? null,
+        partNumber: p.partNumber?.slice(0, 40) ?? null,
+        vin,
+        vehicleYear: p.vehicle?.year ?? null,
+        vehicleMake: p.vehicle?.make ?? null,
+        vehicleModel: p.vehicle?.model ?? null,
+        preferredAction: p.preferredAction ?? null,
+        installationRequested: p.installationRequested ?? false,
+        customerName: p.customer?.name ?? null,
+        customerPhone: p.customer?.phone ?? null,
+        customerEmail: p.customer?.email ?? null,
+        status: nextStatus,
+        fitmentVerified: false,
+        availabilityVerified: false,
+        priceVerified: false,
+        etaVerified: false,
+        provenance: {
+          source: 'action_page',
+          actionPageId: p.actionPageId,
+          fitment: 'unverified',
+          providerConfigured: false,
+        },
+      },
+    });
+    if (nextStatus === PartsInquiryStatus.PENDING_STAFF)
+      await this.notifyPartsAdvisor(created).catch(() => undefined);
+    return created;
+  }
+
   /** One open parts inquiry per conversation+part; refined across turns (idempotent). */
   async upsertForConversation(p: PartsUpsertInput): Promise<PartsInquiry> {
     const keyPart = (p.partNumber ?? p.suspectedPart ?? 'general')

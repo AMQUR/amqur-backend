@@ -33,6 +33,7 @@ class CreateActionPageDto {
   @IsIn([
     'SCHEDULE',
     'TRADE_INTAKE',
+    'PARTS_INTAKE',
     'DOCUMENT_UPLOAD',
     'FINANCE_INFO',
     'CONTACT_UPDATE',

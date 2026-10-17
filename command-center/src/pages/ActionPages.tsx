@@ -6,6 +6,7 @@ import { Badge, Card, ErrorNote } from '../ui';
 const KINDS = [
   'SCHEDULE',
   'TRADE_INTAKE',
+  'PARTS_INTAKE',
   'DOCUMENT_UPLOAD',
   'FINANCE_INFO',
   'CONTACT_UPDATE',
