@@ -1,6 +1,93 @@
 import { NotFoundException } from '@nestjs/common';
 import { FinanceRequestService } from './finance-request.service';
 
+describe('FinanceRequestService.notifyFinanceAdvisor (via upsertForConversation)', () => {
+  const prisma = {
+    financeRequest: {
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+    },
+    escalation: {
+      findFirst: jest.fn(),
+      create: jest.fn().mockResolvedValue({ id: 'esc-1' }),
+    },
+    analyticsEvent: {
+      create: jest.fn().mockResolvedValue({}),
+    },
+  };
+
+  const svc = new FinanceRequestService(prisma as never);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.escalation.findFirst.mockResolvedValue(null);
+    prisma.analyticsEvent.create.mockResolvedValue({});
+  });
+
+  it('queues FINANCE_ADVISOR escalation on new finance request', async () => {
+    prisma.financeRequest.findUnique.mockResolvedValue(null);
+    prisma.financeRequest.create.mockResolvedValue({
+      id: 'fr-new',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      vehicleVin: 'DEMOGW25S2OOOOO01',
+      handoffState: 'NONE',
+      aprProvided: null,
+    });
+
+    await svc.upsertForConversation({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      vehicleVin: 'DEMOGW25S2OOOOO01',
+    });
+
+    expect(prisma.escalation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        tenantId: 'tenant-1',
+        conversationId: 'conv-1',
+        reason: 'FINANCE_ADVISOR',
+        metadata: expect.objectContaining({
+          financeRequestId: 'fr-new',
+          aprProvided: false,
+        }),
+      }),
+    });
+    expect(prisma.analyticsEvent.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: 'tenant-1',
+        locationId: 'loc-1',
+        eventType: 'finance.advisor_queued',
+        properties: { financeRequestId: 'fr-new' },
+      },
+    });
+  });
+
+  it('does not duplicate FINANCE_ADVISOR when one is already open', async () => {
+    prisma.financeRequest.findUnique.mockResolvedValue(null);
+    prisma.escalation.findFirst.mockResolvedValue({ id: 'esc-open' });
+    prisma.financeRequest.create.mockResolvedValue({
+      id: 'fr-new',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      vehicleVin: null,
+      handoffState: 'NONE',
+      aprProvided: null,
+    });
+
+    await svc.upsertForConversation({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+    });
+
+    expect(prisma.escalation.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('FinanceRequestService.updateStaff', () => {
   const prisma = {
     financeRequest: {

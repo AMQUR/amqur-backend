@@ -39,7 +39,7 @@ export class FinanceRequestService {
     customerEmail?: string | null;
     notes?: string | null;
   }) {
-    return this.prisma.financeRequest.create({
+    const created = await this.prisma.financeRequest.create({
       data: {
         tenantId: params.tenantId,
         locationId: params.locationId ?? null,
@@ -59,6 +59,8 @@ export class FinanceRequestService {
         status: FinanceRequestStatus.REQUESTED,
       },
     });
+    await this.notifyFinanceAdvisor(created).catch(() => undefined);
+    return created;
   }
 
   /**
@@ -89,13 +91,23 @@ export class FinanceRequestService {
     if (p.handoffState) data.handoffState = p.handoffState;
     if (existing) {
       if (Object.keys(data).length === 0) return existing;
-      return this.prisma.financeRequest.update({
+      const updated = await this.prisma.financeRequest.update({
         where: { id: existing.id },
         data,
       });
+      const handoffNew =
+        p.handoffState === 'REQUESTED' || p.handoffState === 'QUEUED';
+      const handoffWas =
+        existing.handoffState === 'REQUESTED' ||
+        existing.handoffState === 'QUEUED' ||
+        existing.handoffState === 'ASSIGNED';
+      if (handoffNew && !handoffWas) {
+        await this.notifyFinanceAdvisor(updated).catch(() => undefined);
+      }
+      return updated;
     }
     try {
-      return await this.prisma.financeRequest.create({
+      const created = await this.prisma.financeRequest.create({
         data: {
           ...(data as Record<string, unknown>),
           tenantId: p.tenantId,
@@ -106,6 +118,8 @@ export class FinanceRequestService {
           provenance: { source: 'chat', aprPolicy: 'customer_only' },
         },
       });
+      await this.notifyFinanceAdvisor(created).catch(() => undefined);
+      return created;
     } catch (e: unknown) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -186,6 +200,49 @@ export class FinanceRequestService {
       })
       .catch(() => undefined);
     return updated;
+  }
+
+  /**
+   * Queue a finance advisor escalation when chat captures a finance request.
+   * Never states approval, APR, or lender terms — staff must respond.
+   */
+  private async notifyFinanceAdvisor(row: FinanceRequest) {
+    if (!row.conversationId) return;
+    const open = await this.prisma.escalation.findFirst({
+      where: {
+        tenantId: row.tenantId,
+        conversationId: row.conversationId,
+        status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
+        reason: 'FINANCE_ADVISOR',
+      },
+    });
+    if (open) return;
+    const vehicle = row.vehicleVin ? ` VIN ${row.vehicleVin}` : '';
+    await this.prisma.escalation.create({
+      data: {
+        tenantId: row.tenantId,
+        locationId: row.locationId,
+        conversationId: row.conversationId,
+        reason: 'FINANCE_ADVISOR',
+        urgency: 'NORMAL',
+        summary: `Finance request needs staff review${vehicle}`.slice(0, 280),
+        metadata: {
+          financeRequestId: row.id,
+          handoffState: row.handoffState ?? 'NONE',
+          aprProvided: row.aprProvided != null,
+        },
+      },
+    });
+    await this.prisma.analyticsEvent
+      .create({
+        data: {
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          eventType: 'finance.advisor_queued',
+          properties: { financeRequestId: row.id },
+        },
+      })
+      .catch(() => null);
   }
 }
 
