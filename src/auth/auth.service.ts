@@ -10,7 +10,22 @@ import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
+import { SecretVaultService } from '../integrations/core/secret-vault.service';
+import { generateSecret, otpauthUri, verifyTotp } from './totp';
+
+/** Roles that must complete MFA before using staff APIs (env STAFF_MFA_REQUIRED_ROLES). */
+export function mfaRequiredRoles(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const raw = env.STAFF_MFA_REQUIRED_ROLES;
+  if (raw !== undefined)
+    return raw
+      .split(',')
+      .map((r) => r.trim())
+      .filter(Boolean);
+  return env.NODE_ENV === 'production' ? ['SUPER_ADMIN', 'ADMIN'] : [];
+}
 
 type SafeUser = {
   id: string;
@@ -30,6 +45,7 @@ export class AuthService {
     private prisma: PrismaService,
     private jwt: JwtService,
     private config: ConfigService,
+    private vault: SecretVaultService,
   ) {}
 
   private sanitizeUser(user: {
@@ -48,12 +64,15 @@ export class AuthService {
     return safeUser;
   }
 
-  private buildAccessToken(user: {
-    id: string;
-    tenantId: string;
-    locationId: string | null;
-    role: Role;
-  }) {
+  private buildAccessToken(
+    user: {
+      id: string;
+      tenantId: string;
+      locationId: string | null;
+      role: Role;
+    },
+    amr: string[] = ['pwd'],
+  ) {
     const expiresIn = this.config.get<string>('JWT_EXPIRES_IN') ?? '15m';
     return this.jwt.sign(
       {
@@ -62,6 +81,7 @@ export class AuthService {
         locationId: user.locationId,
         role: user.role,
         typ: 'access',
+        amr,
       },
       {
         // Nest JWT typings expect ms.StringValue; env strings like "15m" are valid at runtime
@@ -92,16 +112,20 @@ export class AuthService {
     return raw;
   }
 
-  private async tokensFor(user: {
-    id: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    role: Role;
-    tenantId: string;
-    locationId: string | null;
-  }) {
-    const access_token = this.buildAccessToken(user);
+  private async tokensFor(
+    user: {
+      id: string;
+      email: string;
+      firstName: string;
+      lastName: string;
+      role: Role;
+      tenantId: string;
+      locationId: string | null;
+      mfaEnabled?: boolean;
+    },
+    amr: string[] = ['pwd'],
+  ) {
+    const access_token = this.buildAccessToken(user, amr);
     const refresh_token = await this.issueRefreshToken(user.id);
     return {
       access_token,
@@ -109,6 +133,8 @@ export class AuthService {
       token_type: 'Bearer',
       expires_in: this.config.get<string>('JWT_EXPIRES_IN') ?? '15m',
       user: this.sanitizeUser(user),
+      mfa_enrollment_required:
+        !user.mfaEnabled && mfaRequiredRoles().includes(user.role),
     };
   }
 
@@ -273,16 +299,7 @@ export class AuthService {
       if (!passwordValid) {
         throw new UnauthorizedException('Invalid credentials');
       }
-      await this.prisma.auditLog.create({
-        data: {
-          tenantId: user.tenantId,
-          userId: user.id,
-          action: 'auth.login',
-          resource: 'User',
-          resourceId: user.id,
-        },
-      });
-      return this.tokensFor(user);
+      return this.completePasswordLogin(user);
     }
 
     const matches = await this.prisma.user.findMany({
@@ -309,6 +326,100 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    return this.completePasswordLogin(user);
+  }
+
+  /** Password verified. MFA-enrolled users get a short-lived challenge instead of tokens. */
+  private async completePasswordLogin(user: Prisma.UserGetPayload<object>) {
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: user.tenantId,
+        userId: user.id,
+        action: user.mfaEnabled
+          ? 'auth.login.password_ok_mfa_pending'
+          : 'auth.login',
+        resource: 'User',
+        resourceId: user.id,
+      },
+    });
+    if (user.mfaEnabled) {
+      const mfa_token = this.jwt.sign(
+        { sub: user.id, typ: 'mfa_challenge' },
+        { expiresIn: '5m' },
+      );
+      return { mfa_required: true, mfa_token };
+    }
+    return this.tokensFor(user, ['pwd']);
+  }
+
+  private hashRecovery(code: string): string {
+    return crypto
+      .createHash('sha256')
+      .update(`amqur-recovery:${code.replace(/[\s-]/g, '').toLowerCase()}`)
+      .digest('hex');
+  }
+
+  async verifyMfa(mfaToken: string, code: string) {
+    let payload: { sub?: string; typ?: string };
+    try {
+      payload = await this.jwt.verifyAsync(mfaToken);
+    } catch {
+      throw new UnauthorizedException('MFA challenge expired — sign in again');
+    }
+    if (payload.typ !== 'mfa_challenge' || !payload.sub)
+      throw new UnauthorizedException('Invalid MFA challenge');
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.sub },
+    });
+    if (!user || !user.isActive || !user.mfaEnabled || !user.mfaSecretEnc)
+      throw new UnauthorizedException('Invalid MFA challenge');
+    const secret = this.vault.decrypt(
+      user.mfaSecretEnc as { ciphertext: string; iv: string; authTag: string },
+    );
+    const counter = verifyTotp(secret, code.trim());
+    if (counter !== null) {
+      // Replay protection: a code (time step) can be used once.
+      const res = await this.prisma.user.updateMany({
+        where: {
+          id: user.id,
+          OR: [{ mfaLastCounter: null }, { mfaLastCounter: { lt: counter } }],
+        },
+        data: { mfaLastCounter: counter },
+      });
+      if (res.count === 0)
+        throw new UnauthorizedException(
+          'Code already used — wait for the next one',
+        );
+    } else {
+      const h = this.hashRecovery(code);
+      if (!user.mfaRecoveryHashes.includes(h)) {
+        await this.prisma.auditLog.create({
+          data: {
+            tenantId: user.tenantId,
+            userId: user.id,
+            action: 'auth.mfa.failed',
+            resource: 'User',
+            resourceId: user.id,
+          },
+        });
+        throw new UnauthorizedException('Invalid code');
+      }
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          mfaRecoveryHashes: user.mfaRecoveryHashes.filter((x) => x !== h),
+        },
+      });
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId: user.tenantId,
+          userId: user.id,
+          action: 'auth.mfa.recovery_code_used',
+          resource: 'User',
+          resourceId: user.id,
+        },
+      });
+    }
     await this.prisma.auditLog.create({
       data: {
         tenantId: user.tenantId,
@@ -316,10 +427,148 @@ export class AuthService {
         action: 'auth.login',
         resource: 'User',
         resourceId: user.id,
+        metadata: { amr: ['pwd', 'otp'] },
       },
     });
+    return this.tokensFor(user, ['pwd', 'otp']);
+  }
 
-    return this.tokensFor(user);
+  async setupMfa(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    if (!this.vault.isReady())
+      throw new ForbiddenException(
+        'MFA unavailable: INTEGRATION_ENCRYPTION_KEY not configured',
+      );
+    const secret = generateSecret();
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        mfaPendingSecretEnc: this.vault.encrypt(
+          secret,
+        ) as unknown as Prisma.InputJsonValue,
+      },
+    });
+    const issuer =
+      this.config.get<string>('MFA_ISSUER') ?? 'AMQUR Command Center';
+    return {
+      secret,
+      otpauthUri: otpauthUri({ secret, account: user.email, issuer }),
+    };
+  }
+
+  async confirmMfa(userId: string, code: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    if (!user.mfaPendingSecretEnc)
+      throw new ForbiddenException('Start MFA setup first');
+    const secret = this.vault.decrypt(
+      user.mfaPendingSecretEnc as {
+        ciphertext: string;
+        iv: string;
+        authTag: string;
+      },
+    );
+    const counter = verifyTotp(secret, code.trim());
+    if (counter === null) throw new UnauthorizedException('Invalid code');
+    const recovery = Array.from({ length: 8 }, () =>
+      crypto
+        .randomBytes(5)
+        .toString('hex')
+        .replace(/(.{5})/, '$1-'),
+    );
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: {
+        mfaEnabled: true,
+        mfaSecretEnc: user.mfaPendingSecretEnc as Prisma.InputJsonValue,
+        mfaPendingSecretEnc: Prisma.DbNull,
+        mfaLastCounter: counter,
+        mfaEnrolledAt: new Date(),
+        mfaRecoveryHashes: recovery.map((r) => this.hashRecovery(r)),
+      },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: user.tenantId,
+        userId,
+        action: 'auth.mfa.enrolled',
+        resource: 'User',
+        resourceId: userId,
+      },
+    });
+    // Recovery codes are shown ONCE; only hashes are stored.
+    return {
+      enabled: true,
+      recoveryCodes: recovery,
+      ...(await this.tokensFor({ ...user, mfaEnabled: true }, ['pwd', 'otp'])),
+    };
+  }
+
+  /** Revoke every refresh token (all devices). Access tokens expire within JWT_EXPIRES_IN (≤15m). */
+  async logoutAll(userId: string) {
+    const res = await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { tenantId: true },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: user?.tenantId ?? null,
+        userId,
+        action: 'auth.logout_all',
+        resource: 'User',
+        resourceId: userId,
+        metadata: { revoked: res.count },
+      },
+    });
+    return { ok: true, revokedSessions: res.count };
+  }
+
+  /** Admin reset of another user's MFA (lost device) — audited; user must re-enroll. */
+  async resetMfa(
+    actor: { sub: string; tenantId: string; role: string },
+    targetUserId: string,
+  ) {
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+    });
+    if (
+      !target ||
+      (actor.role !== 'SUPER_ADMIN' && target.tenantId !== actor.tenantId)
+    )
+      throw new ForbiddenException('User not found');
+    if (target.role === 'SUPER_ADMIN' && actor.role !== 'SUPER_ADMIN')
+      throw new ForbiddenException('Cannot reset a super admin');
+    await this.prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        mfaEnabled: false,
+        mfaSecretEnc: Prisma.DbNull,
+        mfaPendingSecretEnc: Prisma.DbNull,
+        mfaRecoveryHashes: [],
+        mfaLastCounter: null,
+      },
+    });
+    await this.prisma.refreshToken.updateMany({
+      where: { userId: targetUserId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: target.tenantId,
+        userId: actor.sub,
+        action: 'auth.mfa.reset',
+        resource: 'User',
+        resourceId: targetUserId,
+      },
+    });
+    return { ok: true };
   }
 
   async refresh(rawRefreshToken: string) {
@@ -343,7 +592,11 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    return this.tokensFor(stored.user);
+    // Refresh tokens for MFA-enrolled users are only ever issued after an OTP step.
+    return this.tokensFor(
+      stored.user,
+      stored.user.mfaEnabled ? ['pwd', 'otp'] : ['pwd'],
+    );
   }
 
   async logout(rawRefreshToken: string) {

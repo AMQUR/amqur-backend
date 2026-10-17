@@ -29,12 +29,21 @@
     "start:worker": "node dist/worker.js",
     "seed:staging-pilot": "ts-node --transpile-only scripts/seed-staging-pilot.ts",
     "onboard:dealership": "ts-node --transpile-only scripts/onboard-dealership.ts",
-    "test:all:local": "npm run test:infra:reset && set -a && . ./test-infra/.env.test && set +a && npx prisma migrate deploy && npm run typecheck && npm test && npm run test:cov && npm run test:e2e:platform && npm run build"
+    "test:all:local": "npm run test:infra:reset && set -a && . ./test-infra/.env.test && set +a && npx prisma migrate deploy && npm run typecheck && npm test && npm run test:cov && npm run test:e2e:platform && npm run build",
+    "build:cc": "npm --prefix command-center ci --no-audit --no-fund && npm --prefix command-center run build",
+    "build:all": "npm run build && npm run build:cc",
+    "credit:destination": "ts-node --transpile-only scripts/credit-destination.ts",
+    "seed:local-demo": "ts-node --transpile-only scripts/seed-local-demo.ts",
+    "start:local-demo": "bash scripts/start-local-demo.sh",
+    "test:simulator": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=simulator",
+    "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",
+    "ai:check": "ts-node --transpile-only scripts/ai-check.ts",
+    "eval:live-model": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=live-model"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/sdk": "^0.133.0",
     "@nestjs/axios": "^4.0.1",
-    "@nestjs/common": "^11.0.1",
+    "@nestjs/common": "^11.2.7",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.0.1",
     "@nestjs/jwt": "^11.0.2",
@@ -48,7 +57,7 @@
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
-    "csv-parse": "^6.1.0",
+    "csv-parse": "^7.0.3",
     "fast-xml-parser": "^5.3.3",
     "googleapis": "^170.1.0",
     "ioredis": "^5.11.1",
@@ -62,7 +71,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@nestjs/cli": "^11.0.0",
-    "@nestjs/testing": "^11.0.1",
+    "@nestjs/testing": "^11.2.7",
     "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.0",
     "@types/jest": "^30.0.0",
@@ -81,5 +90,8 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.64.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
   }
 }

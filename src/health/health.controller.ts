@@ -28,6 +28,14 @@ export class HealthController {
         : 'down'
       : 'not_configured';
 
+    // Presence only (never the key): lets smoke tests see whether real AI can run here.
+    // Validity is checked with `npm run ai:check` / GET /api/ops/ai/status.
+    const llm =
+      process.env.ANTHROPIC_API_KEY?.trim() ||
+      process.env.OPENAI_API_KEY?.trim()
+        ? 'configured'
+        : 'missing';
+
     // Ready requires DB. Redis outage degrades cache but must not block readiness.
     const ok = database === 'up';
     if (!ok) {
@@ -48,6 +56,7 @@ export class HealthController {
       checks: {
         database,
         redis,
+        llm,
         timestamp: new Date().toISOString(),
       },
     };

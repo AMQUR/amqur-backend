@@ -1,0 +1,22 @@
+{
+  "generatedAt": "2026-10-17T06:05:35.562Z",
+  "cases": 84,
+  "taskSuccess": 1,
+  "p0": 0,
+  "failures": [
+    {
+      "store": "infiniti",
+      "say": "nah not interested",
+      "kind": "decline",
+      "ok": true,
+      "findings": [
+        {
+          "severity": "P2",
+          "rule": "task_decline:pushy_after_decline",
+          "detail": "nah not interested → For the 2025 INFINITI Q50 LUXE at $46,780, you're looking at roughly $818 a month with nothing down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer. Want "
+        }
+      ],
+      "reply": "For the 2025 INFINITI Q50 LUXE at $46,780, you're looking at roughly $818 a month with nothing down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer. Want to adjust the down payment or term?"
+    }
+  ]
+}

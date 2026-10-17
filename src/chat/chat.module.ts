@@ -1,37 +1,25 @@
 import { Module } from '@nestjs/common';
-
 import { ChatOrchestrator } from './chat.orchestrator';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { PaymentModule } from '../payment/payment.module';
-
 import { InventoryEngine } from './engines/inventory.engine';
-import { PaymentEngine } from './engines/payment.engine';
-
-import { ConversationStore } from './memory/conversation.store';
-
-import { FilterExtractor } from './filter-extractor';
-import { LeadExtractor } from './lead-extractor';
-import { AppointmentExtractor } from './appointment-extractor';
-import { VinExtractor } from './vin-extractor';
-import { CompareExtractor } from './compare-extractor';
-
-import { CrmWebhookService } from './crm-webhook.service';
-import { PhotoEnrichmentService } from './engines/photo-enrichment.service';
+import { JourneyStore } from './memory/journey.store';
 import { AuthModule } from '../auth/auth.module';
 import { VinDecoderService } from './vin/vin-decoder.service';
-import { GoogleCalendarService } from './calendar/google-calendar.service';
-import { PaymentExplainer } from './payment-explainer';
-import { MediaEngine } from './media/media.engine';
-import { IntelligentRouter } from './intelligence/intelligent.router';
-import { IntelligentService } from './intelligence/intelligent.service';
-import { VinExplainerService } from './vin/vin-explainer.service';
-import { FollowupEngine } from './followup/followup.engine';
 import { ClaudeConversationService } from './claude/claude-conversation.service';
+import { ConversationComposerService } from './compose/conversation-composer.service';
+import { LiveInfoService } from '../live-info/live-info.service';
 import { EscalationsModule } from '../escalations/escalations.module';
 import { LeadsModule } from '../leads/leads.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { TradeModule } from '../trade/trade.module';
+import { PartsModule } from '../parts/parts.module';
+import { KnowledgeModule } from '../knowledge/knowledge.module';
+import { IntegrationsModule } from '../integrations/integrations.module';
+import { ConversationIdService } from './conversation-id.service';
+import { PlaybookService } from './playbooks/playbook.service';
+import { PlaybooksController } from './playbooks/playbooks.controller';
 
 @Module({
   imports: [
@@ -41,44 +29,30 @@ import { TradeModule } from '../trade/trade.module';
     LeadsModule,
     AnalyticsModule,
     TradeModule,
+    PartsModule,
+    KnowledgeModule,
+    IntegrationsModule,
   ],
-  controllers: [ChatController],
+  controllers: [ChatController, PlaybooksController],
   providers: [
-    // orchestrator
     ChatOrchestrator,
     ChatService,
-    FollowupEngine,
-
-    // engines
     InventoryEngine,
-    PaymentEngine,
-    PaymentExplainer,
-    MediaEngine,
-    IntelligentRouter,
-    IntelligentService,
+    JourneyStore,
     ClaudeConversationService,
-
-    // memory
-    ConversationStore,
-
-    // extractors
-    FilterExtractor,
-    LeadExtractor,
-    AppointmentExtractor,
-    VinExtractor,
-    CompareExtractor,
-
-    // integrations
-    CrmWebhookService,
-    PhotoEnrichmentService,
-
-    // VIN decoding
+    ConversationComposerService,
+    LiveInfoService,
     VinDecoderService,
-    VinExplainerService,
-
-    // calendar (E6.7)
-    GoogleCalendarService,
+    ConversationIdService,
+    PlaybookService,
   ],
-  exports: [ChatOrchestrator, CrmWebhookService],
+  exports: [
+    ChatOrchestrator,
+    InventoryEngine,
+    JourneyStore,
+    ClaudeConversationService,
+    ConversationIdService,
+    PlaybookService,
+  ],
 })
 export class ChatModule {}

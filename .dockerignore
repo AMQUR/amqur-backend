@@ -12,3 +12,5 @@ coverage
 .DS_Store
 docs/**/*.pdf
 npm-debug.log*
+command-center/node_modules
+command-center/dist

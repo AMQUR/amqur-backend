@@ -1,3 +1,5 @@
+import { ExperimentsModule } from './experiments/experiments.module';
+import { SpotlightsModule } from './spotlights/spotlights.module';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 
 import { ConfigModule } from '@nestjs/config';
@@ -27,7 +29,7 @@ import { IntegrationsModule } from './integrations/integrations.module';
 import { AiModule } from './ai/ai.module';
 import { SavedVehiclesModule } from './saved-vehicles/saved-vehicles.module';
 import { PartsModule } from './parts/parts.module';
-import { FollowUpModule } from './follow-up/follow-up.module';
+import { MessagingModule } from './messaging/messaging.module';
 import { CopilotModule } from './copilot/copilot.module';
 import { CapabilityModule } from './capability/capability.module';
 import { CacheModule } from './cache/cache.module';
@@ -38,8 +40,15 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { TradeModule } from './trade/trade.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { VoiceModule } from './voice/voice.module';
-import { ChannelsModule } from './channels/channels.module';
 import { FinanceModule } from './finance/finance.module';
+import { AppointmentsModule } from './appointments/appointments.module';
+import { OperationsModule } from './operations/operations.module';
+import { PrivacyModule } from './privacy/privacy.module';
+import { ActionPagesModule } from './action-pages/action-pages.module';
+import { DealsModule } from './deals/deals.module';
+import { ReviewsModule } from './reviews/reviews.module';
+import { DocumentsModule } from './documents/documents.module';
+import { SurveysModule } from './surveys/surveys.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -47,6 +56,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
 @Module({
   imports: [
+    SpotlightsModule,
+    ExperimentsModule,
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
@@ -92,7 +103,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     ObservabilityModule,
     SavedVehiclesModule,
     PartsModule,
-    FollowUpModule,
+    MessagingModule,
     CopilotModule,
     ChatModule,
     InventoryModule,
@@ -103,8 +114,15 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     TradeModule,
     UploadsModule,
     VoiceModule,
-    ChannelsModule,
     FinanceModule,
+    AppointmentsModule,
+    OperationsModule,
+    PrivacyModule,
+    ActionPagesModule,
+    DealsModule,
+    ReviewsModule,
+    DocumentsModule,
+    SurveysModule,
   ],
 
   providers: [

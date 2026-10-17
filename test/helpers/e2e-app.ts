@@ -34,6 +34,10 @@ export async function createE2eApp(): Promise<E2eCtx> {
     new ResponseInterceptor(),
   );
   await app.init();
+  // Listen once on IPv4 loopback. Otherwise supertest binds a new ephemeral port per request
+  // on "::" and connects via 127.0.0.1 — on macOS that can reach another local process that
+  // owns the same IPv4 port (observed: stray 401/404 bodies from an unrelated service).
+  await app.listen(0, '127.0.0.1');
   const prisma = app.get(PrismaService);
   return { app, prisma };
 }

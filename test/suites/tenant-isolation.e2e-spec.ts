@@ -171,21 +171,42 @@ describe('Tenant isolation attack suite', () => {
     expect(raw).not.toMatch(/stock.?beta001|nissan rogue.*\$32990/);
   });
 
-  it('saved vehicles stay tenant scoped', async () => {
+  // Updated 2026-10-13: saved vehicles are bound to the server-issued signed conversation id;
+  // arbitrary client keys (previously accepted) are rejected.
+  it('saved vehicles stay tenant + conversation scoped', async () => {
+    const chat = await request(ctx.app.getHttpServer())
+      .post('/api/chat')
+      .set('Authorization', `Bearer ${alphaWidget}`)
+      .send({ message: 'hi' });
+    const convId = unwrap<{ conversationId: string }>(chat.body).conversationId;
+    expect(convId).toMatch(/^cv1\./);
+
     await request(ctx.app.getHttpServer())
       .post('/api/saved-vehicles')
       .set('Authorization', `Bearer ${alphaWidget}`)
-      .send({ vin: '1C4RJFBG0MC100001', conversationExternalKey: 'iso-save-a' })
+      .send({ vin: '1C4RJFBG0MC100001', conversationId: convId })
       .expect((r) => expect([200, 201]).toContain(r.status));
 
+    const own = await request(ctx.app.getHttpServer())
+      .get('/api/saved-vehicles')
+      .set('Authorization', `Bearer ${alphaWidget}`)
+      .query({ conversationId: convId });
+    expect(JSON.stringify(own.body)).toContain('1C4RJFBG0MC100001');
+
+    // forged / guessable key → rejected
+    const forged = await request(ctx.app.getHttpServer())
+      .get('/api/saved-vehicles')
+      .set('Authorization', `Bearer ${alphaWidget}`)
+      .query({ conversationId: 'iso-save-a' });
+    expect(forged.status).toBe(403);
+
+    // another tenant's widget cannot read it even with the real id
     const betaList = await request(ctx.app.getHttpServer())
       .get('/api/saved-vehicles')
       .set('Authorization', `Bearer ${betaWidget}`)
-      .query({ conversationExternalKey: 'iso-save-a' });
-    // 200 empty or 404 — never alpha VIN
-    if (betaList.status === 200) {
-      expect(JSON.stringify(betaList.body)).not.toContain('1C4RJFBG0MC100001');
-    }
+      .query({ conversationId: convId });
+    expect(betaList.status).toBe(403);
+    expect(JSON.stringify(betaList.body)).not.toContain('1C4RJFBG0MC100001');
   });
 
   it('group reporting denies tenant admin without membership', async () => {

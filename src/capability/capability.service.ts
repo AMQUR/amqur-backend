@@ -10,7 +10,11 @@ export type CapabilityName =
   | 'parts'
   | 'handoff'
   | 'vehicleCompare'
-  | 'savedVehicles';
+  | 'savedVehicles'
+  | 'appointments'
+  | 'leadCapture'
+  | 'knowledge'
+  | 'sms';
 
 export type CapabilityResult = {
   allowed: boolean;
@@ -26,15 +30,20 @@ export type CapabilityResult = {
 export class CapabilityService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly flags: FeatureFlagsService,
+    private readonly flags_: FeatureFlagsService,
   ) {}
+
+  /** Raw effective flags (for non-capability switches such as llmDisabled). */
+  flags(tenantId: string, locationId: string | null | undefined) {
+    return this.flags_.resolve(tenantId, locationId);
+  }
 
   async check(
     tenantId: string,
     locationId: string | null | undefined,
     capability: CapabilityName,
   ): Promise<CapabilityResult> {
-    const f = await this.flags.resolve(tenantId, locationId);
+    const f = await this.flags_.resolve(tenantId, locationId);
     const unavailable = (
       reason: string,
       customerMessage: string,
@@ -134,6 +143,43 @@ export class CapabilityService {
         }
         return { allowed: true };
 
+      case 'appointments':
+        // Appointment REQUESTS (never confirmations) — explicit opt-in per dealership.
+        if (f.appointments !== true) {
+          return unavailable(
+            'appointments_flag_off',
+            'I can’t take appointment requests here yet. I can connect you with a team member instead.',
+          );
+        }
+        return { allowed: true };
+
+      case 'leadCapture':
+        if (f.leadCapture !== true) {
+          return unavailable(
+            'lead_capture_off',
+            'I can’t record contact requests here right now. Please call the dealership.',
+          );
+        }
+        return { allowed: true };
+
+      case 'knowledge':
+        if (f.knowledge !== true) {
+          return unavailable(
+            'knowledge_flag_off',
+            'I don’t have the dealership’s policy documents available here.',
+          );
+        }
+        return { allowed: true };
+
+      case 'sms':
+        if (f.sms !== true) {
+          return unavailable(
+            'sms_flag_off',
+            'Texting isn’t available from this chat yet.',
+          );
+        }
+        return { allowed: true };
+
       default:
         return unavailable('unknown', 'That feature is unavailable.');
     }
@@ -158,6 +204,10 @@ export class CapabilityService {
         tenantId,
         ...(locationId ? { locationId } : {}),
         status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
+        // Synthetic demo fixtures never make production inventory "ready".
+        ...(process.env.NODE_ENV === 'production'
+          ? { NOT: { source: 'synthetic_demo' } }
+          : {}),
       },
     });
 
@@ -168,6 +218,9 @@ export class CapabilityService {
           ...(locationId ? { locationId } : {}),
           status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
           freshnessState: { in: ['FRESH', 'DEGRADED'] },
+          ...(process.env.NODE_ENV === 'production'
+            ? { NOT: { source: 'synthetic_demo' } }
+            : {}),
         },
       });
       if (fresh > 0) return { ok: true, reason: 'vehicles_present' };

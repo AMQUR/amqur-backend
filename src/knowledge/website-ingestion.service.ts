@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { safeFetchText } from '../common/security/safe-fetch';
 import { assertFeedUrlAllowed } from '../common/security/feed-url.guard';
 import { KnowledgeIngestionService } from './knowledge-ingestion.service';
 import {
@@ -50,27 +51,22 @@ export class WebsiteIngestionService {
       throw new BadRequestException('URL path is outside allowlisted prefix');
     }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
-    let html: string;
-    try {
-      const res = await fetch(parsed.toString(), {
-        method: 'GET',
-        redirect: 'follow',
-        signal: controller.signal,
-        headers: { 'User-Agent': 'AMQUR-KnowledgeBot/1.0 (+dealership-kb)' },
-      });
-      if (!res.ok) {
-        throw new BadRequestException(`Fetch failed with HTTP ${res.status}`);
+    const validate = (u: URL) => {
+      assertFeedUrlAllowed(u.toString());
+      if (u.hostname.toLowerCase() !== host) {
+        throw new BadRequestException('Redirect left the allowlisted host');
       }
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.byteLength > MAX_HTML_BYTES) {
-        throw new BadRequestException('Page exceeds size limit');
+      if (allowed.pathPrefix && !u.pathname.startsWith(allowed.pathPrefix)) {
+        throw new BadRequestException('URL path is outside allowlisted prefix');
       }
-      html = buf.toString('utf8');
-    } finally {
-      clearTimeout(timer);
-    }
+    };
+    const fetched = await safeFetchText(parsed.toString(), {
+      validate,
+      maxBytes: MAX_HTML_BYTES,
+      timeoutMs: 15_000,
+      userAgent: 'AMQUR-KnowledgeBot/1.0 (+dealership-kb)',
+    });
+    const html = fetched.text;
 
     const text = this.sanitizeHtmlToText(html);
     if (text.trim().length < 40) {

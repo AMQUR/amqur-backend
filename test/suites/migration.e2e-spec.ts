@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { PrismaClient } from '@prisma/client';
+import { IntegrationProvider, PrismaClient } from '@prisma/client';
 import * as path from 'path';
 
 /**
@@ -117,15 +117,9 @@ describe('DB migration & integrity (disposable Postgres)', () => {
           status: 'OPEN',
         },
       });
-    // App-level dedupe is in EscalationsService; DB allows multiple — document that
-    const a = await mk();
-    const b = await mk();
-    expect(a.id).not.toBe(b.id);
-    const open = await prisma.escalation.count({
-      where: { tenantId: t.id, conversationId: conv.id, status: 'OPEN' },
-    });
-    expect(open).toBeGreaterThanOrEqual(2);
-    // Service-level dedupe covered in unit/e2e handoff tests
+    await mk();
+    // DB partial unique index; app-level dedupe remains in EscalationsService
+    await expect(mk()).rejects.toThrow();
   });
 
   it('FK: location requires valid tenant', async () => {
@@ -164,5 +158,197 @@ describe('DB migration & integrity (disposable Postgres)', () => {
     expect(first.id).toBe(second.id);
     expect(second.name).toBe('Idem Two');
     expect(second.configVersion).toBeGreaterThanOrEqual(2);
+  });
+
+  it('ConversationPlaybook unique on (tenantId, locationScope, key, version)', async () => {
+    const t = await prisma.tenant.create({
+      data: { slug: `pb-${Date.now()}`, name: 'Playbook T' },
+    });
+    const base = {
+      tenantId: t.id,
+      locationScope: '_',
+      key: 'sales-first-response',
+      title: 'Sales first touch',
+    };
+    await prisma.conversationPlaybook.create({ data: { ...base, version: 1 } });
+    await expect(
+      prisma.conversationPlaybook.create({ data: { ...base, version: 1 } }),
+    ).rejects.toThrow();
+    await prisma.conversationPlaybook.create({ data: { ...base, version: 2 } });
+    const rows = await prisma.conversationPlaybook.count({
+      where: { tenantId: t.id, key: base.key },
+    });
+    expect(rows).toBe(2);
+  });
+
+  it('FK: ConversationPlaybook requires valid tenant', async () => {
+    await expect(
+      prisma.conversationPlaybook.create({
+        data: {
+          tenantId: 'nonexistent-tenant-id',
+          key: 'orphan',
+          title: 'Orphan',
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('CustomerActionPage tokenHash unique', async () => {
+    const t = await prisma.tenant.create({
+      data: { slug: `cap-${Date.now()}`, name: 'Action Page T' },
+    });
+    const hash = `tok-${Date.now()}`;
+    await prisma.customerActionPage.create({
+      data: {
+        tenantId: t.id,
+        kind: 'SCHEDULE',
+        title: 'Book a visit',
+        tokenHash: hash,
+      },
+    });
+    await expect(
+      prisma.customerActionPage.create({
+        data: {
+          tenantId: t.id,
+          kind: 'SCHEDULE',
+          title: 'Duplicate token',
+          tokenHash: hash,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('Location.messagingPolicy persists JSON quiet-hours config', async () => {
+    const t = await prisma.tenant.create({
+      data: { slug: `msg-pol-${Date.now()}`, name: 'Msg Pol T' },
+    });
+    const policy = {
+      quietStart: '21:00',
+      quietEnd: '08:00',
+      maxMarketingPer24h: 2,
+    };
+    const loc = await prisma.location.create({
+      data: {
+        tenantId: t.id,
+        slug: 'main',
+        name: 'Main',
+        messagingPolicy: policy,
+      },
+    });
+    const loaded = await prisma.location.findUniqueOrThrow({
+      where: { id: loc.id },
+      select: { messagingPolicy: true },
+    });
+    expect(loaded.messagingPolicy).toEqual(policy);
+    const col = await prisma.$queryRaw<Array<{ column_name: string }>>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'Location'
+        AND column_name = 'messagingPolicy'
+    `;
+    expect(col).toHaveLength(1);
+  });
+
+  it('IntegrationProvider enum includes META (IntegrationConnection + WebhookInbox)', async () => {
+    const enumRows = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
+      SELECT e.enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON e.enumtypid = t.oid
+      WHERE t.typname = 'IntegrationProvider'
+        AND e.enumlabel = 'META'
+    `;
+    expect(enumRows.map((r) => r.enumlabel)).toContain('META');
+
+    const t = await prisma.tenant.create({
+      data: { slug: `meta-${Date.now()}`, name: 'Meta T' },
+    });
+    const integration = await prisma.integrationConnection.create({
+      data: {
+        tenantId: t.id,
+        provider: IntegrationProvider.META,
+        capability: 'messaging',
+      },
+    });
+    expect(integration.provider).toBe(IntegrationProvider.META);
+
+    const inbox = await prisma.webhookInbox.create({
+      data: {
+        tenantId: t.id,
+        provider: IntegrationProvider.META,
+        externalEventId: `leadgen-${Date.now()}`,
+        signatureValid: true,
+        payload: { object: 'page', entry: [] },
+      },
+    });
+    expect(inbox.provider).toBe(IntegrationProvider.META);
+  });
+
+  it('Escalation_conversationId_active_key partial unique index exists', async () => {
+    const rows = await prisma.$queryRaw<Array<{ indexname: string }>>`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname = 'Escalation_conversationId_active_key'
+    `;
+    expect(rows).toHaveLength(1);
+  });
+
+  it('CustomerSurvey table + status enum exist; draft create works', async () => {
+    const enumRows = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
+      SELECT e.enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON e.enumtypid = t.oid
+      WHERE t.typname = 'CustomerSurveyStatus'
+        AND e.enumlabel = 'DRAFT'
+    `;
+    expect(enumRows.map((r) => r.enumlabel)).toContain('DRAFT');
+
+    const t = await prisma.tenant.create({
+      data: { slug: `csi-${Date.now()}`, name: 'CSI T' },
+    });
+    const survey = await prisma.customerSurvey.create({
+      data: {
+        tenantId: t.id,
+        channel: 'LINK',
+        status: 'DRAFT',
+      },
+    });
+    expect(survey.status).toBe('DRAFT');
+    expect(survey.score).toBeNull();
+  });
+
+  it('CustomerSurvey retention columns + template table exist', async () => {
+    const kindEnum = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
+      SELECT e.enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON e.enumtypid = t.oid
+      WHERE t.typname = 'CustomerSurveyKind'
+        AND e.enumlabel = 'SERVICE'
+    `;
+    expect(kindEnum.map((r) => r.enumlabel)).toContain('SERVICE');
+
+    const t = await prisma.tenant.create({
+      data: { slug: `csi-ret-${Date.now()}`, name: 'CSI Ret' },
+    });
+    const tpl = await prisma.customerSurveyTemplate.create({
+      data: {
+        tenantId: t.id,
+        kind: 'SERVICE',
+        name: `Service talk track ${Date.now()}`,
+        scriptBody: 'Ask about the service visit and advisor care.',
+        defaultChannel: 'IN_PERSON',
+      },
+    });
+    const survey = await prisma.customerSurvey.create({
+      data: {
+        tenantId: t.id,
+        kind: 'SERVICE',
+        templateId: tpl.id,
+        channel: 'IN_PERSON',
+        status: 'DRAFT',
+        followUpStatus: 'NONE',
+      },
+    });
+    expect(survey.kind).toBe('SERVICE');
+    expect(survey.templateId).toBe(tpl.id);
   });
 });

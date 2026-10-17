@@ -9,24 +9,34 @@ import { InventoryIngestionService } from './vauto/inventory-ingestion.service';
 import { TekionCrmWritebackService } from './tekion/tekion-crm-writeback.service';
 import { IntegrationsHealthController } from './integrations-health.controller';
 import { WebhookInboxService } from './core/webhook-inbox.service';
+import { MetaLeadsWebhookController } from './meta/meta-leads-webhook.controller';
+import { MetaLeadsWebhookService } from './meta/meta-leads-webhook.service';
 import { InventoryFeedModule } from '../inventory-feed/inventory-feed.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { NormalizedInventoryHttpProvider } from './normalized-inventory/normalized-inventory-http.provider';
+import { CrmSyncService } from './crm/crm-sync.service';
+import { LeadsModule } from '../leads/leads.module';
+import { MetaGraphLeadClientService } from './meta/meta-graph-lead.client';
+import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
 
 @Module({
-  imports: [InventoryFeedModule, InventoryModule],
-  controllers: [IntegrationsHealthController],
+  imports: [InventoryFeedModule, InventoryModule, LeadsModule],
+  controllers: [IntegrationsHealthController, MetaLeadsWebhookController],
   providers: [
     SecretVaultService,
     CircuitBreakerService,
     OutboxService,
     OutboxProcessorService,
     WebhookInboxService,
+    MetaLeadsWebhookService,
+    MetaGraphLeadClientService,
+    MetaLeadsInboxProcessor,
     TekionProvider,
     VAutoFeedProvider,
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
     TekionCrmWritebackService,
+    CrmSyncService,
   ],
   exports: [
     SecretVaultService,
@@ -39,6 +49,8 @@ import { NormalizedInventoryHttpProvider } from './normalized-inventory/normaliz
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
     TekionCrmWritebackService,
+    CrmSyncService,
+    MetaLeadsInboxProcessor,
   ],
 })
 export class IntegrationsModule {}

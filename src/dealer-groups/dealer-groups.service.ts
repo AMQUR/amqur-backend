@@ -71,6 +71,20 @@ export class DealerGroupsService {
    * Aggregate counts only — no lead/vehicle/conversation payloads.
    * Requires GROUP_VIEWER+ membership (or SUPER_ADMIN).
    */
+  /** Staff reply feedback good-rate from persisted `ai.reply_feedback` analytics events. */
+  private replyFeedbackGoodRate(
+    events: Array<{ properties: unknown }>,
+  ): number | null {
+    if (events.length === 0) return null;
+    let good = 0;
+    for (const row of events) {
+      const label =
+        (row.properties as { label?: string } | null)?.label ?? 'unknown';
+      if (label === 'good_reply') good++;
+    }
+    return Number((good / events.length).toFixed(4));
+  }
+
   async reportingSummary(params: {
     dealerGroupId: string;
     actorUserId: string;
@@ -113,6 +127,242 @@ export class DealerGroupsService {
         counts: t._count,
       })),
       note: 'Group reporting is aggregate counts only. Cross-tenant record access is denied.',
+    };
+  }
+
+  /**
+   * All-store comparison over a window. Every number is a direct count of persisted records —
+   * no modeled, projected or estimated figures. Rates are computed only from those counts and
+   * reported as null when the denominator is zero.
+   */
+  async comparison(params: {
+    dealerGroupId: string;
+    actorUserId: string;
+    isSuperAdmin: boolean;
+    days: number;
+  }) {
+    if (!params.isSuperAdmin) {
+      await this.assertMembership(params.actorUserId, params.dealerGroupId);
+    }
+    const days = Math.min(Math.max(Math.round(params.days) || 7, 1), 90);
+    const since = new Date(Date.now() - days * 86_400_000);
+    const tenants = await this.prisma.tenant.findMany({
+      where: { dealerGroupId: params.dealerGroupId },
+      select: { id: true, slug: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    const rate = (n: number, d: number) =>
+      d > 0 ? Number((n / d).toFixed(4)) : null;
+    const stores: Array<{
+      tenant: { id: string; slug: string; name: string };
+      counts: Record<string, number>;
+      rates: {
+        leadPerConversation: number | null;
+        appointmentConfirmation: number | null;
+        handoffDelivery: number | null;
+        creditClickThrough: number | null;
+        replyFeedbackGoodRate: number | null;
+      };
+      inventory: {
+        liveVehicles: number;
+        staleVehicles: number;
+        syntheticFixturesPresent: boolean;
+      };
+    }> = [];
+    for (const t of tenants) {
+      const w = { tenantId: t.id, createdAt: { gte: since } };
+      const [
+        conversations,
+        leads,
+        hotLeads,
+        apptRequested,
+        apptConfirmed,
+        handoffs,
+        handoffsNotified,
+        quotes,
+        trades,
+        tradeOffers,
+        finance,
+        creditOffered,
+        creditClicked,
+        parts,
+        openHandoffs,
+        replyFeedbackEvents,
+        liveVehicles,
+        staleVehicles,
+        syntheticVehicles,
+      ] = await Promise.all([
+        this.prisma.conversation.count({ where: w }),
+        this.prisma.lead.count({ where: w }),
+        this.prisma.lead.count({ where: { ...w, stage: 'HOT' } }),
+        this.prisma.appointment.count({ where: w }),
+        this.prisma.appointment.count({ where: { ...w, status: 'CONFIRMED' } }),
+        this.prisma.escalation.count({ where: w }),
+        this.prisma.escalation.count({
+          where: { ...w, notifiedAt: { not: null } },
+        }),
+        this.prisma.priceQuoteRequest.count({ where: w }),
+        this.prisma.tradeRequest.count({ where: w }),
+        this.prisma.tradeAppraisal.count({
+          where: { ...w, kind: 'FINAL_OFFER' },
+        }),
+        this.prisma.financeRequest.count({ where: w }),
+        this.prisma.financeRequest.count({
+          where: { ...w, creditLinkState: { not: 'NONE' } },
+        }),
+        this.prisma.financeRequest.count({
+          where: {
+            ...w,
+            creditLinkState: { in: ['CLICKED', 'COMPLETED_VERIFIED'] },
+          },
+        }),
+        this.prisma.partsInquiry.count({ where: w }),
+        this.prisma.escalation.count({
+          where: {
+            tenantId: t.id,
+            status: { in: ['OPEN', 'ACKNOWLEDGED'] },
+          },
+        }),
+        this.prisma.analyticsEvent.findMany({
+          where: {
+            tenantId: t.id,
+            eventType: 'ai.reply_feedback',
+            occurredAt: { gte: since },
+          },
+          select: { properties: true },
+        }),
+        this.prisma.vehicle.count({
+          where: {
+            tenantId: t.id,
+            status: { in: ['AVAILABLE', 'IN_TRANSIT'] },
+            NOT: { source: 'synthetic_demo' },
+          },
+        }),
+        this.prisma.vehicle.count({
+          where: {
+            tenantId: t.id,
+            status: { in: ['AVAILABLE', 'IN_TRANSIT'] },
+            freshnessState: { in: ['STALE', 'UNAVAILABLE'] },
+            NOT: { source: 'synthetic_demo' },
+          },
+        }),
+        this.prisma.vehicle.count({
+          where: { tenantId: t.id, source: 'synthetic_demo' },
+        }),
+      ]);
+      stores.push({
+        tenant: t,
+        counts: {
+          conversations,
+          leads,
+          hotLeads,
+          appointmentRequests: apptRequested,
+          appointmentsConfirmed: apptConfirmed,
+          handoffs,
+          handoffsNotified,
+          otdQuoteRequests: quotes,
+          tradeRequests: trades,
+          tradeOffersIssued: tradeOffers,
+          financeRequests: finance,
+          creditLinksOffered: creditOffered,
+          creditLinksClicked: creditClicked,
+          partsInquiries: parts,
+          openHandoffs,
+        },
+        rates: {
+          leadPerConversation: rate(leads, conversations),
+          appointmentConfirmation: rate(apptConfirmed, apptRequested),
+          handoffDelivery: rate(handoffsNotified, handoffs),
+          creditClickThrough: rate(creditClicked, creditOffered),
+          replyFeedbackGoodRate:
+            this.replyFeedbackGoodRate(replyFeedbackEvents),
+        },
+        inventory: {
+          liveVehicles,
+          staleVehicles,
+          syntheticFixturesPresent: syntheticVehicles > 0,
+        },
+      });
+    }
+    return {
+      dealerGroupId: params.dealerGroupId,
+      windowDays: days,
+      since: since.toISOString(),
+      stores,
+      notes: [
+        'Counts of persisted records only. "Appointments confirmed" counts staff/provider confirmations, never requests.',
+        'AI operating cost, sales attribution and staff response-time SLAs are not reported: no verified source is connected yet.',
+      ],
+    };
+  }
+
+  /**
+   * Per-rooftop operational snapshot (fixed 7d window for flow metrics; open handoffs are current).
+   * Same membership gate as comparison — aggregate counts only.
+   */
+  async rooftopMetrics(params: {
+    dealerGroupId: string;
+    actorUserId: string;
+    isSuperAdmin: boolean;
+  }) {
+    if (!params.isSuperAdmin) {
+      await this.assertMembership(params.actorUserId, params.dealerGroupId);
+    }
+    const since7d = new Date(Date.now() - 7 * 86_400_000);
+    const tenants = await this.prisma.tenant.findMany({
+      where: { dealerGroupId: params.dealerGroupId },
+      select: { id: true, slug: true, name: true },
+      orderBy: { name: 'asc' },
+    });
+    const rooftops: Array<{
+      tenant: { id: string; slug: string; name: string };
+      leads7d: number;
+      confirmedAppts7d: number;
+      openHandoffs: number;
+      replyFeedbackGoodRate: number | null;
+    }> = [];
+    for (const t of tenants) {
+      const [leads7d, confirmedAppts7d, openHandoffs, replyFeedbackEvents] =
+        await Promise.all([
+          this.prisma.lead.count({
+            where: { tenantId: t.id, createdAt: { gte: since7d } },
+          }),
+          this.prisma.appointment.count({
+            where: {
+              tenantId: t.id,
+              status: 'CONFIRMED',
+              createdAt: { gte: since7d },
+            },
+          }),
+          this.prisma.escalation.count({
+            where: {
+              tenantId: t.id,
+              status: { in: ['OPEN', 'ACKNOWLEDGED'] },
+            },
+          }),
+          this.prisma.analyticsEvent.findMany({
+            where: {
+              tenantId: t.id,
+              eventType: 'ai.reply_feedback',
+              occurredAt: { gte: since7d },
+            },
+            select: { properties: true },
+          }),
+        ]);
+      rooftops.push({
+        tenant: t,
+        leads7d,
+        confirmedAppts7d,
+        openHandoffs,
+        replyFeedbackGoodRate: this.replyFeedbackGoodRate(replyFeedbackEvents),
+      });
+    }
+    return {
+      dealerGroupId: params.dealerGroupId,
+      windowDays: 7,
+      since: since7d.toISOString(),
+      rooftops,
+      note: 'Counts from persisted records only. Open handoffs are escalations in OPEN or ACKNOWLEDGED status.',
     };
   }
 

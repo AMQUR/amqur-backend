@@ -8,7 +8,7 @@ import {
 } from '../common/decorators/current-user.decorator';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import { nextBestAction } from '../leads/next-best-action';
+import { labelForNba, nextBestAction } from '../leads/next-best-action';
 
 /**
  * Staff co-pilot: reviewable suggestions only — never auto-sends as the staff member.
@@ -38,14 +38,16 @@ export class CopilotController {
 
     const lead = conversation.leads[0] ?? null;
     const nba = lead
-      ? nextBestAction({
-          score: lead.score,
-          interestedVin: lead.interestedVin,
-          email: lead.email,
-          phone: lead.phone,
-          financingNeeded: lead.financingNeeded,
-          stage: lead.stage,
-        })
+      ? labelForNba(
+          nextBestAction({
+            score: lead.score,
+            interestedVin: lead.interestedVin,
+            email: lead.email,
+            phone: lead.phone,
+            financingNeeded: lead.financingNeeded,
+            stage: lead.stage,
+          }),
+        )
       : 'Review conversation and offer assistance';
 
     const recent = [...conversation.messages].reverse();

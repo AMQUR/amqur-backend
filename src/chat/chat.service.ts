@@ -1,16 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { ChatOrchestrator } from './chat.orchestrator';
+import type { PageContextDto } from './dto/chat.dto';
 
 @Injectable()
 export class ChatService {
   constructor(private readonly orchestrator: ChatOrchestrator) {}
 
-  async chat(input: {
+  chat(input: {
     message: string;
     action?: string;
     vin?: string;
-    conversationId?: string;
-
+    language?: string;
+    pageContext?: PageContextDto;
     tenantId: string;
     locationId?: string | null;
     userId: string;
@@ -20,10 +21,10 @@ export class ChatService {
       message: input.message,
       action: input.action,
       vin: input.vin,
-      conversationId: input.conversationId,
-
+      language: input.language,
+      pageContext: input.pageContext,
       tenantId: input.tenantId,
-      locationId: input.locationId ?? undefined,
+      locationId: input.locationId ?? null,
       userId: input.userId,
       role: input.role,
     });

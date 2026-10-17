@@ -55,14 +55,70 @@ describe('JwtAuthGuard widget-secret selection', () => {
   });
 
   it('still verifies staff tokens with JWT_SECRET when widget secret is set', async () => {
+    // Real staff tokens always carry typ=access (see AuthService.buildAccessToken).
     const staffToken = jwt.sign({
       sub: 'user-1',
       role: 'ADMIN',
       tenantId: 't1',
+      typ: 'access',
     });
     await expect(
       guard(WIDGET_SECRET).canActivate(contextFor(staffToken)),
     ).resolves.toBe(true);
+  });
+
+  it('rejects MFA challenge tokens and untyped tokens as API credentials', async () => {
+    for (const typ of ['mfa_challenge', undefined]) {
+      const t = jwt.sign({
+        sub: 'user-1',
+        role: 'ADMIN',
+        tenantId: 't1',
+        ...(typ ? { typ } : {}),
+      });
+      await expect(
+        guard(WIDGET_SECRET).canActivate(contextFor(t)),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+    }
+  });
+
+  it('roles requiring MFA cannot use staff APIs until an OTP step is completed', async () => {
+    const prev = process.env.STAFF_MFA_REQUIRED_ROLES;
+    process.env.STAFF_MFA_REQUIRED_ROLES = 'ADMIN';
+    try {
+      const pwdOnly = jwt.sign({
+        sub: 'u',
+        role: 'ADMIN',
+        tenantId: 't1',
+        typ: 'access',
+        amr: ['pwd'],
+      });
+      await expect(
+        guard(WIDGET_SECRET).canActivate(contextFor(pwdOnly)),
+      ).rejects.toThrow('mfa_enrollment_required');
+      const withOtp = jwt.sign({
+        sub: 'u',
+        role: 'ADMIN',
+        tenantId: 't1',
+        typ: 'access',
+        amr: ['pwd', 'otp'],
+      });
+      await expect(
+        guard(WIDGET_SECRET).canActivate(contextFor(withOtp)),
+      ).resolves.toBe(true);
+      const staff = jwt.sign({
+        sub: 'u',
+        role: 'STAFF',
+        tenantId: 't1',
+        typ: 'access',
+        amr: ['pwd'],
+      });
+      await expect(
+        guard(WIDGET_SECRET).canActivate(contextFor(staff)),
+      ).resolves.toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.STAFF_MFA_REQUIRED_ROLES;
+      else process.env.STAFF_MFA_REQUIRED_ROLES = prev;
+    }
   });
 
   it('a forged typ=widget claim cannot make a bad signature pass', async () => {

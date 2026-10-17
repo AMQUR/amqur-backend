@@ -14,9 +14,7 @@ export const envValidationSchema = Joi.object({
   JWT_REFRESH_EXPIRES_IN: Joi.string().default('7d'),
 
   ANTHROPIC_API_KEY: Joi.string().optional().allow(''),
-  ANTHROPIC_MODEL: Joi.string()
-    .optional()
-    .default('claude-3-5-sonnet-20241022'),
+  ANTHROPIC_MODEL: Joi.string().optional().default('claude-sonnet-5-5'),
   ANTHROPIC_TIMEOUT_MS: Joi.number()
     .optional()
     .default(25000)
@@ -33,9 +31,46 @@ export const envValidationSchema = Joi.object({
     .max(120000),
 
   CRM_WEBHOOK_URL: Joi.string().uri().optional().allow(''),
+  /** HMAC-SHA256 signing secret for outbound CRM webhooks (x-amqur-signature). */
+  CRM_WEBHOOK_SIGNING_SECRET: Joi.string().min(16).optional().allow(''),
 
-  /** Comma-separated CORS origins. Empty = reflect request origin (dev only). */
-  CORS_ORIGINS: Joi.string().optional().allow('').default(''),
+  /** anthropic | openai — primary LLM; the other (if configured) is the fallback. */
+  LLM_PRIMARY_PROVIDER: Joi.string()
+    .valid('anthropic', 'openai')
+    .optional()
+    .default('anthropic'),
+
+  /** LLM spend/load controls (see llm-router.service.ts). Unset budget → 2,000,000 tokens/day. */
+  LLM_DAILY_TOKEN_BUDGET: Joi.number().integer().min(1000).optional(),
+  LLM_MAX_CONCURRENCY: Joi.number().integer().min(1).max(200).optional(),
+  LLM_COST_INPUT_PER_MTOK: Joi.number().min(0).optional(),
+  LLM_COST_OUTPUT_PER_MTOK: Joi.number().min(0).optional(),
+  /** Dollar caps per UTC day (group-wide / per tenant). A cap needs both prices above — an
+   *  unpriced cap is rejected here, and the router fails closed if it ever sees one. */
+  LLM_DAILY_BUDGET_USD: Joi.number().greater(0).optional(),
+  LLM_TENANT_DAILY_BUDGET_USD: Joi.number().greater(0).optional(),
+
+  /** Comma-separated staff roles that must complete TOTP MFA (production default SUPER_ADMIN,ADMIN). */
+  STAFF_MFA_REQUIRED_ROLES: Joi.string().optional().allow(''),
+  MFA_ISSUER: Joi.string().optional().default('AMQUR Command Center'),
+
+  /** Dedicated secrets (fall back to domain-separated derivations of JWT_SECRET). */
+  CONVERSATION_ID_SECRET: Joi.string().min(32).optional().allow(''),
+  CREDIT_LINK_SIGNING_SECRET: Joi.string().min(32).optional().allow(''),
+
+  /** local (dev/test only) | s3 — production uploads fail closed while local. */
+  UPLOAD_STORAGE: Joi.string().valid('local', 's3').optional().default('local'),
+  UPLOAD_TENANT_QUOTA_BYTES: Joi.number().integer().min(1).optional(),
+
+  /** Test-only override for the Twilio REST host; ignored in production. */
+  TWILIO_API_BASE: Joi.string().uri().optional().allow(''),
+
+  /** Comma-separated CORS origins. Empty = reflect request origin (dev only). REQUIRED in production. */
+  CORS_ORIGINS: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().min(8).required(),
+    otherwise: Joi.string().optional().allow('').default(''),
+  }),
 
   /** Required in production to bootstrap first tenant/admin via /api/auth/bootstrap */
   BOOTSTRAP_SECRET: Joi.string().min(16).optional().allow(''),
@@ -63,8 +98,15 @@ export const envValidationSchema = Joi.object({
   /** Error-monitoring DSN (Sentry-compatible). Empty = monitoring disabled. */
   ERROR_MONITORING_DSN: Joi.string().uri().optional().allow(''),
 
-  /** AES key material for IntegrationSecret encryption (32+ chars). Required to store live credentials. */
-  INTEGRATION_ENCRYPTION_KEY: Joi.string().min(32).optional().allow(''),
+  /**
+   * AES key material for IntegrationSecret + MFA secret encryption (32+ chars).
+   * REQUIRED in production (admins must enroll MFA; credentials must be storable).
+   */
+  INTEGRATION_ENCRYPTION_KEY: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().min(32).required(),
+    otherwise: Joi.string().min(32).optional().allow(''),
+  }),
 
   /**
    * Master switch for employee canary redeem/eligibility.
@@ -112,4 +154,12 @@ export const envValidationSchema = Joi.object({
   /** Public HTTPS URLs for this deployment (tenant/env config — not hardcoded branding). */
   PUBLIC_API_URL: Joi.string().uri().optional().allow(''),
   PUBLIC_WIDGET_URL: Joi.string().uri().optional().allow(''),
-});
+})
+  .with('LLM_DAILY_BUDGET_USD', [
+    'LLM_COST_INPUT_PER_MTOK',
+    'LLM_COST_OUTPUT_PER_MTOK',
+  ])
+  .with('LLM_TENANT_DAILY_BUDGET_USD', [
+    'LLM_COST_INPUT_PER_MTOK',
+    'LLM_COST_OUTPUT_PER_MTOK',
+  ]);

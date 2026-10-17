@@ -6,14 +6,42 @@ import { PrismaService } from '../prisma/prisma.service';
  * Only explicitly enabled tenant/location flags turn features on, and
  * CapabilityService still verifies dependency chains before use.
  */
+/**
+ * Reserved flags: named so dealers/ops can see the roadmap, but FORCED OFF until the
+ * capability is implemented and its dependencies exist. Setting them true has no effect.
+ */
+export const RESERVED_FLAGS: Record<string, string> = {
+  voiceAi: 'voice_provider_not_configured',
+  whatsapp: 'whatsapp_sender_not_configured',
+  email: 'email_provider_not_selected',
+  priceDropAlerts: 'requires_verified_inventory_change_events_and_messaging',
+  crossStoreInventory: 'requires_dealer_group_cross_rooftop_permission_model',
+  /**
+   * Inbound SMS AI auto-reply. Forced off until ownership locks, consent,
+   * quiet hours, and provider readiness are explicitly authorized per tenant.
+   */
+  smsAiReply: 'sms_ai_auto_reply_requires_explicit_owner_authorization',
+};
+
 export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   chat: true, // widget shell; inventory/payments still gated
+  /** Emergency switch: true = no LLM calls at all; deterministic concierge only. */
+  llmDisabled: false,
+  /**
+   * Opt into longer customer replies. Default false = concise 1–2 sentence policy.
+   * Tenants that historically relied on longer essays can set this true while migrating.
+   */
+  verboseReplies: false,
+  /**
+   * Optional daypart/weather/sports rapport. Default off; never invents live facts.
+   * Weather/sports still require LiveInfoService verification when enabled.
+   */
+  contextualRapport: false,
   inventory: false,
   payments: false,
   vehicleCompare: false,
   savedVehicles: false,
   tekionIntegration: false,
-  vAutoFeed: false,
   serviceAi: false,
   partsAi: false,
   financeCalculator: false,
@@ -23,14 +51,20 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   automatedFollowup: false,
   priceDropAlerts: false,
   crossStoreInventory: false,
-  leadScoring: false,
   copilot: false,
   leadCapture: true,
   handoff: true,
+  /**
+   * Auto-assign new leads to STAFF/MANAGER via least-open-load round-robin.
+   * Default off — enable per rooftop after staffing the queue.
+   */
+  roundRobinAssign: false,
   knowledge: false,
   uploads: false,
   appointments: false,
   sms: false,
+  /** Inbound SMS AI — reserved off; see RESERVED_FLAGS.smsAiReply */
+  smsAiReply: false,
   email: false,
   whatsapp: false,
 };
@@ -57,12 +91,15 @@ export class FeatureFlagsService {
     }
     const tenantFlags = (tenant?.featureFlags as Record<string, unknown>) ?? {};
 
+    // Only Tekion DATA capabilities (CRM/DMS/scheduling/parts) open the integration flag.
+    // A Tekion-hosted credit-application destination is not a CRM/DMS connection.
     const tekionLive = await this.prisma.integrationConnection.findFirst({
       where: {
         tenantId,
         provider: 'TEKION',
         enabled: true,
         liveReady: true,
+        capability: { not: 'credit_application' },
       },
       select: { id: true },
     });
@@ -89,19 +126,28 @@ export class FeatureFlagsService {
     if (!tekionLive) {
       merged.tekionIntegration = false;
     }
-    if (!vautoLive && merged.vAutoFeed === true) {
-      // Allow feed URL on Location without IntegrationConnection, but do not
-      // claim vAuto live integration health unless connection is liveReady.
-      // Flag may still be true for feed-based inventory — CapabilityService checks data.
-    }
-    if (!tekionLive && !vautoLive) {
-      // no-op; kept for clarity
-    }
-
-    // Voice never claimed until a live voice provider is wired
-    merged.voiceAi = false;
+    for (const k of Object.keys(RESERVED_FLAGS)) merged[k] = false;
+    void vautoLive; // vAuto health is reported by the integration, not a flag
 
     return merged;
+  }
+
+  /** Ops view: each flag's effective value with a reason code when forced off. */
+  async explain(tenantId: string, locationId?: string | null) {
+    const f = await this.resolve(tenantId, locationId);
+    return Object.fromEntries(
+      Object.entries(f).map(([k, v]) => [
+        k,
+        {
+          enabled: v,
+          reason:
+            RESERVED_FLAGS[k] ??
+            (k === 'tekionIntegration' && !v
+              ? 'no_live_ready_tekion_connection'
+              : undefined),
+        },
+      ]),
+    );
   }
 
   /** Widget-safe subset — fail-closed (`=== true` only). */

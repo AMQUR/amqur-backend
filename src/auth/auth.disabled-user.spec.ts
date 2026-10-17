@@ -35,7 +35,12 @@ describe('AuthService disabled-user enforcement', () => {
       }),
       getOrThrow: jest.fn().mockReturnValue('15m'),
     };
-    return new AuthService(prisma as never, jwt as never, config as never);
+    return new AuthService(
+      prisma as never,
+      jwt as never,
+      config as never,
+      {} as never,
+    );
   }
 
   const activeUser = {

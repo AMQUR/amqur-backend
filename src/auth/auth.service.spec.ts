@@ -10,6 +10,6 @@ describe('AuthService', () => {
     const config = {
       get: jest.fn().mockReturnValue('15m'),
     } as unknown as ConfigService;
-    expect(new AuthService(prisma, jwt, config)).toBeDefined();
+    expect(new AuthService(prisma, jwt, config, {} as never)).toBeDefined();
   });
 });

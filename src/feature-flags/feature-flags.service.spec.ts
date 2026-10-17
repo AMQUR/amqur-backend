@@ -2,6 +2,7 @@ import {
   FeatureFlagsService,
   PLATFORM_FEATURE_DEFAULTS,
 } from './feature-flags.service';
+import { RESERVED_FLAGS } from './feature-flags.service';
 
 describe('FeatureFlagsService', () => {
   const prisma = {
@@ -24,6 +25,8 @@ describe('FeatureFlagsService', () => {
     expect(f.payments).toBe(false);
     expect(f.chat).toBe(PLATFORM_FEATURE_DEFAULTS.chat);
     expect(f.voiceAi).toBe(false);
+    expect(f.verboseReplies).toBe(false);
+    expect(f.contextualRapport).toBe(false);
   });
 
   it('tenant overrides enable inventory', async () => {
@@ -84,5 +87,35 @@ describe('FeatureFlagsService', () => {
     });
     const w = await svc.forWidget('t1', 'l1');
     expect(w.payments).toBe(false);
+  });
+});
+
+describe('reserved flags', () => {
+  it('are forced off even when a tenant sets them true', async () => {
+    const prisma = {
+      tenant: {
+        findUnique: jest.fn().mockResolvedValue({
+          featureFlags: {
+            voiceAi: true,
+            whatsapp: true,
+            email: true,
+            priceDropAlerts: true,
+            crossStoreInventory: true,
+            chat: true,
+          },
+        }),
+      },
+      location: { findFirst: jest.fn().mockResolvedValue(null) },
+      integrationConnection: { findFirst: jest.fn().mockResolvedValue(null) },
+    };
+    const svc = new FeatureFlagsService(prisma as never);
+    const f = await svc.resolve('t1');
+    for (const k of Object.keys(RESERVED_FLAGS)) expect(f[k]).toBe(false);
+    expect(f.chat).toBe(true);
+    const ex = await svc.explain('t1');
+    expect(ex.voiceAi).toEqual({
+      enabled: false,
+      reason: 'voice_provider_not_configured',
+    });
   });
 });

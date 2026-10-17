@@ -6,6 +6,7 @@ import { KnowledgeService } from './knowledge.service';
 import { KnowledgeController } from './knowledge.controller';
 import { WebsiteIngestionService } from './website-ingestion.service';
 import { DisabledEmbeddingProvider } from './embedding.provider';
+import { KnowledgeLifecycleService } from './knowledge-lifecycle.service';
 
 @Global()
 @Module({
@@ -16,6 +17,7 @@ import { DisabledEmbeddingProvider } from './embedding.provider';
     KnowledgeRetrievalService,
     KnowledgeService,
     WebsiteIngestionService,
+    KnowledgeLifecycleService,
     { provide: 'EmbeddingProvider', useClass: DisabledEmbeddingProvider },
   ],
   exports: [
@@ -24,6 +26,7 @@ import { DisabledEmbeddingProvider } from './embedding.provider';
     KnowledgeRetrievalService,
     KnowledgeService,
     WebsiteIngestionService,
+    KnowledgeLifecycleService,
   ],
 })
 export class KnowledgeModule {}

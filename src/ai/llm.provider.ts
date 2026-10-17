@@ -10,6 +10,8 @@ export type LlmGenerateParams = {
   maxTokens?: number;
   timeoutMs?: number;
   promptVersion?: string;
+  /** Tenant the call is made for — per-tenant spend cap and attribution. Not sent to providers. */
+  tenantId?: string;
 };
 
 export type LlmGenerateResult = {
@@ -18,6 +20,10 @@ export type LlmGenerateResult = {
   model: string;
   latencyMs: number;
   promptVersion?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** Metered cost in micro-USD when the owner configured per-token prices. */
+  costMicroUsd?: number;
 };
 
 export interface LlmProvider {

@@ -15,8 +15,8 @@ model DealerGroup {
   slug String @unique
   name String
 
-  tenants      Tenant[]
-  memberships  DealerGroupMembership[]
+  tenants     Tenant[]
+  memberships DealerGroupMembership[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -69,38 +69,58 @@ model Tenant {
   /// Bumped on branding/config changes for cache invalidation
   configVersion Int @default(1)
 
-  /// Data retention days for conversations/leads (ops policy; enforced by retention job)
-  dataRetentionDays Int @default(365)
+  /// Days after LAST ACTIVITY before conversations + messages are HARD-DELETED (not archived).
+  dataRetentionDays      Int     @default(365)
+  /// Analytics events older than this are hard-deleted (aggregate-safe, no PII).
+  analyticsRetentionDays Int     @default(400)
+  /// When true, the retention job deletes nothing for this tenant (litigation / regulator hold).
+  legalHold              Boolean @default(false)
 
   /// Customer-facing consent text (public-safe)
   consentText String?
 
-  locations            Location[]
-  users                User[]
-  vehicles             Vehicle[]
-  conversations        Conversation[]
-  leads                Lead[]
-  appointments         Appointment[]
-  escalations          Escalation[]
-  auditLogs            AuditLog[]
+  /// Tenant-default FinancialAssumptionPolicy (location overrides merge on top).
+  /// Shape: see src/finance/financial-assumption-policy.ts
+  financialPolicy Json?
+
+  /// Tenant-default approved credit-application destination (location overrides).
+  /// Shape: see src/finance/credit-application.service.ts
+  creditApplication Json?
+
+  consentRecords ConsentRecord[]
+
+  locations              Location[]
+  users                  User[]
+  vehicles               Vehicle[]
+  conversations          Conversation[]
+  leads                  Lead[]
+  appointments           Appointment[]
+  escalations            Escalation[]
+  auditLogs              AuditLog[]
   integrationConnections IntegrationConnection[]
-  sourceAuthorityRules SourceAuthorityRule[]
-  sourceConflicts      SourceConflict[]
-  inventoryImportRuns  InventoryImportRun[]
-  savedVehicles        SavedVehicle[]
-  partsInquiries       PartsInquiry[]
-  outboxEvents         OutboxEvent[]
-  webhookInboxes       WebhookInbox[]
-  followUpCampaigns    FollowUpCampaign[]
-  canaryInvites        CanaryInvite[]
-  knowledgeDocuments   KnowledgeDocument[]
-  knowledgeSources     KnowledgeSource[]
-  tradeRequests        TradeRequest[]
-  fileObjects          FileObject[]
-  analyticsEvents      AnalyticsEvent[]
-  voiceCallSessions    VoiceCallSession[]
-  websiteAllowedDomains WebsiteAllowedDomain[]
-  financeRequests      FinanceRequest[]
+  sourceAuthorityRules   SourceAuthorityRule[]
+  sourceConflicts        SourceConflict[]
+  inventoryImportRuns    InventoryImportRun[]
+  savedVehicles          SavedVehicle[]
+  partsInquiries         PartsInquiry[]
+  outboxEvents           OutboxEvent[]
+  webhookInboxes         WebhookInbox[]
+  followUpCampaigns      FollowUpCampaign[]
+  canaryInvites          CanaryInvite[]
+  knowledgeDocuments     KnowledgeDocument[]
+  knowledgeSources       KnowledgeSource[]
+  tradeRequests          TradeRequest[]
+  fileObjects            FileObject[]
+  analyticsEvents        AnalyticsEvent[]
+  voiceCallSessions      VoiceCallSession[]
+  websiteAllowedDomains  WebsiteAllowedDomain[]
+  financeRequests        FinanceRequest[]
+  priceQuoteRequests     PriceQuoteRequest[]
+  conversationPlaybooks  ConversationPlaybook[]
+  promptVersions         PromptVersion[]
+  customerActionPages      CustomerActionPage[]
+  customerSurveys          CustomerSurvey[]
+  customerSurveyTemplates  CustomerSurveyTemplate[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -117,7 +137,7 @@ model CanaryInvite {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  locationId String
+  locationId  String
   /// staging | production | test
   environment String
 
@@ -142,15 +162,34 @@ model Location {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name    String
-  slug    String
-  address String?
-  phone   String?
-  timezone String @default("America/Chicago")
+  name     String
+  slug     String
+  address  String?
+  phone    String?
+  timezone String  @default("America/Chicago")
 
   /// Store hours as JSON: { mon: { open: "09:00", close: "19:00" }, ... }
   /// Only expose to customers when verified/current for this location.
   storeHours Json?
+
+  /// Holiday / one-off closures + overrides: [{ date: "2026-12-25", closed: true } | { date, open, close, note? }]
+  holidayHours Json?
+
+  /// Department-specific weekly hours: { service: { mon: {open,close}, ... }, parts: {...}, sales: {...} }
+  departmentHours Json?
+
+  /// Who verified hours and when — hours are customer-visible only when verified.
+  storeHoursVerifiedAt DateTime?
+  storeHoursVerifiedBy String?
+
+  /// Location FinancialAssumptionPolicy override (merged over Tenant.financialPolicy)
+  financialPolicy Json?
+
+  /// Location credit-application override (merged over Tenant.creditApplication)
+  creditApplication Json?
+
+  /// Verified transportation options for service: { shuttle?: bool, loaner?: bool, rideshare?: bool, verifiedAt }
+  serviceAmenities Json?
 
   inventoryFeedUrl  String?
   inventoryFeedType InventoryFeedType?
@@ -164,6 +203,11 @@ model Location {
   /// Location public branding overrides (merged over tenant.publicConfig)
   publicConfig Json?
 
+  /// Messaging send policy (staff-only). Shape:
+  /// { quietStart?: "21:00", quietEnd?: "08:00", maxMarketingPer24h?: number }
+  /// Times are local to Location.timezone (DST-safe via zoned-time helpers).
+  messagingPolicy Json?
+
   /// Inventory freshness SLA hours (default 24)
   inventoryFreshnessHours Int @default(24)
 
@@ -173,24 +217,27 @@ model Location {
   /// Escalation recipient emails (comma-separated) — staff-only, never in widget-config
   escalationRecipients String?
 
-  users         User[]
-  vehicles      Vehicle[]         @relation("LocationVehicles")
-  conversations Conversation[]
-  leads         Lead[]
-  appointments  Appointment[]
-  escalations   Escalation[]
+  users                  User[]
+  vehicles               Vehicle[]               @relation("LocationVehicles")
+  conversations          Conversation[]
+  leads                  Lead[]
+  appointments           Appointment[]
+  escalations            Escalation[]
   integrationConnections IntegrationConnection[]
-  inventoryImportRuns InventoryImportRun[]
-  savedVehicles SavedVehicle[]
-  partsInquiries PartsInquiry[]
-  knowledgeDocuments KnowledgeDocument[]
-  knowledgeSources   KnowledgeSource[]
-  tradeRequests      TradeRequest[]
-  fileObjects        FileObject[]
-  analyticsEvents    AnalyticsEvent[]
-  voiceCallSessions  VoiceCallSession[]
-  websiteAllowedDomains WebsiteAllowedDomain[]
-  financeRequests    FinanceRequest[]
+  inventoryImportRuns    InventoryImportRun[]
+  savedVehicles          SavedVehicle[]
+  partsInquiries         PartsInquiry[]
+  knowledgeDocuments     KnowledgeDocument[]
+  knowledgeSources       KnowledgeSource[]
+  tradeRequests          TradeRequest[]
+  fileObjects            FileObject[]
+  analyticsEvents        AnalyticsEvent[]
+  voiceCallSessions      VoiceCallSession[]
+  websiteAllowedDomains  WebsiteAllowedDomain[]
+  financeRequests        FinanceRequest[]
+  priceQuoteRequests     PriceQuoteRequest[]
+  conversationPlaybooks  ConversationPlaybook[]
+  promptVersions         PromptVersion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -218,6 +265,14 @@ model User {
 
   /// Disabled users cannot log in or refresh; access tokens age out (<=15m).
   isActive Boolean @default(true)
+
+  /// TOTP MFA (RFC 6238). Secret stored AES-256-GCM encrypted via SecretVault.
+  mfaEnabled          Boolean   @default(false)
+  mfaSecretEnc        Json?
+  mfaPendingSecretEnc Json?
+  mfaRecoveryHashes   String[]  @default([])
+  mfaLastCounter      Int?
+  mfaEnrolledAt       DateTime?
 
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -257,11 +312,11 @@ model Vehicle {
   model String
   trim  String?
 
-  bodyType     String?
-  drivetrain   String?
-  transmission String?
-  fuelType     String?
-  color        String?
+  bodyType      String?
+  drivetrain    String?
+  transmission  String?
+  fuelType      String?
+  color         String?
   interiorColor String?
 
   price   Int?
@@ -339,6 +394,18 @@ model Conversation {
   /// Serialized ConversationInventoryState
   state Json @default("{}")
 
+  /// Optimistic-concurrency counter for state writes across API replicas
+  stateVersion Int @default(0)
+
+  /// Handoff lifecycle: AI | REQUESTED | QUEUED | ASSIGNED | JOINED | RELEASED
+  handoffState   String  @default("AI")
+  /// When true the AI must not send autonomous customer replies (staff owns the thread)
+  aiPaused       Boolean @default(false)
+  assignedUserId String?
+
+  /// Customer language preference (BCP-47 short code, e.g. en, es)
+  language String?
+
   messages     Message[]
   leads        Lead[]
   appointments Appointment[]
@@ -408,18 +475,18 @@ model Lead {
   interestedVin   String?
   interestedStock String?
 
-  budget           Int?
-  desiredPayment   Int?
-  financingNeeded  Boolean?
-  preferredContact String?
+  budget             Int?
+  desiredPayment     Int?
+  financingNeeded    Boolean?
+  preferredContact   String?
   languagePreference String?
-  purchaseTimeline String?
-  tradeInInterest  Boolean?
-  leaseVsPurchase  String?
-  consentToText    Boolean @default(false)
-  consentToEmail   Boolean @default(false)
-  consentToCall    Boolean @default(false)
-  optOutAt         DateTime?
+  purchaseTimeline   String?
+  tradeInInterest    Boolean?
+  leaseVsPurchase    String?
+  consentToText      Boolean   @default(false)
+  consentToEmail     Boolean   @default(false)
+  consentToCall      Boolean   @default(false)
+  optOutAt           DateTime?
 
   /// Transparent score reason codes + rule version
   scoreReasons Json?
@@ -437,10 +504,10 @@ model Lead {
   crmLastSyncedAt       DateTime?
   crmLastError          String?
 
-  source  String @default("widget")
-  score   Int    @default(0)
-  stage   LeadStage @default(COLD)
-  status  LeadStatus @default(OPEN)
+  source String     @default("widget")
+  score  Int        @default(0)
+  stage  LeadStage  @default(COLD)
+  status LeadStatus @default(OPEN)
 
   assignedUserId String?
   notes          String?
@@ -512,11 +579,37 @@ model Appointment {
   /// False until a human or verified calendar confirms the slot
   availabilityVerified Boolean @default(false)
 
+  leadId          String?
+  /// IANA timezone the requested/scheduled time is expressed in (dealership tz)
+  timezone        String    @default("America/Chicago")
+  /// Customer's raw phrase, e.g. "Saturday at 3"
+  requestedPhrase String?
+  /// Requested instant computed in dealership timezone (UTC storage)
+  requestedAt     DateTime?
+  serviceType     String?
+  transportation  String?
+
+  /// Scheduling provider that owns confirmation (NONE = AMQUR request only)
+  provider           String  @default("NONE")
+  externalProviderId String?
+  providerStatus     String?
+  /// Structured provenance: { source, recordedBy, confirmedBy, providerRequestId, ... }
+  provenance         Json?
+  idempotencyKey     String?
+
+  rescheduledFromId String?
+  confirmedAt       DateTime?
+  canceledAt        DateTime?
+  cancelReason      String?
+  completedAt       DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status])
   @@index([tenantId, scheduledAt])
+  @@index([tenantId, locationId, requestedAt])
   @@index([conversationId])
 }
 
@@ -532,11 +625,13 @@ enum AppointmentStatus {
   REQUESTED
   PENDING_CONFIRMATION
   CONFIRMED
+  RESCHEDULED
   CANCELLED
   COMPLETED
   NO_SHOW
 }
 
+// Partial unique: one active escalation per conversation — see migration SQL (Prisma cannot express partial @@unique).
 model Escalation {
   id String @id @default(cuid())
 
@@ -606,11 +701,11 @@ model AuditLog {
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  action   String
-  resource String?
+  action     String
+  resource   String?
   resourceId String?
-  metadata Json?
-  ip       String?
+  metadata   Json?
+  ip         String?
 
   createdAt DateTime @default(now())
 
@@ -628,21 +723,21 @@ model IntegrationConnection {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  provider IntegrationProvider
+  provider   IntegrationProvider
   /// Logical capability set: crm | dms | inventory_feed | appointments | messaging | voice
   capability String
 
-  enabled Boolean @default(false)
+  enabled   Boolean @default(false)
   /// Live credentials + partner docs required before enabling
   liveReady Boolean @default(false)
 
   /// Non-secret config (base URL placeholder, API version, dealer mapping ids)
   config Json @default("{}")
 
-  healthStatus IntegrationHealthStatus @default(UNKNOWN)
-  lastHealthAt DateTime?
-  lastSuccessAt DateTime?
-  lastError     String?
+  healthStatus     IntegrationHealthStatus @default(UNKNOWN)
+  lastHealthAt     DateTime?
+  lastSuccessAt    DateTime?
+  lastError        String?
   circuitOpenUntil DateTime?
 
   /// Sync cursor for incremental reconciliation
@@ -664,6 +759,7 @@ enum IntegrationProvider {
   TWILIO
   GOOGLE_CALENDAR
   GENERIC_WEBHOOK
+  META
   MOCK
   NORMALIZED_INVENTORY_HTTP
   OPENAI
@@ -685,7 +781,7 @@ model IntegrationSecret {
   connectionId String
   connection   IntegrationConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
 
-  keyName String
+  keyName    String
   /// AES-256-GCM ciphertext (base64) — never log plaintext
   ciphertext String
   iv         String
@@ -704,11 +800,11 @@ model SourceAuthorityRule {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  field            String
-  primarySource    String
-  fallbackSource   String?
-  freshnessSlaHours Int @default(24)
-  notes            String?
+  field             String
+  primarySource     String
+  fallbackSource    String?
+  freshnessSlaHours Int     @default(24)
+  notes             String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -723,15 +819,15 @@ model SourceConflict {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  field          String
-  entityType     String
-  entityId       String
-  primaryValue   String?
-  conflictingValue String?
-  primarySource  String
+  field             String
+  entityType        String
+  entityId          String
+  primaryValue      String?
+  conflictingValue  String?
+  primarySource     String
   conflictingSource String
-  status         SourceConflictStatus @default(OPEN)
-  resolvedAt     DateTime?
+  status            SourceConflictStatus @default(OPEN)
+  resolvedAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -755,7 +851,7 @@ model InventoryImportRun {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  provider IntegrationProvider @default(VAUTO)
+  provider  IntegrationProvider @default(VAUTO)
   transport String?
   format    String?
 
@@ -771,7 +867,7 @@ model InventoryImportRun {
   rawArtifactPath String?
   errorMessage    String?
 
-  startedAt   DateTime @default(now())
+  startedAt   DateTime  @default(now())
   completedAt DateTime?
 
   @@index([tenantId, startedAt])
@@ -800,11 +896,11 @@ model SavedVehicle {
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
   conversationExternalKey String
-  vin String
+  vin                     String
 
-  alertPriceDrop Boolean @default(false)
+  alertPriceDrop   Boolean @default(false)
   alertBackInStock Boolean @default(false)
-  consentOutbound Boolean @default(false)
+  consentOutbound  Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -822,22 +918,41 @@ model PartsInquiry {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  conversationId String?
-  vin            String?
-  partDescription String
-  status         PartsInquiryStatus @default(REQUESTED)
-  fitmentVerified Boolean @default(false)
-  availabilityVerified Boolean @default(false)
-  priceVerified Boolean @default(false)
-  notes String?
-  customerName  String?
-  customerPhone String?
-  customerEmail String?
+  conversationId       String?
+  vin                  String?
+  partDescription      String
+  status               PartsInquiryStatus @default(REQUESTED)
+  fitmentVerified      Boolean            @default(false)
+  availabilityVerified Boolean            @default(false)
+  priceVerified        Boolean            @default(false)
+  notes                String?
+  customerName         String?
+  customerPhone        String?
+  customerEmail        String?
+
+  partNumber            String?
+  /// Customer-described / suspected part — NOT a verified catalog match
+  suspectedPart         String?
+  vehicleYear           Int?
+  vehicleMake           String?
+  vehicleModel          String?
+  /// Authoritative fitment source (provider id) when fitmentVerified=true
+  fitmentSource         String?
+  etaVerified           Boolean @default(false)
+  providerReference     String?
+  /// INFO | QUOTE | RESERVE | ORDER | INSTALL
+  preferredAction       String?
+  installationRequested Boolean @default(false)
+  installAppointmentId  String?
+  provenance            Json?
+  idempotencyKey        String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status])
+  @@index([conversationId])
 }
 
 enum PartsInquiryStatus {
@@ -857,21 +972,27 @@ model OutboxEvent {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  topic   String
-  payload Json
+  topic          String
+  payload        Json
   idempotencyKey String?
 
-  status OutboxStatus @default(PENDING)
-  attempts Int @default(0)
-  nextAttemptAt DateTime @default(now())
-  lastError String?
-  publishedAt DateTime?
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now())
+  lastError     String?
+  publishedAt   DateTime?
+
+  /// Lease for multi-worker safe claiming (FOR UPDATE SKIP LOCKED)
+  claimedAt      DateTime?
+  claimedBy      String?
+  leaseExpiresAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, idempotencyKey])
   @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
   @@index([tenantId, topic])
 }
 
@@ -890,13 +1011,13 @@ model WebhookInbox {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  provider IntegrationProvider
+  provider        IntegrationProvider
   externalEventId String
-  signatureValid Boolean @default(false)
-  payload Json
-  status WebhookInboxStatus @default(RECEIVED)
-  processedAt DateTime?
-  errorMessage String?
+  signatureValid  Boolean             @default(false)
+  payload         Json
+  status          WebhookInboxStatus  @default(RECEIVED)
+  processedAt     DateTime?
+  errorMessage    String?
 
   createdAt DateTime @default(now())
 
@@ -918,19 +1039,59 @@ model FollowUpCampaign {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  name    String
-  trigger String
-  channel String
-  enabled Boolean @default(false)
+  name     String
+  trigger  String
+  channel  String
+  enabled  Boolean @default(false)
   /// Quiet hours, caps, stop conditions as JSON
-  policy  Json @default("{}")
+  policy   Json    @default("{}")
   template String?
+
+  locationId      String?
+  /// Bumped on every edit; enrollments pin the version they started with
+  version         Int       @default(1)
+  startsAt        DateTime?
+  endsAt          DateTime?
+  createdByUserId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([tenantId, name])
   @@index([tenantId, enabled])
+}
+
+/// Every outbound customer message (any channel). Delivery state comes ONLY from the provider.
+model OutboundMessage {
+  id String @id @default(cuid())
+
+  tenantId        String
+  locationId      String?
+  conversationId  String?
+  leadId          String?
+  campaignId      String?
+  campaignVersion Int?
+
+  /// SMS | EMAIL | WHATSAPP | VOICE
+  channel           String
+  /// normalized endpoint (E.164 / lowercased email) — staff-only PII
+  endpoint          String
+  purpose           String
+  body              String
+  /// QUEUED | SUPPRESSED | SENT | DELIVERED | UNDELIVERED | FAILED
+  status            String  @default("QUEUED")
+  suppressReason    String?
+  provider          String?
+  providerMessageId String?
+  error             String?
+  idempotencyKey    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, channel, endpoint, createdAt])
+  @@index([providerMessageId])
 }
 
 /// Approved knowledge source registry (manual, upload, website, policy, FAQ).
@@ -943,17 +1104,17 @@ model KnowledgeSource {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  sourceType KnowledgeSourceType
-  title      String
-  canonicalUrl String?
+  sourceType     KnowledgeSourceType
+  title          String
+  canonicalUrl   String?
   authorityLevel KnowledgeAuthorityLevel @default(UNVERIFIED)
-  status     KnowledgeStatus @default(DRAFT)
-  metadata   Json?
+  status         KnowledgeStatus         @default(DRAFT)
+  metadata       Json?
 
   documents KnowledgeDocument[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
   archivedAt DateTime?
 
   @@index([tenantId, status])
@@ -1007,8 +1168,8 @@ model KnowledgeDocument {
   canonicalUrl     String?
   content          String
   contentChecksum  String
-  version          Int      @default(1)
-  status           KnowledgeStatus @default(DRAFT)
+  version          Int                 @default(1)
+  status           KnowledgeStatus     @default(DRAFT)
   visibility       KnowledgeVisibility @default(CUSTOMER)
   effectiveAt      DateTime?
   expiresAt        DateTime?
@@ -1019,8 +1180,8 @@ model KnowledgeDocument {
 
   chunks KnowledgeChunk[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
   archivedAt DateTime?
 
   @@index([tenantId, status, visibility])
@@ -1037,19 +1198,19 @@ enum KnowledgeVisibility {
 model KnowledgeChunk {
   id String @id @default(cuid())
 
-  tenantId String
+  tenantId   String
   documentId String
   document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
-  locationId String?
-  chunkIndex Int
-  content    String
+  locationId     String?
+  chunkIndex     Int
+  content        String
   /// Optional embedding vector stored as JSON float array (provider-agnostic).
   /// Prefer pgvector migration later when extension is available in all envs.
-  embedding  Json?
+  embedding      Json?
   embeddingModel String?
-  tokenCount Int?
-  metadata   Json?
+  tokenCount     Int?
+  metadata       Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1069,11 +1230,11 @@ model WebsiteAllowedDomain {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  hostname String
-  pathPrefix String?
-  enabled Boolean @default(true)
+  hostname         String
+  pathPrefix       String?
+  enabled          Boolean @default(true)
   requiresApproval Boolean @default(true)
-  notes String?
+  notes            String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1091,32 +1252,78 @@ model TradeRequest {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  conversationId String?
-  vin            String?
-  year           Int?
-  make           String?
-  model          String?
-  trim           String?
-  mileage        Int?
-  condition      String?
-  payoffAmount   Float?
-  ownership      String?
+  conversationId    String?
+  vin               String?
+  year              Int?
+  make              String?
+  model             String?
+  trim              String?
+  mileage           Int?
+  condition         String?
+  payoffAmount      Float?
+  ownership         String?
   desiredVehicleVin String?
-  customerName  String?
-  customerPhone String?
-  customerEmail String?
-  notes          String?
+  customerName      String?
+  customerPhone     String?
+  customerEmail     String?
+  notes             String?
   /// Never invent appraisal — verified only when TradeProvider confirms.
-  appraisalVerified Boolean @default(false)
+  appraisalVerified Boolean            @default(false)
   appraisalValue    Float?
-  status         TradeRequestStatus @default(REQUESTED)
-  photoFileIds   String[] @default([])
+  status            TradeRequestStatus @default(REQUESTED)
+  photoFileIds      String[]           @default([])
+  /// Registration/valuation ZIP as declared by the customer
+  zip               String?
+  /// Customer-declared accident history (NONE | MINOR | MAJOR | UNKNOWN) — never verified
+  accidentHistory   String?
+  /// CLEAN | LIEN | SALVAGE | REBUILT | UNKNOWN as declared
+  titleStatus       String?
+  appraisals        TradeAppraisal[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
   @@index([tenantId, conversationId])
+}
+
+/// One valuation event for a trade. The four kinds are never conflated:
+///   MARKET_ESTIMATE      — licensed market data (e.g. MMR/KBB/Black Book) — NOT an offer
+///   PRELIMINARY_ESTIMATE — provider/dealer estimate before inspection — NOT an offer
+///   DEALER_APPRAISAL     — staff appraisal after review/inspection
+///   FINAL_OFFER          — manager-approved offer with an expiry
+/// A dollar figure reaches the customer only when displayPermitted (provider license and
+/// dealership rules allow it) and the row is ACTIVE and unexpired.
+model TradeAppraisal {
+  id String @id @default(cuid())
+
+  tenantId       String
+  tradeRequestId String
+  tradeRequest   TradeRequest @relation(fields: [tradeRequestId], references: [id], onDelete: Cascade)
+
+  kind             String
+  /// Provider id (e.g. "staff", "vauto", "manheim_mmr") — "staff" for human appraisals
+  provider         String
+  providerRef      String?
+  amount           Float?
+  amountLow        Float?
+  amountHigh       Float?
+  displayPermitted Boolean   @default(false)
+  /// ACTIVE | SUPERSEDED | EXPIRED | ACCEPTED | DECLINED | COUNTERED
+  status           String    @default("ACTIVE")
+  counterAmount    Float?
+  conditionBasis   String?
+  notes            String?
+  createdById      String?
+  approvedById     String?
+  approvedAt       DateTime?
+  expiresAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, tradeRequestId])
+  @@index([tenantId, status])
 }
 
 enum TradeRequestStatus {
@@ -1139,24 +1346,74 @@ model FinanceRequest {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  conversationId String?
-  vehicleVin     String?
-  desiredPayment Float?
-  downPayment    Float?
-  termMonths     Int?
+  conversationId  String?
+  vehicleVin      String?
+  desiredPayment  Float?
+  downPayment     Float?
+  termMonths      Int?
   leaseOrPurchase String?
-  tradeInterest  Boolean @default(false)
-  customerName  String?
-  customerPhone String?
-  customerEmail String?
+  tradeInterest   Boolean              @default(false)
+  customerName    String?
+  customerPhone   String?
+  customerEmail   String?
   /// APR never invented — only stored when customer-provided or verified config.
-  aprProvided    Float?
-  status         FinanceRequestStatus @default(REQUESTED)
-  notes          String?
+  aprProvided     Float?
+  /// CUSTOMER | NONE — dealer/lender APR is never stored here without a verified provider
+  aprSource       String               @default("NONE")
+  status          FinanceRequestStatus @default(REQUESTED)
+  notes           String?
+
+  /// NONE | OFFERED | DISPLAYED | CLICKED | RETURNED | COMPLETED_VERIFIED
+  creditLinkState     String    @default("NONE")
+  creditLinkOfferedAt DateTime?
+  creditLinkClickedAt DateTime?
+  /// NONE | REQUESTED | QUEUED | ASSIGNED
+  handoffState        String    @default("NONE")
+  provenance          Json?
+  idempotencyKey      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status])
+  @@index([conversationId])
+}
+
+/// Out-the-door price quote request (cash or finance). Never requires a credit application.
+/// The assistant only shows an itemized estimate when every input is dealer-verified; otherwise
+/// the request is routed to staff, who send the written quote. A preliminary calculation is
+/// never a dealer-approved written offer.
+model PriceQuoteRequest {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  conversationId  String?
+  vehicleVin      String
+  vehicleLabel    String?
+  /// CASH | FINANCE | LEASE | UNDECIDED
+  paymentMethod   String   @default("UNDECIDED")
+  registrationZip String?
+  /// REQUESTED | IN_PROGRESS | SENT | CLOSED
+  status          String   @default("REQUESTED")
+  /// Snapshot of the itemized estimate shown (only verified inputs), or null when staff-routed
+  estimateShown   Json?
+  /// Inputs still needed from the dealership (e.g. ["tax_rate","doc_fee","registration"])
+  missingInputs   String[] @default([])
+  customerName    String?
+  customerPhone   String?
+  customerEmail   String?
+  provenance      Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, conversationId, vehicleVin])
   @@index([tenantId, status])
 }
 
@@ -1179,17 +1436,17 @@ model FileObject {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  storageKey   String
-  originalName String
-  mimeType     String
-  byteSize     Int
-  checksumSha256 String
-  purpose      FilePurpose
-  scannedStatus FileScanStatus @default(PENDING)
+  storageKey       String
+  originalName     String
+  mimeType         String
+  byteSize         Int
+  checksumSha256   String
+  purpose          FilePurpose
+  scannedStatus    FileScanStatus @default(PENDING)
   uploadedByUserId String?
-  conversationId String?
-  metadata Json?
-  deletedAt DateTime?
+  conversationId   String?
+  metadata         Json?
+  deletedAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1224,11 +1481,11 @@ model AnalyticsEvent {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  eventType String
+  eventType               String
   /// Aggregate-safe properties only — no raw PII/secrets.
-  properties Json?
+  properties              Json?
   conversationExternalKey String?
-  occurredAt DateTime @default(now())
+  occurredAt              DateTime @default(now())
 
   @@index([tenantId, eventType, occurredAt])
   @@index([tenantId, locationId, occurredAt])
@@ -1244,19 +1501,19 @@ model VoiceCallSession {
   locationId String?
   location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
 
-  externalCallId String
-  direction      String
-  state          String
-  fromNumber     String?
-  toNumber       String?
-  recordingConsent Boolean @default(false)
-  language       String?
+  externalCallId          String
+  direction               String
+  state                   String
+  fromNumber              String?
+  toNumber                String?
+  recordingConsent        Boolean   @default(false)
+  language                String?
   conversationExternalKey String?
-  leadId         String?
-  escalationId   String?
-  summary        String?
-  metadata       Json?
-  endedAt        DateTime?
+  leadId                  String?
+  escalationId            String?
+  summary                 String?
+  metadata                Json?
+  endedAt                 DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1265,3 +1522,329 @@ model VoiceCallSession {
   @@index([tenantId, state])
 }
 
+/// Per-channel, per-purpose consent ledger. Never collapse SMS/email/call/WhatsApp into one boolean.
+model ConsentRecord {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId              String?
+  leadId                  String?
+  conversationExternalKey String?
+
+  /// SMS | EMAIL | CALL | WHATSAPP
+  channel        String
+  /// Normalized endpoint (E.164 phone / lowercased email) — PII, staff-only
+  endpoint       String
+  /// TRANSACTIONAL | CONVERSATIONAL | MARKETING
+  purpose        String
+  granted        Boolean
+  /// Exact wording + version shown to the customer
+  wording        String?
+  wordingVersion String?
+  /// WIDGET | STAFF | SMS_KEYWORD | PROVIDER | IMPORT
+  source         String
+  evidence       Json?
+  revokedAt      DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, channel, endpoint, createdAt])
+  @@index([tenantId, leadId])
+}
+
+/// Dealer-managed spotlight (featured vehicle, offer, event or announcement). Shown to
+/// customers VERBATIM, labeled as a dealership announcement, only when APPROVED, inside its
+/// date window, and for its own store. Offers must cite their source and carry their own
+/// disclaimer; the assistant never paraphrases or extends them.
+model Spotlight {
+  id String @id @default(cuid())
+
+  tenantId     String
+  locationId   String
+  /// VEHICLE | OFFER | EVENT | ANNOUNCEMENT
+  kind         String
+  title        String
+  body         String
+  /// Optional HTTPS link on the dealer's own site
+  linkUrl      String?
+  vehicleVin   String?
+  /// Where an offer comes from (e.g. "OEM national program 10/2026", "dealer special")
+  source       String?
+  disclaimer   String?
+  /// DRAFT | PENDING_APPROVAL | APPROVED | REJECTED | ARCHIVED
+  status       String    @default("DRAFT")
+  startsAt     DateTime
+  endsAt       DateTime
+  createdById  String?
+  approvedById String?
+  approvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, locationId, status])
+}
+
+/// Versioned Conversation Studio playbook. Only PUBLISHED versions affect customer replies.
+/// Never overrides truth/safety/consent rules. Drafts require explicit publish + RBAC.
+enum PlaybookStatus {
+  DRAFT
+  PENDING_REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+  REJECTED
+}
+
+enum PlaybookDepartment {
+  GENERAL
+  SALES
+  SERVICE
+  PARTS
+  FINANCE
+}
+
+model ConversationPlaybook {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  /// Uniqueness helper: locationId or "_" for tenant-wide (Postgres NULL ≠ NULL in unique indexes).
+  locationScope String @default("_")
+
+  /// Stable key within tenant+location (e.g. "sales-first-response")
+  key         String
+  title       String
+  department  PlaybookDepartment @default(GENERAL)
+  status      PlaybookStatus     @default(DRAFT)
+  version     Int                @default(1)
+
+  /// Tone: casual | professional | concise | friendly | premium
+  tone           String  @default("concise")
+  /// Target reply length hint for compose (does not override safety/detail exceptions)
+  brevity        String  @default("short")
+  /// Optional daypart/rapport allowance for this playbook only
+  allowRapport   Boolean @default(false)
+  oneQuestion    Boolean @default(true)
+
+  /// Approved greetings / phrases (string[])
+  approvedPhrases Json?
+  /// Forbidden phrases (string[]) — soft style filter, never silent failure of safety
+  forbiddenPhrases Json?
+  /// Good vs bad training examples: [{ good, bad, note? }]
+  examples         Json?
+  /// Freeform manager coaching notes (not injected as system override for facts)
+  coachingNotes    String?
+
+  /// Points at the previous published version id when rolled back / superseded
+  supersedesId String?
+  publishedAt  DateTime?
+  publishedBy  String?
+  approvedAt   DateTime?
+  approvedBy   String?
+  createdBy    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationScope, key, version])
+  @@index([tenantId, status])
+  @@index([tenantId, locationId, department, status])
+}
+
+/// Immutable prompt/content snapshot for compose/interpret/policy. Publish is explicit.
+model PromptVersion {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  locationScope String @default("_")
+
+  /// compose | interpret | polish | policy | playbook_snapshot
+  kind        String
+  version     String
+  status      PlaybookStatus @default(DRAFT)
+  content     String
+  checksum    String
+  notes       String?
+  publishedAt DateTime?
+  publishedBy String?
+  createdBy   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationScope, kind, version])
+  @@index([tenantId, kind, status])
+}
+
+/// Tokenized customer action page (schedule, trade intake, document upload, etc.).
+/// Raw token is shown once at creation; only sha256(token) is stored.
+/// Never invents appointment confirmation, pricing, or finance approval — forms collect intent.
+model CustomerActionPage {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  leadId     String?
+  conversationId String?
+
+  /// SCHEDULE | TRADE_INTAKE | DOCUMENT_UPLOAD | FINANCE_INFO | CONTACT_UPDATE | CUSTOM
+  kind        String
+  title       String
+  /// Public-safe instructions / copy (no secrets, no invented prices)
+  description String?
+  /// Optional structured form schema for the page renderer
+  formSchema  Json?
+  /// Opaque payload for staff (VIN interest, etc.) — never returned on public resolve
+  staffMeta   Json?
+
+  tokenHash String @unique
+  /// OPEN | COMPLETED | EXPIRED | REVOKED
+  status    String    @default("OPEN")
+  expiresAt DateTime?
+  completedAt DateTime?
+  revokedAt   DateTime?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, leadId])
+}
+
+/// Staff-facing survey script (not an OEM CSI instrument). Never auto-SMS.
+model CustomerSurveyTemplate {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  kind       CustomerSurveyKind @default(SALES)
+  name       String
+  /// Staff interview script / phone talk track — not a customer SMS body
+  scriptBody String
+  defaultChannel String  @default("IN_PERSON")
+  active     Boolean @default(true)
+  version    Int     @default(1)
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  surveys CustomerSurvey[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, kind, active])
+}
+
+/// Internal CSI / CSAT capture — staff-created drafts only until an approved send path exists.
+/// Never auto-SMS. Scores come only from RESPONDED rows (or a future connected provider).
+/// Not an OEM manufacturer CSI score.
+model CustomerSurvey {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId     String?
+  leadId         String?
+  conversationId String?
+  appointmentId  String?
+
+  kind       CustomerSurveyKind @default(SALES)
+  templateId String?
+  template   CustomerSurveyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  /// SMS | EMAIL | LINK | IN_PERSON — channel of capture; SMS does not imply outbound send
+  channel String  @default("LINK")
+  status  CustomerSurveyStatus @default(DRAFT)
+
+  /// 1–10 when the customer responded — null until RESPONDED
+  score   Int?
+  comment String?
+
+  /// Manager recovery queue when score is low or complaint language is present
+  followUpRequired Boolean @default(false)
+  followUpStatus   CustomerSurveyFollowUpStatus @default(NONE)
+  assignedManagerUserId String?
+  managerNote      String?
+  followUpAt       DateTime?
+
+  sentAt       DateTime?
+  respondedAt  DateTime?
+  createdByUserId String?
+  metadata     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, kind, status])
+  @@index([tenantId, followUpStatus])
+  @@index([tenantId, locationId])
+  @@index([leadId])
+}
+
+enum CustomerSurveyKind {
+  SALES
+  SERVICE
+}
+
+enum CustomerSurveyFollowUpStatus {
+  NONE
+  PENDING
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum CustomerSurveyStatus {
+  DRAFT
+  QUEUED
+  SENT
+  RESPONDED
+  CLOSED
+  CANCELLED
+}
+
+/// Controlled experiment on customer-facing COPY only (currently: the first greeting).
+/// Never varies prices, eligibility, disclosures or consent. Assignment is a stable hash of
+/// the conversation key, so a shopper always sees the same variant. A different manager must
+/// start it; results never auto-promote a variant.
+model Experiment {
+  id String @id @default(cuid())
+
+  tenantId    String
+  locationId  String?
+  key         String
+  /// greeting
+  surface     String
+  /// [{ key, weight, text }] — first entry is the control
+  variants    Json
+  /// DRAFT | RUNNING | STOPPED
+  status      String    @default("DRAFT")
+  createdById String?
+  startedById String?
+  startedAt   DateTime?
+  stoppedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status])
+}

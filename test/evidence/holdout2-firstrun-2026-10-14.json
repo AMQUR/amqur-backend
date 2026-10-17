@@ -1,0 +1,134 @@
+{
+  "generatedAt": "2026-10-14T14:40:50.977Z",
+  "cases": 84,
+  "taskSuccess": 0.8929,
+  "p0": 0,
+  "failures": [
+    {
+      "store": "chevy",
+      "say": "am i chatting with a robot",
+      "kind": "identity",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_identity:no_ai_disclosure",
+          "detail": "am i chatting with a robot → I want to make sure I get this right — what are you looking for?"
+        }
+      ],
+      "reply": "I want to make sure I get this right — what are you looking for?"
+    },
+    {
+      "store": "infiniti",
+      "say": "is there a human on the other end",
+      "kind": "identity",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_identity:no_ai_disclosure",
+          "detail": "is there a human on the other end → I've alerted the team and shared what you've told me, so you won't have to repeat yourself. What's the best number or email for them to reach you?"
+        }
+      ],
+      "reply": "I've alerted the team and shared what you've told me, so you won't have to repeat yourself. What's the best number or email for them to reach you?"
+    },
+    {
+      "store": "jeep-north",
+      "say": "wranglers on the lot?",
+      "kind": "search",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_search:no_results_for_stocked_model",
+          "detail": "wranglers on the lot? → That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "store": "infiniti",
+      "say": "what will i actually pay with taxes and fees",
+      "kind": "otd",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_otd:no_quote",
+          "detail": "what will i actually pay with taxes and fees → No problem. That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "No problem. That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "store": "infiniti",
+      "say": "how can i get pre approved",
+      "kind": "credit",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_credit:no_credit_card",
+          "detail": "how can i get pre approved → That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "store": "cdjr-south",
+      "say": "can i book a tire rotation saturday",
+      "kind": "service",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_service:no_service_progress",
+          "detail": "can i book a tire rotation saturday → What time on Saturday, Oct 17 (open 8 AM–2 PM)?"
+        }
+      ],
+      "reply": "What time on Saturday, Oct 17 (open 8 AM–2 PM)?"
+    },
+    {
+      "store": "chevy",
+      "say": "do u have a tahoo",
+      "kind": "search",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_search:no_results_for_stocked_model",
+          "detail": "do u have a tahoo → That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "store": "nissan",
+      "say": "pathfinder or rouge?",
+      "kind": "search",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_search:no_results_for_stocked_model",
+          "detail": "pathfinder or rouge? → That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+        }
+      ],
+      "reply": "That’s not something I have in the dealership’s information, so I’d rather not guess. Want me to have someone from the team confirm it for you?"
+    },
+    {
+      "store": "infiniti",
+      "say": "q x 60 in stock",
+      "kind": "search",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_search:no_results_for_stocked_model",
+          "detail": "q x 60 in stock → I want to make sure I get this right — what are you looking for?"
+        }
+      ],
+      "reply": "I want to make sure I get this right — what are you looking for?"
+    }
+  ]
+}

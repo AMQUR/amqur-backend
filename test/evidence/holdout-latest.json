@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-10-17T06:05:34.213Z",
+  "cases": 54,
+  "taskSuccess": 0.9815,
+  "p0": 0,
+  "failures": [
+    {
+      "say": "get me a manager",
+      "kind": "handoff",
+      "ok": false,
+      "findings": [
+        {
+          "severity": "P1",
+          "rule": "task_handoff:no_handoff",
+          "detail": "get me a manager → Sorry, I didn't quite catch that — could you tell me a bit more?"
+        }
+      ],
+      "reply": "Sorry, I didn't quite catch that — could you tell me a bit more?"
+    }
+  ]
+}

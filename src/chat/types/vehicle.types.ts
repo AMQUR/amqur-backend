@@ -35,5 +35,7 @@ export type InventoryVehicle = {
   /** Feed freshness — ISO timestamp when last seen in inventory sync */
   lastSeenAt?: string | null;
   source?: string | null;
+  /** True for synthetic local-demo fixtures (never present in production reads). */
+  simulated?: boolean;
   freshnessState?: 'FRESH' | 'DEGRADED' | 'STALE' | 'UNAVAILABLE' | null;
 };

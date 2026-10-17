@@ -1,6 +1,6 @@
 import { DEFAULT_SOURCE_AUTHORITY } from '../source-authority/source-authority.service';
 import { nextBestAction } from '../leads/next-best-action';
-import { scoreLeadWithReasons } from '../chat/lead-intelligence';
+import { scoreJourney, LEAD_SCORE_VERSION } from '../leads/lead-scoring';
 
 describe('source authority defaults', () => {
   it('keeps advertised_price on vauto', () => {
@@ -36,13 +36,16 @@ describe('nextBestAction', () => {
 
 describe('lead scoring reasons', () => {
   it('records observable reason codes', () => {
-    const r = scoreLeadWithReasons(0, [
-      'vehicle_view',
-      'payment',
-      'appointment',
+    // Ported to versioned journey scoring (set-based: repeats cannot inflate the score).
+    const r = scoreJourney([
+      'vehicle_selected',
+      'payment_estimate',
+      'appointment_requested',
+      'payment_estimate',
     ]);
-    expect(r.score).toBeGreaterThan(0);
-    expect(r.reasons).toContain('payment');
-    expect(r.version).toBe('rules-v2');
+    expect(r.score).toBe(3 + 3 + 8);
+    expect(r.reasons.map((x) => x.signal)).toContain('payment_estimate');
+    expect(r.version).toBe(LEAD_SCORE_VERSION);
+    expect(r.nextBestAction).toBeTruthy();
   });
 });

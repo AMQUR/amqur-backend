@@ -60,25 +60,22 @@ describe('failure injection', () => {
 
   describe('outbox DLQ', () => {
     it('marks DEAD after enough failures', async () => {
-      const updates: unknown[] = [];
-      const prisma = {
-        outboxEvent: {
-          update: jest.fn(async ({ data }: { data: unknown }) => {
-            updates.push(data);
-            return data;
-          }),
-        },
-      };
+      // markFailed is lease-guarded and uses the DB clock for backoff (raw UPDATE).
+      const prisma = { $executeRaw: jest.fn().mockResolvedValue(1) };
       const outbox = new OutboxService(prisma as never);
-      await outbox.markFailed('evt1', 'crm_down', 8);
-      expect(prisma.outboxEvent.update).toHaveBeenCalled();
-      const last = updates[updates.length - 1] as { status: OutboxStatus };
-      expect(last.status).toBe(OutboxStatus.DEAD);
+      const res = await outbox.markFailed('evt1', 'crm_down', 8);
+      expect(res.count).toBe(1);
+      const call = prisma.$executeRaw.mock.calls[0] as unknown[];
+      // tagged-template values: status is the first interpolation
+      expect(call[1]).toBe(OutboxStatus.DEAD);
     });
   });
 
   describe('outbox processor unknown topic', () => {
-    it('does not throw for unknown topic (safe no-op publish path)', async () => {
+    // Behavior intentionally changed (2026-10-13): unknown topics previously were marked
+    // PUBLISHED as a no-op, which silently dropped business events. They now go to DEAD
+    // so operations can see and replay them.
+    it('does not throw for unknown topic and dead-letters it (never silently published)', async () => {
       const prisma = {
         outboxEvent: {
           update: jest.fn().mockResolvedValue({}),
@@ -101,10 +98,21 @@ describe('failure injection', () => {
         markPublished: jest.fn().mockResolvedValue({}),
         markFailed: jest.fn().mockResolvedValue({}),
       };
-      const proc = new OutboxProcessorService(outbox as never, prisma as never);
+      const metrics = { increment: jest.fn() };
+      const proc = new OutboxProcessorService(
+        outbox as never,
+        prisma as never,
+        metrics as never,
+      );
       const n = await proc.processBatch(10);
-      expect(n).toBe(1);
-      expect(outbox.markPublished).toHaveBeenCalled();
+      expect(n).toBe(0);
+      expect(outbox.markPublished).not.toHaveBeenCalled();
+      expect(outbox.markFailed).toHaveBeenCalledWith(
+        '1',
+        'no_handler_for_topic:unknown.topic',
+        1,
+        expect.objectContaining({ permanent: true }),
+      );
     });
   });
 
