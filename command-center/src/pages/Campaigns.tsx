@@ -32,8 +32,11 @@ type Preview = {
 type Analytics = {
   queued: number;
   suppressed: number;
+  customerReplies: number;
+  bookingIntentReplies: number;
   suppressReasons: Record<string, number>;
   windowDays: number;
+  note?: string;
 };
 
 export function Campaigns({ locationId }: { locationId: string }) {
@@ -159,7 +162,22 @@ export function Campaigns({ locationId }: { locationId: string }) {
             <span>
               Suppressed <strong>{analytics.suppressed}</strong>
             </span>
+            <span>
+              Replies <strong>{analytics.customerReplies ?? 0}</strong>
+            </span>
+            <span>
+              Booking intent <strong>{analytics.bookingIntentReplies ?? 0}</strong>
+            </span>
           </div>
+          {analytics.note && <p className="muted small">{analytics.note}</p>}
+          {Object.keys(analytics.suppressReasons ?? {}).length > 0 && (
+            <p className="small">
+              Suppress reasons:{' '}
+              {Object.entries(analytics.suppressReasons)
+                .map(([k, v]) => `${k} (${v})`)
+                .join(', ')}
+            </p>
+          )}
         </Card>
       )}
     </div>

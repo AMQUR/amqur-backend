@@ -25,9 +25,31 @@ export function Settings({ locationId }: { locationId: string }) {
   const [policy, setPolicy] = useState({ illustrativeApr: '', defaultTermMonths: '', taxRatePercent: '', docFee: '', verified: false });
   const [amen, setAmen] = useState({ shuttle: '', loaner: '' });
   const [quiet, setQuiet] = useState({ quietStart: '21:00', quietEnd: '08:00' });
+  const [opsFlags, setOpsFlags] = useState({
+    roundRobinAssign: false,
+    automatedFollowup: false,
+  });
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const canEdit = ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? '');
+  const canOpsFlags = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(session.user?.role ?? '');
+  const flags = useAsync(
+    () =>
+      locationId
+        ? api<{
+            roundRobinAssign: boolean;
+            automatedFollowup: boolean;
+          }>(`/ops/locations/${locationId}/ai-control`)
+        : Promise.resolve(null),
+    [locationId],
+  );
+  useEffect(() => {
+    if (!flags.data) return;
+    setOpsFlags({
+      roundRobinAssign: flags.data.roundRobinAssign === true,
+      automatedFollowup: flags.data.automatedFollowup === true,
+    });
+  }, [flags.data]);
 
   useEffect(() => {
     const d = s.data;
@@ -154,6 +176,73 @@ export function Settings({ locationId }: { locationId: string }) {
                   }
                 >
                   Save quiet hours
+                </button>
+              )}
+            </div>
+          </Card>
+          <Card
+            title="Owner opt-in operations"
+            actions={
+              <Badge tone="warn">default off · audited</Badge>
+            }
+          >
+            <p className="muted small">
+              These flags do not enable SMS AI replies, voice AI, or mass marketing. Campaign sends still require
+              consent, quiet hours, and an enabled campaign.
+            </p>
+            <ErrorNote error={flags.error} />
+            <div className="row">
+              <label>
+                Round-robin lead assign
+                <select
+                  value={opsFlags.roundRobinAssign ? 'on' : 'off'}
+                  disabled={!canOpsFlags}
+                  onChange={(e) =>
+                    setOpsFlags({ ...opsFlags, roundRobinAssign: e.target.value === 'on' })
+                  }
+                >
+                  <option value="off">Off (default)</option>
+                  <option value="on">On</option>
+                </select>
+              </label>
+              <label>
+                Automated follow-up campaigns
+                <select
+                  value={opsFlags.automatedFollowup ? 'on' : 'off'}
+                  disabled={!canOpsFlags}
+                  onChange={(e) =>
+                    setOpsFlags({ ...opsFlags, automatedFollowup: e.target.value === 'on' })
+                  }
+                >
+                  <option value="off">Off (default)</option>
+                  <option value="on">On (still gated)</option>
+                </select>
+              </label>
+              {canOpsFlags && (
+                <button
+                  className="btn"
+                  onClick={() => {
+                    void (async () => {
+                      setErr(null);
+                      setSaved(null);
+                      try {
+                        await api(`/ops/locations/${locationId}/ai-control`, {
+                          method: 'POST',
+                          body: JSON.stringify({
+                            roundRobinAssign: opsFlags.roundRobinAssign,
+                            automatedFollowup: opsFlags.automatedFollowup,
+                            reason: 'Rooftop settings: owner opt-in operations flags',
+                          }),
+                        });
+                        setSaved('Operations flags saved');
+                        await flags.reload();
+                      } catch (e) {
+                        setErr(e instanceof Error ? e.message : 'Failed');
+                      }
+                    })();
+                  }}
+                >
+                  Save operations flags
                 </button>
               )}
             </div>

@@ -79,6 +79,10 @@ class AiControlDto {
   @IsOptional() @IsBoolean() verboseReplies?: boolean;
   /** Optional daypart/rapport; never invents weather/sports. */
   @IsOptional() @IsBoolean() contextualRapport?: boolean;
+  /** Owner opt-in round-robin among active staff — default off. */
+  @IsOptional() @IsBoolean() roundRobinAssign?: boolean;
+  /** Owner opt-in automated follow-up campaigns — still subject to consent/quiet hours; default off. */
+  @IsOptional() @IsBoolean() automatedFollowup?: boolean;
   @IsString() @MinLength(3) @MaxLength(300) reason!: string;
 }
 class AppraisalDto {

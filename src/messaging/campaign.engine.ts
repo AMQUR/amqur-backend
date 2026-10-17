@@ -279,7 +279,11 @@ export class CampaignEngine implements OnModuleInit {
       where: {
         tenantId,
         eventType: {
-          in: ['campaign.step_queued', 'campaign.step_suppressed'],
+          in: [
+            'campaign.step_queued',
+            'campaign.step_suppressed',
+            'campaign.customer_reply',
+          ],
         },
         occurredAt: { gte: since },
       },
@@ -288,15 +292,21 @@ export class CampaignEngine implements OnModuleInit {
     });
     let queued = 0;
     let suppressed = 0;
+    let customerReplies = 0;
+    let bookingIntentReplies = 0;
     const suppressReasons: Record<string, number> = {};
     for (const e of events) {
       const props = (e.properties ?? {}) as {
         campaignId?: string;
         reason?: string | null;
+        bookingIntent?: boolean;
       };
       if (props.campaignId !== campaignId) continue;
       if (e.eventType === 'campaign.step_queued') queued++;
-      else {
+      else if (e.eventType === 'campaign.customer_reply') {
+        customerReplies++;
+        if (props.bookingIntent === true) bookingIntentReplies++;
+      } else {
         suppressed++;
         const r = props.reason ?? 'unknown';
         suppressReasons[r] = (suppressReasons[r] ?? 0) + 1;
@@ -309,7 +319,10 @@ export class CampaignEngine implements OnModuleInit {
       windowDays: days,
       queued,
       suppressed,
+      customerReplies,
+      bookingIntentReplies,
       suppressReasons,
+      note: 'Counts only persisted analytics events. Sold/show outcomes require separate DMS reconciliation — never inferred here.',
     };
   }
 

@@ -1775,6 +1775,8 @@ export class OperationsService {
       verboseReplies: f.verboseReplies === true,
       contextualRapport: f.contextualRapport === true,
       conciseDefault: f.verboseReplies !== true,
+      roundRobinAssign: f.roundRobinAssign === true,
+      automatedFollowup: f.automatedFollowup === true,
     };
   }
 
@@ -1783,6 +1785,8 @@ export class OperationsService {
    * `chat:false` stops the assistant for this rooftop; `llmDisabled:true` keeps the
    * deterministic concierge but makes zero language-model calls.
    * `verboseReplies` / `contextualRapport` control reply length and optional rapport.
+   * `roundRobinAssign` / `automatedFollowup` are owner opt-in ops flags (default off).
+   * Does not enable smsAiReply, voiceAi, or mass marketing.
    * Effective on the next message; audited.
    */
   async setAiControl(
@@ -1794,6 +1798,8 @@ export class OperationsService {
       llmDisabled?: boolean;
       verboseReplies?: boolean;
       contextualRapport?: boolean;
+      roundRobinAssign?: boolean;
+      automatedFollowup?: boolean;
       reason: string;
     },
   ) {
@@ -1814,6 +1820,12 @@ export class OperationsService {
         : {}),
       ...(typeof patch.contextualRapport === 'boolean'
         ? { contextualRapport: patch.contextualRapport }
+        : {}),
+      ...(typeof patch.roundRobinAssign === 'boolean'
+        ? { roundRobinAssign: patch.roundRobinAssign }
+        : {}),
+      ...(typeof patch.automatedFollowup === 'boolean'
+        ? { automatedFollowup: patch.automatedFollowup }
         : {}),
     };
     await this.prisma.$transaction([
@@ -1838,6 +1850,8 @@ export class OperationsService {
             llmDisabled: next.llmDisabled ?? null,
             verboseReplies: next.verboseReplies ?? null,
             contextualRapport: next.contextualRapport ?? null,
+            roundRobinAssign: next.roundRobinAssign ?? null,
+            automatedFollowup: next.automatedFollowup ?? null,
             reason: patch.reason.slice(0, 300),
           } as Prisma.InputJsonValue,
         },
@@ -1850,6 +1864,8 @@ export class OperationsService {
       verboseReplies: next.verboseReplies === true,
       contextualRapport: next.contextualRapport === true,
       conciseDefault: next.verboseReplies !== true,
+      roundRobinAssign: next.roundRobinAssign === true,
+      automatedFollowup: next.automatedFollowup === true,
     };
   }
 
