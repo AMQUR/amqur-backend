@@ -1,17 +1,9 @@
 {
-  "generatedAt": "2026-10-17T05:41:23.113Z",
+  "generatedAt": "2026-10-17T05:54:27.659Z",
   "cases": 25,
-  "passRate": 0.96,
+  "passRate": 1,
   "severe": 0,
-  "findings": [
-    {
-      "case": "sales-stale",
-      "turn": 0,
-      "severity": "EXPECT",
-      "rule": "reply_missing:/hasn't refreshed|confirm availability|out of date/i",
-      "reply": "Here's the one Bronco I can verify in stock right now. Curious what it would run per month?"
-    }
-  ],
+  "findings": [],
   "results": [
     {
       "id": "sales-broad",
@@ -31,7 +23,7 @@
     {
       "id": "sales-stale",
       "category": "sales",
-      "pass": false
+      "pass": true
     },
     {
       "id": "sales-sold",

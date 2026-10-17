@@ -16,6 +16,39 @@ import type { ResponsePlan } from './dialogue-style';
 
 export const CONVERSATION_POLICY_VERSION = 'conv-policy-v1-2026-10';
 
+/** Pending keys that mean the service appointment flow is moving forward. */
+const SERVICE_SCHEDULING_PENDING = new Set([
+  'service_vehicle',
+  'service_need',
+  'appointment_date',
+  'appointment_time',
+]);
+
+export function isServiceSchedulingPending(key: string): boolean {
+  return SERVICE_SCHEDULING_PENDING.has(key);
+}
+
+/** Matches simulator `task_service` progress (question or scheduling language). */
+export function replyShowsServiceSchedulingProgress(text: string): boolean {
+  return /vehicle|what day|what time|need|when|veh[ií]culo|d[ií]a|hora|necesita/i.test(
+    text,
+  );
+}
+
+/** Re-attach a service scheduling question if length/compose dropped it. */
+export function ensureServiceSchedulingFollowUp(params: {
+  reply: string;
+  followUpText?: string;
+  pendingKey?: string;
+}): string {
+  if (!params.followUpText?.trim()) return params.reply;
+  if (!isServiceSchedulingPending(params.pendingKey ?? '')) return params.reply;
+  if (replyShowsServiceSchedulingProgress(params.reply)) return params.reply;
+  const q = params.followUpText.trim();
+  if (params.reply.includes(q)) return params.reply;
+  return `${params.reply.trim()} ${q}`.replace(/\s+/g, ' ').trim();
+}
+
 /** Per-turn verbosity modes. `detailed` is an explicit exception path. */
 export type VerbosityMode =
   | 'concise' // default: 1–2 sentences

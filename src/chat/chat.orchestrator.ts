@@ -81,6 +81,8 @@ import {
 import {
   chooseReplyWithinBudget,
   CONVERSATION_POLICY_VERSION,
+  ensureServiceSchedulingFollowUp,
+  isServiceSchedulingPending,
   planConciseResponse,
   shouldSuppressRankedFollowUp,
   type VerbosityMode,
@@ -397,6 +399,8 @@ type Turn = {
   policy?: FinancialAssumptionPolicy;
   handled: Set<string>;
   conversationExtra: { handoffState?: string; aiPaused?: boolean };
+  /** One-line vehicle ack folded into the next service scheduling question. */
+  serviceVehicleAck?: string;
 };
 
 /** "red Wrangler" → "Wrangler rojo" for Spanish replies (plain colors only). */
@@ -1057,6 +1061,18 @@ export class ChatOrchestrator {
     offer?: OfferKind,
   ) {
     t.questions.push({ key, text, priority, ...(offer ? { offer } : {}) });
+  }
+
+  private serviceSchedulingAsk(
+    t: Turn,
+    key: PendingQuestion,
+    text: string,
+    priority = 2,
+    offer?: OfferKind,
+  ) {
+    const body = t.serviceVehicleAck ? `${t.serviceVehicleAck} ${text}` : text;
+    if (t.serviceVehicleAck) t.serviceVehicleAck = undefined;
+    this.ask(t, key, body, priority, offer);
   }
 
   private signal(t: Turn, s: LeadSignal) {
@@ -4049,7 +4065,7 @@ export class ChatOrchestrator {
           serviceNeed: need,
           when: t.u.entities.when,
         };
-        this.ask(
+        this.serviceSchedulingAsk(
           t,
           'service_vehicle',
           need
@@ -4063,20 +4079,20 @@ export class ChatOrchestrator {
                 'I can help with that. What vehicle are we scheduling service for?',
                 'Con gusto. ¿Para qué vehículo es el servicio?',
               ),
-          2,
         );
         return;
       }
       if (t.u.entities.ownVehicle && !t.handled.has('ACK_OWN_VEHICLE')) {
         t.handled.add('ACK_OWN_VEHICLE');
         const ov = t.u.entities.ownVehicle;
-        t.narration.push(
-          tr(
+        const label = [ov.year, ov.make, ov.model].filter(Boolean).join(' ');
+        if (label) {
+          t.serviceVehicleAck = tr(
             t.lang,
-            `Got it — your ${[ov.year, ov.make, ov.model].filter(Boolean).join(' ')}.`,
-            `Entendido — su ${[ov.year, ov.make, ov.model].filter(Boolean).join(' ')}.`,
-          ),
-        );
+            `Got it — your ${label}.`,
+            `Entendido — su ${label}.`,
+          );
+        }
       }
       // A date/time already given is enough to save the request; the advisor asks the details.
       if (
@@ -4086,7 +4102,7 @@ export class ChatOrchestrator {
         !t.u.entities.when?.date
       ) {
         st.draftAppointment = { type, when: t.u.entities.when };
-        this.ask(
+        this.serviceSchedulingAsk(
           t,
           'service_need',
           tr(
@@ -4094,7 +4110,6 @@ export class ChatOrchestrator {
             'What does the vehicle need — maintenance like an oil change, or something specific you’ve noticed?',
             '¿Qué necesita el vehículo — mantenimiento como cambio de aceite, o algo específico que notó?',
           ),
-          2,
         );
         return;
       }
@@ -4106,7 +4121,7 @@ export class ChatOrchestrator {
         serviceNeed: st.service?.need,
         when: t.u.entities.when,
       };
-      this.ask(
+      this.serviceSchedulingAsk(
         t,
         'appointment_date',
         t.u.entities.looseTime === 'after_work'
@@ -4116,7 +4131,6 @@ export class ChatOrchestrator {
               'Después del trabajo está bien. ¿Qué día piensa venir, y a qué hora sale más o menos?',
             )
           : tr(t.lang, 'What day works for you?', '¿Qué día le funciona?'),
-        2,
       );
       return;
     }
@@ -4142,7 +4156,7 @@ export class ChatOrchestrator {
               ` (abierto ${formatClock(day.open, 'es')}–${formatClock(day.close, 'es')})`,
             )
           : '';
-      this.ask(
+      this.serviceSchedulingAsk(
         t,
         'appointment_time',
         tr(
@@ -4153,6 +4167,10 @@ export class ChatOrchestrator {
         2,
       );
       return;
+    }
+    if (t.serviceVehicleAck) {
+      t.narration.push(t.serviceVehicleAck);
+      t.serviceVehicleAck = undefined;
     }
     t.toolCount += 1;
     const res = await this.appointments.request({
@@ -7079,9 +7097,15 @@ export class ChatOrchestrator {
         .concat(planned.plan.actionNarration ?? [])
         .join(' ')
         .trim();
-      draft = said
-        ? `${said} ${tr(t.lang, 'Or is there something else I can help with?', '¿O hay algo más en lo que le pueda ayudar?')}`
-        : `${tr(t.lang, 'Sorry, I still need one detail —', 'Perdón, aún me falta un dato —')} ${q.text.charAt(0).toLowerCase()}${q.text.slice(1)}`;
+      if (isServiceSchedulingPending(q.key)) {
+        draft = said
+          ? `${said} ${q.text}`
+          : `${tr(t.lang, 'Sorry, I still need one detail —', 'Perdón, aún me falta un dato —')} ${q.text.charAt(0).toLowerCase()}${q.text.slice(1)}`;
+      } else {
+        draft = said
+          ? `${said} ${tr(t.lang, 'Or is there something else I can help with?', '¿O hay algo más en lo que le pueda ayudar?')}`
+          : `${tr(t.lang, 'Sorry, I still need one detail —', 'Perdón, aún me falta un dato —')} ${q.text.charAt(0).toLowerCase()}${q.text.slice(1)}`;
+      }
     }
 
     // Language layer: polish with LLM (router → fallback). Claims present in the server
@@ -7204,6 +7228,15 @@ export class ChatOrchestrator {
       if (planned.length.warnings.length) {
         this.metrics.increment('chat.policy.length_warning');
       }
+    }
+    const hasAppointmentCard = t.cards.some((c) => c.kind === 'appointment');
+    if (q && !hasAppointmentCard) {
+      reply = ensureServiceSchedulingFollowUp({
+        reply,
+        followUpText: q.text,
+        pendingKey: q.key,
+      });
+      segments = [reply];
     }
     if (ack) st.recentOpeners = [...st.recentOpeners, ack].slice(-4);
     st.lastReplySig = signature(reply);

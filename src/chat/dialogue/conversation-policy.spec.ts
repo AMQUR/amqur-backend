@@ -6,6 +6,7 @@ import {
   decideTurnMode,
   estimateWords,
   evaluateLength,
+  ensureServiceSchedulingFollowUp,
   planConciseResponse,
   resolveVerbosityMode,
   splitSentences,
@@ -222,5 +223,28 @@ describe('contextual rapport (fail-closed)', () => {
     });
     expect(d.inject).toBe(true);
     expect(d.opener).toMatch(/Good (morning|afternoon|evening)!/);
+  });
+});
+
+describe('ensureServiceSchedulingFollowUp', () => {
+  it('reattaches a dropped scheduling question after a vehicle ack', () => {
+    const out = ensureServiceSchedulingFollowUp({
+      reply: 'Got it — your Jeep.',
+      followUpText: 'What day works for you?',
+      pendingKey: 'appointment_date',
+    });
+    expect(out).toBe('Got it — your Jeep. What day works for you?');
+  });
+
+  it('leaves replies that already show scheduling progress', () => {
+    const reply =
+      'In general, a steady check-engine light means get it read soon. What day works for you?';
+    expect(
+      ensureServiceSchedulingFollowUp({
+        reply,
+        followUpText: 'What day works for you?',
+        pendingKey: 'appointment_date',
+      }),
+    ).toBe(reply);
   });
 });
