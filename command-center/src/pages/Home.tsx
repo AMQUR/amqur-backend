@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { api } from '../api';
 import { useAsync } from '../hooks';
 import { Badge, Card, ErrorNote, Stat } from '../ui';
@@ -77,6 +78,7 @@ type Satisfaction = {
   reason?: string;
   source?: string;
   csat?: { average: number; count: number; scale: string };
+  byKind?: Record<string, { average: number; count: number }>;
   signals?: {
     replyFeedback?: { total: number; good: number; goodRate: number | null; neededHuman: number };
     handoffs?: { openEscalations: number; handoffRequested7d: number };
@@ -84,6 +86,80 @@ type Satisfaction = {
   note?: string;
   draftsOpen?: number;
 };
+
+type ExecutiveExplain = {
+  answer: string;
+  metrics: Record<string, number | string | Record<string, number>>;
+  links: string[];
+  source: 'platform_records';
+  note: string;
+};
+
+function ExecutiveExplainCard({ locationId }: { locationId: string }) {
+  const [question, setQuestion] = useState('');
+  const [explain, setExplain] = useState<ExecutiveExplain | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [explainError, setExplainError] = useState<string | null>(null);
+
+  const ask = async () => {
+    const trimmed = question.trim();
+    if (!trimmed) return;
+    const p = new URLSearchParams();
+    if (locationId) p.set('locationId', locationId);
+    p.set('q', trimmed);
+    setLoading(true);
+    setExplainError(null);
+    try {
+      setExplain(await api<ExecutiveExplain>(`/ops/executive/explain?${p}`));
+    } catch (e) {
+      setExplain(null);
+      setExplainError(e instanceof Error ? e.message : 'Request failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card title="Executive explain">
+      <p className="muted small">
+        Ask about leads, appointments, handoffs, parts, finance, trades, CSI, inventory, or knowledge —
+        answers use verified platform counts only.
+      </p>
+      <div className="row" style={{ gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          type="search"
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void ask();
+          }}
+          placeholder="e.g. How are leads this week?"
+          aria-label="Executive question"
+          style={{ flex: '1 1 16rem', minWidth: '12rem' }}
+        />
+        <button type="button" disabled={loading || !question.trim()} onClick={() => void ask()}>
+          {loading ? '…' : 'Explain'}
+        </button>
+      </div>
+      {explainError && <p className="muted small">{explainError}</p>}
+      {explain && (
+        <>
+          <p>{explain.answer}</p>
+          {explain.links.length > 0 && (
+            <p className="small">
+              {explain.links.map((href) => (
+                <a key={href} href={href} style={{ marginRight: '0.75rem' }}>
+                  {href.replace('#/', '')}
+                </a>
+              ))}
+            </p>
+          )}
+          <p className="muted small">{explain.note}</p>
+        </>
+      )}
+    </Card>
+  );
+}
 
 export function Home({ locationId }: { locationId: string }) {
   const q = locationId ? `?locationId=${locationId}` : '';
@@ -95,6 +171,7 @@ export function Home({ locationId }: { locationId: string }) {
     <div className="page">
       <h1>Today</h1>
       <ErrorNote error={error ?? brief.error ?? missed.error ?? sat.error} />
+      <ExecutiveExplainCard locationId={locationId} />
       {brief.data && (
         <Card title="Manager daily brief">
           <ul className="bullets">
@@ -140,7 +217,11 @@ export function Home({ locationId }: { locationId: string }) {
         <Card title="Customer satisfaction">
           {sat.data.available && sat.data.csat ? (
             <div className="stats">
-              <Stat label="CSI average" value={sat.data.csat.average} hint={`${sat.data.csat.count} responses · ${sat.data.csat.scale}`} />
+              <Stat label="CSI average" value={sat.data.csat.average} hint={`${sat.data.csat.count} responses · ${sat.data.csat.scale} · internal only`} />
+              {sat.data.byKind &&
+                Object.entries(sat.data.byKind).map(([kind, v]) => (
+                  <Stat key={kind} label={`${kind} CSI`} value={v.average} hint={`${v.count} responses`} />
+                ))}
             </div>
           ) : (
             <p className="muted small">

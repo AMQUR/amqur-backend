@@ -166,6 +166,25 @@ export class SoldDealService {
         trigger: 'deal.sold_recorded',
         subjectId: leadId,
       });
+      // Internal SALES CSI draft for staff follow-up — never auto-SMS, not OEM CSI.
+      await this.prisma.customerSurvey
+        .create({
+          data: {
+            tenantId,
+            locationId,
+            leadId,
+            conversationId,
+            kind: 'SALES',
+            channel: 'IN_PERSON',
+            status: 'DRAFT',
+            metadata: {
+              trigger: 'deal_sold',
+              dmsDealId,
+              note: 'Staff-recorded CSI draft — not an OEM manufacturer survey',
+            },
+          },
+        })
+        .catch(() => null);
     }
 
     return { accepted: true, dmsDealId, leadId };

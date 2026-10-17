@@ -6,6 +6,9 @@ describe('SoldDealService', () => {
     lead: { findFirst: jest.fn(), update: jest.fn() },
     message: { findMany: jest.fn() },
     auditLog: { create: jest.fn() },
+    customerSurvey: {
+      create: jest.fn().mockResolvedValue({ id: 'survey-1' }),
+    },
   };
   const analytics = { trackEvent: jest.fn().mockResolvedValue(null) };
   const campaigns = { onEvent: jest.fn().mockResolvedValue(undefined) };
@@ -27,6 +30,7 @@ describe('SoldDealService', () => {
     jest.resetAllMocks();
     campaigns.onEvent.mockResolvedValue(undefined);
     analytics.trackEvent.mockResolvedValue(null);
+    prisma.customerSurvey.create.mockResolvedValue({ id: 'survey-1' });
   });
 
   it('returns dms_not_connected when no live DMS integration exists', async () => {
@@ -86,6 +90,15 @@ describe('SoldDealService', () => {
       locationId: 'loc-1',
       trigger: 'deal.sold_recorded',
       subjectId: 'lead-1',
+    });
+    expect(prisma.customerSurvey.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        tenantId: 'tenant-1',
+        leadId: 'lead-1',
+        kind: 'SALES',
+        status: 'DRAFT',
+        channel: 'IN_PERSON',
+      }),
     });
   });
 

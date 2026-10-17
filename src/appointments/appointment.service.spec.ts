@@ -184,6 +184,7 @@ describe('AppointmentService.updateStaff', () => {
       AppointmentStatus.PENDING_CONFIRMATION,
       AppointmentStatus.CONFIRMED,
       AppointmentStatus.CANCELLED,
+      AppointmentStatus.COMPLETED,
     ]);
   });
 
@@ -217,10 +218,23 @@ describe('AppointmentService.updateStaff', () => {
     );
   });
 
+  it('allows COMPLETED via staffTransition', async () => {
+    await svc.updateStaff('tenant-1', 'loc-1', 'appt-1', 'user-1', {
+      status: AppointmentStatus.COMPLETED,
+    });
+    expect(svc.staffTransition).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appointmentId: 'appt-1',
+        to: AppointmentStatus.COMPLETED,
+        actorId: 'user-1',
+      }),
+    );
+  });
+
   it('rejects disallowed status values', async () => {
     await expect(
       svc.updateStaff('tenant-1', 'loc-1', 'appt-1', 'user-1', {
-        status: AppointmentStatus.COMPLETED,
+        status: AppointmentStatus.NO_SHOW,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
@@ -256,6 +270,9 @@ describe('AppointmentService.staffTransition', () => {
     },
     analyticsEvent: { create: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    customerSurvey: {
+      create: jest.fn().mockResolvedValue({ id: 'survey-1' }),
+    },
   };
   const campaigns = { onEvent: jest.fn().mockResolvedValue(undefined) };
 
@@ -302,5 +319,88 @@ describe('AppointmentService.staffTransition', () => {
       subjectId: 'appt-1',
       scheduledAt,
     });
+  });
+
+  it('creates internal SERVICE CSI draft when staff marks SERVICE COMPLETED', async () => {
+    prisma.appointment.findFirst.mockResolvedValue({
+      id: 'appt-svc-1',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      type: 'SERVICE',
+      status: AppointmentStatus.CONFIRMED,
+      leadId: 'lead-1',
+      conversationId: 'conv-1',
+      provenance: {},
+    });
+    prisma.appointment.update.mockResolvedValue({
+      id: 'appt-svc-1',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      type: 'SERVICE',
+      status: AppointmentStatus.COMPLETED,
+    });
+    const svc = new AppointmentService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await svc.staffTransition({
+      tenantId: 'tenant-1',
+      appointmentId: 'appt-svc-1',
+      to: AppointmentStatus.COMPLETED,
+      actorId: 'user-1',
+    });
+
+    expect(prisma.customerSurvey.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        tenantId: 'tenant-1',
+        locationId: 'loc-1',
+        leadId: 'lead-1',
+        conversationId: 'conv-1',
+        appointmentId: 'appt-svc-1',
+        kind: 'SERVICE',
+        status: 'DRAFT',
+        channel: 'IN_PERSON',
+        metadata: expect.objectContaining({
+          trigger: 'service_appointment_completed',
+        }),
+      }),
+    });
+  });
+
+  it('does not create CSI draft when SALES appointment is COMPLETED', async () => {
+    prisma.appointment.findFirst.mockResolvedValue({
+      id: 'appt-sales-1',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      type: 'SALES',
+      status: AppointmentStatus.CONFIRMED,
+      provenance: {},
+    });
+    prisma.appointment.update.mockResolvedValue({
+      id: 'appt-sales-1',
+      locationId: 'loc-1',
+      type: 'SALES',
+      status: AppointmentStatus.COMPLETED,
+    });
+    const svc = new AppointmentService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+
+    await svc.staffTransition({
+      tenantId: 'tenant-1',
+      appointmentId: 'appt-sales-1',
+      to: AppointmentStatus.COMPLETED,
+      actorId: 'user-1',
+    });
+
+    expect(prisma.customerSurvey.create).not.toHaveBeenCalled();
   });
 });

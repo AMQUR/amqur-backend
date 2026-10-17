@@ -315,4 +315,40 @@ describe('DB migration & integrity (disposable Postgres)', () => {
     expect(survey.status).toBe('DRAFT');
     expect(survey.score).toBeNull();
   });
+
+  it('CustomerSurvey retention columns + template table exist', async () => {
+    const kindEnum = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
+      SELECT e.enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON e.enumtypid = t.oid
+      WHERE t.typname = 'CustomerSurveyKind'
+        AND e.enumlabel = 'SERVICE'
+    `;
+    expect(kindEnum.map((r) => r.enumlabel)).toContain('SERVICE');
+
+    const t = await prisma.tenant.create({
+      data: { slug: `csi-ret-${Date.now()}`, name: 'CSI Ret' },
+    });
+    const tpl = await prisma.customerSurveyTemplate.create({
+      data: {
+        tenantId: t.id,
+        kind: 'SERVICE',
+        name: `Service talk track ${Date.now()}`,
+        scriptBody: 'Ask about the service visit and advisor care.',
+        defaultChannel: 'IN_PERSON',
+      },
+    });
+    const survey = await prisma.customerSurvey.create({
+      data: {
+        tenantId: t.id,
+        kind: 'SERVICE',
+        templateId: tpl.id,
+        channel: 'IN_PERSON',
+        status: 'DRAFT',
+        followUpStatus: 'NONE',
+      },
+    });
+    expect(survey.kind).toBe('SERVICE');
+    expect(survey.templateId).toBe(tpl.id);
+  });
 });

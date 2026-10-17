@@ -114,6 +114,7 @@ export const STAFF_APPOINTMENT_QUEUE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.PENDING_CONFIRMATION,
   AppointmentStatus.CONFIRMED,
   AppointmentStatus.CANCELLED,
+  AppointmentStatus.COMPLETED,
 ];
 
 /**
@@ -659,6 +660,28 @@ export class AppointmentService {
           },
         })
         .catch(() => undefined);
+    }
+    if (params.to === 'COMPLETED' && appt.type === 'SERVICE') {
+      // Internal SERVICE CSI draft for staff follow-up — never auto-SMS, not OEM CSI.
+      await this.prisma.customerSurvey
+        .create({
+          data: {
+            tenantId: params.tenantId,
+            locationId: updated.locationId,
+            leadId: appt.leadId,
+            conversationId: appt.conversationId,
+            appointmentId: updated.id,
+            kind: 'SERVICE',
+            channel: 'IN_PERSON',
+            status: 'DRAFT',
+            metadata: {
+              trigger: 'service_appointment_completed',
+              appointmentId: updated.id,
+              note: 'Staff-recorded CSI draft — not an OEM manufacturer survey',
+            },
+          },
+        })
+        .catch(() => null);
     }
     await this.prisma.auditLog
       .create({

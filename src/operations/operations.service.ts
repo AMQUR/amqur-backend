@@ -807,14 +807,23 @@ export class OperationsService {
       },
     });
     let csiDraftsOpen = 0;
+    let csiFollowUpsOpen = 0;
     if (this.surveyProviderConnected() && this.prisma.customerSurvey) {
-      csiDraftsOpen = await this.prisma.customerSurvey.count({
-        where: {
-          tenantId: scope.tenantId,
-          ...this.loc(scope),
-          status: 'DRAFT',
-        },
-      });
+      const baseCsi = {
+        tenantId: scope.tenantId,
+        ...this.loc(scope),
+      };
+      [csiDraftsOpen, csiFollowUpsOpen] = await Promise.all([
+        this.prisma.customerSurvey.count({
+          where: { ...baseCsi, status: 'DRAFT' },
+        }),
+        this.prisma.customerSurvey.count({
+          where: {
+            ...baseCsi,
+            followUpStatus: { in: ['PENDING', 'ACKNOWLEDGED'] },
+          },
+        }),
+      ]);
     }
     const priorities: Array<{ key: string; count: number; href: string }> = [
       {
@@ -868,6 +877,11 @@ export class OperationsService {
         href: '#/surveys',
       },
       {
+        key: 'csi_follow_ups_open',
+        count: csiFollowUpsOpen,
+        href: '#/surveys',
+      },
+      {
         key: 'knowledge_misses',
         count: overview.aiQuality.knowledgeMisses,
         href: '#/knowledge',
@@ -907,6 +921,169 @@ export class OperationsService {
       aiQuality: overview.aiQuality.replyFeedback,
       outcomes: overview.outcomes,
       note: 'Brief uses only persisted platform records. Sold/show attribution appears only when DMS/CRM outcome sync is connected.',
+    };
+  }
+
+  /**
+   * Executive keyword explain — counts from overview + daily brief only; never invents metrics.
+   */
+  async executiveExplain(scope: Scope, q: string) {
+    const query = q.trim().toLowerCase();
+    const note =
+      'Answers use verified platform records from overview and daily brief only; no LLM inference or invented metrics.';
+    if (!query) {
+      return {
+        answer:
+          'Ask about leads, appointments, handoffs, parts, finance, trades, CSI, inventory, or knowledge using keywords in your question.',
+        metrics: {},
+        links: ['#/queues', '#/inbox'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+
+    const [overview, brief] = await Promise.all([
+      this.overview(scope),
+      this.dailyBrief(scope),
+    ]);
+    const csiDrafts =
+      brief.priorities.find((p) => p.key === 'csi_drafts_open')?.count ?? 0;
+    const csiFollowUps =
+      brief.priorities.find((p) => p.key === 'csi_follow_ups_open')?.count ?? 0;
+    const rf = overview.aiQuality.replyFeedback;
+    const freshness = overview.technical.inventory.freshness;
+    const inventoryUnits = Object.values(freshness).reduce((a, b) => a + b, 0);
+
+    const baseMetrics: Record<string, number | string> = {
+      window: overview.window,
+    };
+
+    if (query.includes('lead')) {
+      return {
+        answer: `In the last 7 days, ${overview.outcomes.leadsCaptured} leads were captured; ${overview.attention.hotLeads} hot leads need attention now.`,
+        metrics: {
+          ...baseMetrics,
+          leadsCaptured7d: overview.outcomes.leadsCaptured,
+          hotLeads: overview.attention.hotLeads,
+        },
+        links: ['#/inbox', '#/queues'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('appointment') || query.includes('appt')) {
+      return {
+        answer: `${overview.attention.appointmentsAwaitingConfirmation} appointment(s) await confirmation; ${brief.today.appointmentsOnBook} on the book today and ${overview.outcomes.confirmedAppointments} confirmed in the last 7 days.`,
+        metrics: {
+          ...baseMetrics,
+          awaitingConfirmation: overview.attention.appointmentsAwaitingConfirmation,
+          appointmentsOnBookToday: brief.today.appointmentsOnBook,
+          confirmedAppointments7d: overview.outcomes.confirmedAppointments,
+        },
+        links: ['#/appointments'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('handoff') || query.includes('escalat')) {
+      return {
+        answer: `${overview.attention.openHandoffs} open handoff escalation(s) are in the queue right now.`,
+        metrics: {
+          ...baseMetrics,
+          openHandoffs: overview.attention.openHandoffs,
+        },
+        links: ['#/inbox'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('part')) {
+      return {
+        answer: `${overview.attention.partsOpen} parts inquiry(ies) are open and awaiting staff action.`,
+        metrics: {
+          ...baseMetrics,
+          partsOpen: overview.attention.partsOpen,
+        },
+        links: ['#/queues'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('finance') || query.includes('credit')) {
+      return {
+        answer: `${overview.attention.financeOpen} finance request(s) are open; ${overview.outcomes.creditLinksOffered} credit links were offered in the last 7 days (${overview.outcomes.creditLinksClicked} clicked).`,
+        metrics: {
+          ...baseMetrics,
+          financeOpen: overview.attention.financeOpen,
+          creditLinksOffered7d: overview.outcomes.creditLinksOffered,
+          creditLinksClicked7d: overview.outcomes.creditLinksClicked,
+        },
+        links: ['#/queues'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('trade')) {
+      return {
+        answer: `${overview.attention.tradesOpen} trade-in request(s) are open in staff queues.`,
+        metrics: {
+          ...baseMetrics,
+          tradesOpen: overview.attention.tradesOpen,
+        },
+        links: ['#/queues'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('csi') || query.includes('satisfaction') || query.includes('csat')) {
+      return {
+        answer: `${csiDrafts} CSI draft(s) and ${csiFollowUps} manager follow-up(s) are open (internal CSI only — not OEM scores); staff rated ${rf.good}/${rf.total} AI replies good in the last 7 days.`,
+        metrics: {
+          ...baseMetrics,
+          csiDraftsOpen: csiDrafts,
+          csiFollowUpsOpen: csiFollowUps,
+          replyFeedbackTotal7d: rf.total,
+          replyFeedbackGood7d: rf.good,
+        },
+        links: ['#/surveys', '#/inbox'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('inventory') || query.includes('stock')) {
+      return {
+        answer: `${inventoryUnits} available/in-transit unit(s) on file; ${overview.aiQuality.inventoryMisses} inventory miss signal(s) in the last 7 days.`,
+        metrics: {
+          ...baseMetrics,
+          inventoryUnitsListed: inventoryUnits,
+          inventoryMisses7d: overview.aiQuality.inventoryMisses,
+          freshness,
+        },
+        links: ['#/inventory'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('knowledge') || query.includes('kb')) {
+      return {
+        answer: `${overview.aiQuality.knowledgeMisses} knowledge miss event(s) were recorded in the last 7 days.`,
+        metrics: {
+          ...baseMetrics,
+          knowledgeMisses7d: overview.aiQuality.knowledgeMisses,
+        },
+        links: ['#/knowledge'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+
+    return {
+      answer:
+        'No keyword matched. Try leads, appointments, handoffs, parts, finance, trades, CSI, inventory, or knowledge in your question.',
+      metrics: baseMetrics,
+      links: ['#/queues', '#/inbox'],
+      source: 'platform_records' as const,
+      note,
     };
   }
 
@@ -1179,12 +1356,13 @@ export class OperationsService {
           respondedAt: { gte: since },
           score: { not: null },
         },
-        select: { score: true },
+        select: { score: true, kind: true },
         take: 2000,
       });
       const scores = responded
         .map((r) => r.score)
         .filter((s): s is number => typeof s === 'number');
+      const byKind = this.satisfactionByKind(responded);
       if (scores.length > 0) {
         const average =
           Math.round(
@@ -1195,18 +1373,20 @@ export class OperationsService {
           source: 'customer_survey_internal' as const,
           window: overview.window,
           csat: { average, count: scores.length, scale: '1-10' as const },
+          byKind,
           draftsOpen,
           signals: proxy,
-          note: 'CSAT from staff-recorded CustomerSurvey responses only. Mass SMS send is not enabled.',
+          note: 'Internal staff-recorded CSI only — not OEM manufacturer scores. Mass SMS send is not enabled.',
         };
       }
       return {
         available: false as const,
         reason: 'no_survey_responses' as const,
         window: overview.window,
+        byKind,
         draftsOpen,
         signals: proxy,
-        note: 'CustomerSurvey model is live. Record in-person/phone CSI via POST /ops/surveys — no auto-send.',
+        note: 'CustomerSurvey model is live. Record in-person/phone CSI via POST /ops/surveys — no auto-send. Not OEM CSI.',
       };
     }
 
@@ -1237,6 +1417,31 @@ export class OperationsService {
         handoffRequested7d,
       },
     };
+  }
+
+  /** Per-department CSI averages from RESPONDED rows only (never invents OEM scores). */
+  private satisfactionByKind(
+    rows: Array<{ score: number | null; kind: string | null }>,
+  ): Record<string, { average: number; count: number }> {
+    const buckets = new Map<string, number[]>();
+    for (const row of rows) {
+      if (typeof row.score !== 'number') continue;
+      const key = row.kind ?? 'SALES';
+      const list = buckets.get(key) ?? [];
+      list.push(row.score);
+      buckets.set(key, list);
+    }
+    const out: Record<string, { average: number; count: number }> = {};
+    for (const [kind, scores] of buckets) {
+      out[kind] = {
+        average:
+          Math.round(
+            (scores.reduce((a, b) => a + b, 0) / scores.length) * 10,
+          ) / 10,
+        count: scores.length,
+      };
+    }
+    return out;
   }
 
   /**

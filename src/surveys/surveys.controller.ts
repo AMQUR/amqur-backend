@@ -14,6 +14,7 @@ import {
   Max,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -30,12 +31,27 @@ class CreateDraftDto {
   @IsOptional() @IsString() locationId?: string;
   @IsOptional() @IsString() leadId?: string;
   @IsOptional() @IsString() conversationId?: string;
+  @IsOptional() @IsString() appointmentId?: string;
+  @IsOptional() @IsString() kind?: string;
+  @IsOptional() @IsString() templateId?: string;
   @IsOptional() @IsString() channel?: string;
 }
 
 class RecordResponseDto {
   @IsInt() @Min(1) @Max(10) score!: number;
   @IsOptional() @IsString() @MaxLength(2000) comment?: string;
+}
+
+class ResolveFollowUpDto {
+  @IsOptional() @IsString() @MaxLength(2000) managerNote?: string;
+}
+
+class CreateTemplateDto {
+  @IsString() @MinLength(2) @MaxLength(80) name!: string;
+  @IsString() @MinLength(10) @MaxLength(4000) scriptBody!: string;
+  @IsOptional() @IsString() kind?: string;
+  @IsOptional() @IsString() locationId?: string;
+  @IsOptional() @IsString() defaultChannel?: string;
 }
 
 @Controller('ops/surveys')
@@ -49,6 +65,7 @@ export class SurveysController {
     @CurrentUser() user: AuthUser,
     @Query('locationId') locationId?: string,
     @Query('status') status?: string,
+    @Query('kind') kind?: string,
   ) {
     assertStaffRole(user);
     const tenantId = resolveTenantId(user);
@@ -56,6 +73,7 @@ export class SurveysController {
     return this.surveys.list(tenantId, {
       locationId: loc,
       status: status as never,
+      kind,
     });
   }
 
@@ -64,11 +82,57 @@ export class SurveysController {
   rollup(
     @CurrentUser() user: AuthUser,
     @Query('locationId') locationId?: string,
+    @Query('kind') kind?: string,
   ) {
     assertStaffRole(user);
     const tenantId = resolveTenantId(user);
     const loc = resolveLocationScope(user, locationId);
-    return this.surveys.rollup(tenantId, { locationId: loc });
+    return this.surveys.rollup(tenantId, { locationId: loc, kind });
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  @Get('follow-ups')
+  followUps(
+    @CurrentUser() user: AuthUser,
+    @Query('locationId') locationId?: string,
+  ) {
+    assertStaffRole(user);
+    const tenantId = resolveTenantId(user);
+    const loc = resolveLocationScope(user, locationId);
+    return this.surveys.listFollowUps(tenantId, { locationId: loc });
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  @Get('templates')
+  templates(
+    @CurrentUser() user: AuthUser,
+    @Query('locationId') locationId?: string,
+    @Query('kind') kind?: string,
+  ) {
+    assertStaffRole(user);
+    const tenantId = resolveTenantId(user);
+    const loc = resolveLocationScope(user, locationId);
+    return this.surveys.listTemplates(tenantId, { locationId: loc, kind });
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Post('templates')
+  createTemplate(
+    @CurrentUser() user: AuthUser,
+    @Body() body: CreateTemplateDto,
+  ) {
+    assertStaffRole(user);
+    const tenantId = resolveTenantId(user);
+    const loc = resolveLocationScope(user, body.locationId);
+    return this.surveys.createTemplate({
+      tenantId,
+      locationId: loc,
+      kind: body.kind,
+      name: body.name,
+      scriptBody: body.scriptBody,
+      defaultChannel: body.defaultChannel,
+      createdByUserId: user.sub,
+    });
   }
 
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
@@ -82,6 +146,9 @@ export class SurveysController {
       locationId: loc,
       leadId: body.leadId,
       conversationId: body.conversationId,
+      appointmentId: body.appointmentId,
+      kind: body.kind,
+      templateId: body.templateId,
       channel: body.channel,
       createdByUserId: user.sub,
     });
@@ -102,6 +169,35 @@ export class SurveysController {
       score: body.score,
       comment: body.comment,
       actorUserId: user.sub,
+    });
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Post(':id/follow-up/acknowledge')
+  ackFollowUp(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    assertStaffRole(user);
+    const tenantId = resolveTenantId(user);
+    return this.surveys.acknowledgeFollowUp({
+      tenantId,
+      surveyId: id,
+      actorUserId: user.sub,
+    });
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Post(':id/follow-up/resolve')
+  resolveFollowUp(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: ResolveFollowUpDto,
+  ) {
+    assertStaffRole(user);
+    const tenantId = resolveTenantId(user);
+    return this.surveys.resolveFollowUp({
+      tenantId,
+      surveyId: id,
+      actorUserId: user.sub,
+      managerNote: body.managerNote,
     });
   }
 }

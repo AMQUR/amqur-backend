@@ -83,7 +83,10 @@ describe('OperationsService.satisfaction', () => {
     const prismaWithSurvey = {
       ...prisma,
       customerSurvey: {
-        findMany: jest.fn().mockResolvedValue([{ score: 9 }, { score: 7 }]),
+        findMany: jest.fn().mockResolvedValue([
+          { score: 9, kind: 'SALES' },
+          { score: 7, kind: 'SERVICE' },
+        ]),
         count: jest.fn().mockResolvedValue(1),
       },
     };
@@ -116,6 +119,13 @@ describe('OperationsService.satisfaction', () => {
       average: 8,
       count: 2,
       scale: '1-10',
+    });
+    expect(
+      (r as { byKind?: Record<string, { average: number; count: number }> })
+        .byKind,
+    ).toEqual({
+      SALES: { average: 9, count: 1 },
+      SERVICE: { average: 7, count: 1 },
     });
   });
 });
@@ -596,6 +606,70 @@ describe('OperationsService.missedOpportunities', () => {
       combinedAttention: 12,
     });
     expect(r.note).toMatch(/persisted queues and analytics/);
+  });
+});
+
+describe('OperationsService.executiveExplain', () => {
+  it('answers lead questions from overview counts only', async () => {
+    const svc = makeOperationsService({});
+    jest.spyOn(svc, 'overview').mockResolvedValue({
+      window: '7d',
+      outcomes: { leadsCaptured: 12, creditLinksOffered: 0, creditLinksClicked: 0 },
+      attention: { hotLeads: 3, partsOpen: 0, financeOpen: 0, tradesOpen: 0, openHandoffs: 0, appointmentsAwaitingConfirmation: 0 },
+      aiQuality: {
+        inventoryMisses: 0,
+        knowledgeMisses: 0,
+        replyFeedback: { total: 0, good: 0 },
+      },
+      technical: { inventory: { freshness: { FRESH: 10 } } },
+    } as Awaited<ReturnType<OperationsService['overview']>>);
+    jest.spyOn(svc, 'dailyBrief').mockResolvedValue({
+      today: { appointmentsOnBook: 0 },
+      priorities: [],
+    } as Awaited<ReturnType<OperationsService['dailyBrief']>>);
+
+    const r = await svc.executiveExplain(
+      { tenantId: 'tenant-1', locationId: null },
+      'How are leads?',
+    );
+
+    expect(r.source).toBe('platform_records');
+    expect(r.metrics).toEqual({
+      window: '7d',
+      leadsCaptured7d: 12,
+      hotLeads: 3,
+    });
+    expect(r.answer).toContain('12');
+    expect(r.answer).toContain('3');
+    expect(r.links).toContain('#/inbox');
+  });
+
+  it('answers knowledge questions from analytics miss counts', async () => {
+    const svc = makeOperationsService({});
+    jest.spyOn(svc, 'overview').mockResolvedValue({
+      window: '7d',
+      outcomes: { leadsCaptured: 0, creditLinksOffered: 0, creditLinksClicked: 0 },
+      attention: { hotLeads: 0, partsOpen: 0, financeOpen: 0, tradesOpen: 0, openHandoffs: 0, appointmentsAwaitingConfirmation: 0 },
+      aiQuality: {
+        inventoryMisses: 0,
+        knowledgeMisses: 5,
+        replyFeedback: { total: 0, good: 0 },
+      },
+      technical: { inventory: { freshness: {} } },
+    } as Awaited<ReturnType<OperationsService['overview']>>);
+    jest.spyOn(svc, 'dailyBrief').mockResolvedValue({
+      today: { appointmentsOnBook: 0 },
+      priorities: [],
+    } as Awaited<ReturnType<OperationsService['dailyBrief']>>);
+
+    const r = await svc.executiveExplain(
+      { tenantId: 'tenant-1', locationId: 'loc-1' },
+      'knowledge gaps',
+    );
+
+    expect(r.metrics.knowledgeMisses7d).toBe(5);
+    expect(r.answer).toContain('5');
+    expect(r.links).toEqual(['#/knowledge']);
   });
 });
 

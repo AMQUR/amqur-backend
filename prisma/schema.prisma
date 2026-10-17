@@ -118,8 +118,9 @@ model Tenant {
   priceQuoteRequests     PriceQuoteRequest[]
   conversationPlaybooks  ConversationPlaybook[]
   promptVersions         PromptVersion[]
-  customerActionPages    CustomerActionPage[]
-  customerSurveys        CustomerSurvey[]
+  customerActionPages      CustomerActionPage[]
+  customerSurveys          CustomerSurvey[]
+  customerSurveyTemplates  CustomerSurveyTemplate[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1725,8 +1726,35 @@ model CustomerActionPage {
   @@index([tenantId, leadId])
 }
 
+/// Staff-facing survey script (not an OEM CSI instrument). Never auto-SMS.
+model CustomerSurveyTemplate {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+  kind       CustomerSurveyKind @default(SALES)
+  name       String
+  /// Staff interview script / phone talk track — not a customer SMS body
+  scriptBody String
+  defaultChannel String  @default("IN_PERSON")
+  active     Boolean @default(true)
+  version    Int     @default(1)
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  surveys CustomerSurvey[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId, kind, active])
+}
+
 /// Internal CSI / CSAT capture — staff-created drafts only until an approved send path exists.
 /// Never auto-SMS. Scores come only from RESPONDED rows (or a future connected provider).
+/// Not an OEM manufacturer CSI score.
 model CustomerSurvey {
   id String @id @default(cuid())
 
@@ -1736,14 +1764,26 @@ model CustomerSurvey {
   locationId     String?
   leadId         String?
   conversationId String?
+  appointmentId  String?
 
-  /// SMS | EMAIL | LINK | IN_PERSON
+  kind       CustomerSurveyKind @default(SALES)
+  templateId String?
+  template   CustomerSurveyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  /// SMS | EMAIL | LINK | IN_PERSON — channel of capture; SMS does not imply outbound send
   channel String  @default("LINK")
   status  CustomerSurveyStatus @default(DRAFT)
 
   /// 1–10 when the customer responded — null until RESPONDED
   score   Int?
   comment String?
+
+  /// Manager recovery queue when score is low or complaint language is present
+  followUpRequired Boolean @default(false)
+  followUpStatus   CustomerSurveyFollowUpStatus @default(NONE)
+  assignedManagerUserId String?
+  managerNote      String?
+  followUpAt       DateTime?
 
   sentAt       DateTime?
   respondedAt  DateTime?
@@ -1754,8 +1794,22 @@ model CustomerSurvey {
   updatedAt DateTime @updatedAt
 
   @@index([tenantId, status])
+  @@index([tenantId, kind, status])
+  @@index([tenantId, followUpStatus])
   @@index([tenantId, locationId])
   @@index([leadId])
+}
+
+enum CustomerSurveyKind {
+  SALES
+  SERVICE
+}
+
+enum CustomerSurveyFollowUpStatus {
+  NONE
+  PENDING
+  ACKNOWLEDGED
+  RESOLVED
 }
 
 enum CustomerSurveyStatus {
