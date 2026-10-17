@@ -6866,7 +6866,7 @@ export class ChatOrchestrator {
         hasSubstantiveAnswers: t.answers.length > 0,
         questionPriority: q.priority,
         questionKey: q.key,
-        forcedReply: opts.forcedReply,
+        forcedReply: opts.forcedReply === true,
       })
     ) {
       silentPending = silentPending ?? (q.key !== 'none' ? q.key : undefined);
