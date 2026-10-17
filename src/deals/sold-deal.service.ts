@@ -1,0 +1,164 @@
+import { Injectable } from '@nestjs/common';
+import { LeadStatus } from '@prisma/client';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { PrismaService } from '../prisma/prisma.service';
+
+/** Structured reconciliation input — never inferred from chat/AI text. */
+export type SoldDealInputSource = 'staff' | 'dms';
+
+export type RecordSoldDealInput = {
+  locationId: string;
+  source: SoldDealInputSource;
+  /** Authoritative DMS deal / contract identifier */
+  dmsDealId: string;
+  leadId?: string;
+  vin?: string;
+  stockNumber?: string;
+  /** ISO timestamp from DMS when available */
+  soldAt?: string;
+};
+
+export type RecordSoldDealActor = {
+  id: string;
+  role: string;
+};
+
+export type RecordSoldDealResult =
+  | {
+      accepted: true;
+      dmsDealId: string;
+      leadId?: string;
+    }
+  | {
+      accepted: false;
+      reason:
+        | 'dms_not_connected'
+        | 'invalid_input'
+        | 'lead_not_found'
+        | 'lead_not_eligible';
+    };
+
+const CONVERTIBLE: LeadStatus[] = [
+  LeadStatus.OPEN,
+  LeadStatus.CONTACTED,
+  LeadStatus.QUALIFIED,
+];
+
+/**
+ * Fail-closed sold-deal reconciliation: accepts only structured staff or DMS
+ * payloads when an enabled, live DMS integration exists. Never marks inventory sold.
+ */
+@Injectable()
+export class SoldDealService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly analytics: AnalyticsService,
+  ) {}
+
+  async recordSoldDeal(
+    tenantId: string,
+    actor: RecordSoldDealActor,
+    input: RecordSoldDealInput,
+  ): Promise<RecordSoldDealResult> {
+    const dmsDealId = input.dmsDealId?.trim();
+    if (
+      !input.locationId?.trim() ||
+      !dmsDealId ||
+      (input.source !== 'staff' && input.source !== 'dms')
+    ) {
+      return { accepted: false, reason: 'invalid_input' };
+    }
+
+    const locationId = input.locationId.trim();
+    const connected = await this.dmsConnected(tenantId, locationId);
+    if (!connected) {
+      return { accepted: false, reason: 'dms_not_connected' };
+    }
+
+    let leadId: string | undefined;
+    if (input.leadId?.trim()) {
+      const lead = await this.prisma.lead.findFirst({
+        where: {
+          id: input.leadId.trim(),
+          tenantId,
+          locationId,
+        },
+        select: { id: true, status: true, notes: true },
+      });
+      if (!lead) {
+        return { accepted: false, reason: 'lead_not_found' };
+      }
+      if (!CONVERTIBLE.includes(lead.status)) {
+        return { accepted: false, reason: 'lead_not_eligible' };
+      }
+      const stamp = `[sold:${dmsDealId}]`;
+      const notes = lead.notes?.includes(stamp)
+        ? lead.notes
+        : [lead.notes, stamp].filter(Boolean).join('\n');
+      await this.prisma.lead.update({
+        where: { id: lead.id },
+        data: { status: LeadStatus.CONVERTED, notes },
+      });
+      leadId = lead.id;
+    }
+
+    const soldAt =
+      input.soldAt && !Number.isNaN(Date.parse(input.soldAt))
+        ? new Date(input.soldAt).toISOString()
+        : undefined;
+
+    await this.analytics.trackEvent(
+      tenantId,
+      locationId,
+      'deal.sold_recorded',
+      {
+        dmsDealId,
+        source: input.source,
+        leadId,
+        vin: input.vin?.trim() || undefined,
+        stockNumber: input.stockNumber?.trim() || undefined,
+        soldAt,
+        recordedByStaffId: input.source === 'staff' ? actor.id : undefined,
+        staffRole: input.source === 'staff' ? actor.role : undefined,
+      },
+    );
+
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId,
+        userId: input.source === 'staff' ? actor.id : null,
+        action: 'deal.sold_recorded',
+        resource: 'lead',
+        resourceId: leadId ?? null,
+        metadata: {
+          dmsDealId,
+          source: input.source,
+          locationId,
+          vin: input.vin?.trim() || null,
+          stockNumber: input.stockNumber?.trim() || null,
+          soldAt: soldAt ?? null,
+        },
+      },
+    });
+
+    return { accepted: true, dmsDealId, leadId };
+  }
+
+  /** Live DMS connection required before any sold attribution is persisted. */
+  private async dmsConnected(
+    tenantId: string,
+    locationId: string,
+  ): Promise<boolean> {
+    const conn = await this.prisma.integrationConnection.findFirst({
+      where: {
+        tenantId,
+        capability: 'dms',
+        enabled: true,
+        liveReady: true,
+        OR: [{ locationId }, { locationId: null }],
+      },
+      select: { id: true },
+    });
+    return conn != null;
+  }
+}

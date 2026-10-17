@@ -32,6 +32,71 @@ export function numbersIn(text: string): string[] {
 const COMMIT =
   /\b(confirmed|booked|approved|pre-?approved|notified|reserved|on hold|guaranteed|locked in|sold to you)\b/i;
 
+export type FinanceApprovalFlag =
+  | 'approval_claim'
+  | 'guaranteed_rate'
+  | 'real_apr'
+  | 'unguarded_apr_percent';
+
+const FINANCE_APPROVAL_PATTERNS: Array<{
+  flag: FinanceApprovalFlag;
+  re: RegExp;
+}> = [
+  {
+    flag: 'approval_claim',
+    re: /\b(you'?re|you are|we got you|you got) (?:all )?(?:approved|pre-?approved)\b/i,
+  },
+  {
+    flag: 'approval_claim',
+    re: /\b(will be|you'll be|you would be) approved\b/i,
+  },
+  {
+    flag: 'guaranteed_rate',
+    re: /\bguaranteed (?:apr|interest rate|rate|financing|payment|approval)\b/i,
+  },
+  {
+    flag: 'guaranteed_rate',
+    re: /\b(?:apr|interest rate|rate|payment|financing) (?:is )?guaranteed\b/i,
+  },
+  {
+    flag: 'real_apr',
+    re: /\b(your|the) (?:real|actual|true) (?:apr|interest rate|rate)\b/i,
+  },
+];
+
+function unguardedAprPercent(text: string): boolean {
+  const re = /\b(\d+(?:\.\d+)?)\s*%\s*(?:apr|interest rate|rate)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const window = text
+      .slice(Math.max(0, m.index - 72), m.index + m[0].length + 48)
+      .toLowerCase();
+    if (
+      !/\b(estimat|example|illustrat|ballpark|rough(?:ly)?|about|around|demo)\b/.test(
+        window,
+      )
+    )
+      return true;
+  }
+  return false;
+}
+
+/** Banned approval / guaranteed-rate / unlabeled APR claims in finance education replies. */
+export function flagsBannedFinanceApprovalPhrases(
+  text: string,
+): FinanceApprovalFlag[] {
+  const flags: FinanceApprovalFlag[] = [];
+  for (const { flag, re } of FINANCE_APPROVAL_PATTERNS) {
+    if (re.test(text) && !flags.includes(flag)) flags.push(flag);
+  }
+  if (unguardedAprPercent(text) && !flags.includes('unguarded_apr_percent'))
+    flags.push('unguarded_apr_percent');
+  return flags;
+}
+
+const FINANCE_CONTEXT =
+  /\b(financ|credit|apr|payment|loan|lease|pre-?approv|interest rate)\b/i;
+
 export function validateComposedReply(params: {
   reply: string;
   draft: string;
@@ -110,6 +175,11 @@ export function validateComposedReply(params: {
     !/\b\d{1,3}\s?-\s?\d{1,3}\b/.test(d)
   )
     reasons.push('score_like_without_live_data');
+
+  if (FINANCE_CONTEXT.test(d) || FINANCE_CONTEXT.test(r)) {
+    for (const flag of flagsBannedFinanceApprovalPhrases(r))
+      reasons.push(`finance_${flag}`);
+  }
 
   return reasons.length ? { ok: false, reasons } : { ok: true };
 }

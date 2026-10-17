@@ -1,5 +1,8 @@
 import { ConversationComposerService } from './conversation-composer.service';
-import { validateComposedReply } from './reply-validator';
+import {
+  flagsBannedFinanceApprovalPhrases,
+  validateComposedReply,
+} from './reply-validator';
 
 const draft =
   "For the 2025 Jeep Grand Cherokee Limited 4x4 at $49,870, you're looking at roughly $785 a month with $5,000 down over 72 months. That uses an example 7.9% rate and leaves out taxes and fees — an estimate, not a financing offer.";
@@ -82,6 +85,46 @@ describe('validateComposedReply', () => {
         reply: 'Here are 3 SUVs under 45000 that fit three kids.',
       }).ok,
     ).toBe(true);
+  });
+  it('rejects finance approval and unlabeled APR claims', () => {
+    expect(
+      validateComposedReply({
+        draft: 'I can explain financing options.',
+        facts: [],
+        customerText: ['will I get approved'],
+        reply: "You're approved at 5.9% APR — great news.",
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateComposedReply({
+        ...base,
+        reply:
+          'With $5,000 down you would pay $785 a month at 7.9% APR over 72 months.',
+      }).ok,
+    ).toBe(false);
+  });
+});
+
+describe('flagsBannedFinanceApprovalPhrases', () => {
+  it('flags approval and guaranteed-rate wording', () => {
+    expect(
+      flagsBannedFinanceApprovalPhrases("You're pre-approved for this rate."),
+    ).toContain('approval_claim');
+    expect(
+      flagsBannedFinanceApprovalPhrases('We have a guaranteed APR for you.'),
+    ).toContain('guaranteed_rate');
+  });
+  it('allows example APR when labeled estimate', () => {
+    expect(
+      flagsBannedFinanceApprovalPhrases(
+        'Roughly $785/mo at an example 7.9% rate — an estimate, not an offer.',
+      ),
+    ).toEqual([]);
+  });
+  it('flags bare APR percents without estimate/example context', () => {
+    expect(
+      flagsBannedFinanceApprovalPhrases('Your payment at 7.9% APR looks good.'),
+    ).toContain('unguarded_apr_percent');
   });
 });
 

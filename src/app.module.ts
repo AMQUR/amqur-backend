@@ -45,6 +45,7 @@ import { AppointmentsModule } from './appointments/appointments.module';
 import { OperationsModule } from './operations/operations.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { ActionPagesModule } from './action-pages/action-pages.module';
+import { DealsModule } from './deals/deals.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -115,6 +116,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     OperationsModule,
     PrivacyModule,
     ActionPagesModule,
+    DealsModule,
   ],
 
   providers: [

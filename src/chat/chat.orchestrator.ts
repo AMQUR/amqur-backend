@@ -45,6 +45,7 @@ import {
 } from '../capability/capability.service';
 import { KnowledgeRetrievalService } from '../knowledge/knowledge-retrieval.service';
 import { ConversationComposerService } from './compose/conversation-composer.service';
+import { flagsBannedFinanceApprovalPhrases } from './compose/reply-validator';
 import { LiveInfoService } from '../live-info/live-info.service';
 import { mergePublicBranding } from '../common/types/public-branding';
 import { generalAnswer } from './dialogue/general-knowledge';
@@ -2923,6 +2924,7 @@ export class ChatOrchestrator {
           ),
       9,
     );
+    this.lockFinanceEducationReply(t);
   }
 
   /** Same assumptions across the vehicles being compared — consistent, deterministic. */
@@ -2980,6 +2982,18 @@ export class ChatOrchestrator {
       ),
       9,
     );
+    this.lockFinanceEducationReply(t);
+  }
+
+  /** Keep finance/credit/APR copy on the deterministic server draft (no approval claims). */
+  private lockFinanceEducationReply(t: Turn) {
+    t.lockReply = true;
+    for (const line of [...t.answers, ...t.narration]) {
+      if (flagsBannedFinanceApprovalPhrases(line).length)
+        this.logger.warn(
+          `Finance education copy flagged banned phrase: ${line.slice(0, 160)}`,
+        );
+    }
   }
 
   private async handleFinance(t: Turn) {
@@ -3046,8 +3060,8 @@ export class ChatOrchestrator {
       t.narration.push(
         tr(
           t.lang,
-          "I can't tell you what rate you'd get or whether you'd be approved — that comes from the dealership's lenders after a credit application. Plenty of shoppers in different credit situations get financed, and the finance team can walk through options.",
-          'No puedo decirle qué tasa obtendría ni si sería aprobado — eso lo determinan los prestamistas de la agencia después de una solicitud de crédito. Muchas personas con distintas situaciones de crédito obtienen financiamiento, y el equipo de finanzas puede explicarle las opciones.',
+          "I can't tell you what rate you'd get or whether you'd be approved — that comes from the dealership's lenders after a credit application. Only a lender can say what you'd qualify for; the finance team can walk through options after an application.",
+          'No puedo decirle qué tasa obtendría ni si sería aprobado — eso lo determinan los prestamistas de la agencia después de una solicitud de crédito. Solo un prestamista puede decirle para qué califica; el equipo de finanzas puede explicarle las opciones después de una solicitud.',
         ),
       );
     }
@@ -3107,6 +3121,7 @@ export class ChatOrchestrator {
         );
       }
     }
+    this.lockFinanceEducationReply(t);
   }
 
   private async handleCreditApp(t: Turn) {
@@ -3146,6 +3161,7 @@ export class ChatOrchestrator {
         ),
         3,
       );
+      this.lockFinanceEducationReply(t);
       return;
     }
     const again = !!t.st.finance?.creditLinkOffered;
@@ -3226,6 +3242,7 @@ export class ChatOrchestrator {
           9,
         );
     }
+    this.lockFinanceEducationReply(t);
   }
 
   // ───────────────────────────────────────── out-the-door
