@@ -170,9 +170,15 @@ export class CampaignEngine implements OnModuleInit {
     if (ctx.conversationId) {
       const conv = await this.prisma.conversation.findUnique({
         where: { id: ctx.conversationId },
-        select: { aiPaused: true },
+        select: { aiPaused: true, handoffState: true },
       });
-      if (conv?.aiPaused && policy.pauseOnHumanTakeover !== false)
+      if (
+        policy.pauseOnHumanTakeover !== false &&
+        conv &&
+        (conv.aiPaused ||
+          conv.handoffState === 'ASSIGNED' ||
+          conv.handoffState === 'JOINED')
+      )
         return this.stop('human_owns_conversation');
       if (policy.stopOnCustomerReply !== false) {
         const replied = await this.prisma.message.count({
@@ -209,6 +215,24 @@ export class CampaignEngine implements OnModuleInit {
       idempotencyKey: `campaign:${c.id}:v${c.version}:${p.subjectId}`,
       policy,
     });
+    await this.prisma.analyticsEvent
+      .create({
+        data: {
+          tenantId: c.tenantId,
+          locationId: ctx.locationId,
+          eventType:
+            res.status === 'QUEUED'
+              ? 'campaign.step_queued'
+              : 'campaign.step_suppressed',
+          properties: {
+            campaignId: c.id,
+            version: c.version,
+            trigger: c.trigger,
+            reason: res.status === 'QUEUED' ? null : res.reason ?? null,
+          },
+        },
+      })
+      .catch(() => null);
     return {
       note: res.status === 'QUEUED' ? 'queued' : `suppressed:${res.reason}`,
     };
