@@ -40,6 +40,21 @@ type Template = {
   defaultChannel: string;
 };
 
+type ReviewRequestIntent = {
+  id: string;
+  status: string;
+  channel: string;
+  leadId: string | null;
+  conversationId: string | null;
+  surveyId: string | null;
+  maskedEndpoint: string | null;
+  eligible: boolean;
+  blockedReasons: string[];
+  createdAt: string;
+  notes?: { csi: string; publicReview: string; sending: string };
+  willSend?: boolean;
+};
+
 export function Surveys({ locationId }: { locationId: string }) {
   const qs = locationId ? `?locationId=${encodeURIComponent(locationId)}` : '';
   const [kindFilter, setKindFilter] = useState<'ALL' | 'SALES' | 'SERVICE'>('ALL');
@@ -48,7 +63,15 @@ export function Surveys({ locationId }: { locationId: string }) {
   const rollup = useAsync(() => api<Rollup>(`/ops/surveys/rollup${qs}`), [qs]);
   const followUps = useAsync(() => api<Survey[]>(`/ops/surveys/follow-ups${qs}`), [qs]);
   const templates = useAsync(() => api<Template[]>(`/ops/surveys/templates${qs}`), [qs]);
+  const reviewIntents = useAsync(
+    () => api<ReviewRequestIntent[]>(`/ops/review-request-intents${qs}`),
+    [qs],
+  );
   const [leadId, setLeadId] = useState('');
+  const [rrLeadId, setRrLeadId] = useState('');
+  const [rrConversationId, setRrConversationId] = useState('');
+  const [rrSurveyId, setRrSurveyId] = useState('');
+  const [rrChannel, setRrChannel] = useState<'SMS' | 'EMAIL'>('SMS');
   const [kind, setKind] = useState('SALES');
   const [channel, setChannel] = useState('IN_PERSON');
   const [templateId, setTemplateId] = useState('');
@@ -60,7 +83,42 @@ export function Surveys({ locationId }: { locationId: string }) {
   const [busy, setBusy] = useState(false);
 
   const refresh = async () => {
-    await Promise.all([list.reload(), rollup.reload(), followUps.reload(), templates.reload()]);
+    await Promise.all([
+      list.reload(),
+      rollup.reload(),
+      followUps.reload(),
+      templates.reload(),
+      reviewIntents.reload(),
+    ]);
+  };
+
+  const createReviewIntent = async () => {
+    if (!rrLeadId.trim() && !rrConversationId.trim() && !rrSurveyId.trim()) {
+      setErr('Review intent needs a lead, conversation, or survey id');
+      return;
+    }
+    setErr(null);
+    setBusy(true);
+    try {
+      await api('/ops/review-request-intents', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...(locationId ? { locationId } : {}),
+          ...(rrLeadId.trim() ? { leadId: rrLeadId.trim() } : {}),
+          ...(rrConversationId.trim() ? { conversationId: rrConversationId.trim() } : {}),
+          ...(rrSurveyId.trim() ? { surveyId: rrSurveyId.trim() } : {}),
+          channel: rrChannel,
+        }),
+      });
+      setRrLeadId('');
+      setRrConversationId('');
+      setRrSurveyId('');
+      await reviewIntents.reload();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Review intent create failed');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const createDraft = async () => {
@@ -171,7 +229,9 @@ export function Surveys({ locationId }: { locationId: string }) {
         Internal staff-recorded customer satisfaction (sales and service). Creating a draft does not
         send SMS or email. Scores are not OEM manufacturer CSI. Mass survey outreach stays gated.
       </p>
-      <ErrorNote error={err ?? list.error ?? rollup.error ?? followUps.error} />
+      <ErrorNote
+        error={err ?? list.error ?? rollup.error ?? followUps.error ?? reviewIntents.error}
+      />
       {rollup.data && (
         <div className="stats">
           <Stat label="Drafts open" value={rollup.data.draftsOpen} />
@@ -227,6 +287,81 @@ export function Surveys({ locationId }: { locationId: string }) {
                     </a>
                   )}
                 </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card title="Review request intents (public)">
+        <p className="muted small">
+          Staff intent to ask for a Google/public review later — PENDING only, never auto-sent.
+          Internal CSI scores do not gate these intents. Mass SMS remains campaign-gated.
+        </p>
+        <div className="row">
+          <label className="small">
+            Channel
+            <select
+              value={rrChannel}
+              onChange={(e) => setRrChannel(e.target.value as 'SMS' | 'EMAIL')}
+            >
+              <option value="SMS">SMS (consent check only)</option>
+              <option value="EMAIL">EMAIL (consent check only)</option>
+            </select>
+          </label>
+          <label className="small">
+            Lead id
+            <input
+              value={rrLeadId}
+              onChange={(e) => setRrLeadId(e.target.value)}
+              placeholder="optional if survey/conversation set"
+            />
+          </label>
+          <label className="small">
+            Conversation id
+            <input
+              value={rrConversationId}
+              onChange={(e) => setRrConversationId(e.target.value)}
+              placeholder="optional"
+            />
+          </label>
+          <label className="small">
+            Survey id
+            <input
+              value={rrSurveyId}
+              onChange={(e) => setRrSurveyId(e.target.value)}
+              placeholder="optional CSI survey link"
+            />
+          </label>
+          <button className="btn btn--primary" disabled={busy} onClick={() => void createReviewIntent()}>
+            Create PENDING intent
+          </button>
+        </div>
+        {!reviewIntents.data?.length && !reviewIntents.loading ? (
+          <Empty>No review request intents yet.</Empty>
+        ) : (
+          <ul className="list">
+            {(reviewIntents.data ?? []).map((i) => (
+              <li key={i.id} className="stack">
+                <span className="row between">
+                  <span>
+                    <Badge tone={statusTone(i.status)}>{i.status}</Badge>{' '}
+                    <Badge tone="neutral">{i.channel}</Badge>{' '}
+                    {i.eligible ? (
+                      <Badge tone="ok">consent ok</Badge>
+                    ) : (
+                      <Badge tone="warn">blocked</Badge>
+                    )}
+                  </span>
+                  <span className="muted small">{fmtDate(i.createdAt)}</span>
+                </span>
+                {i.maskedEndpoint && (
+                  <span className="muted small">Endpoint {i.maskedEndpoint}</span>
+                )}
+                {i.blockedReasons.length > 0 && (
+                  <span className="small">Blocked: {i.blockedReasons.join(', ')}</span>
+                )}
+                {i.leadId && <span className="muted small">Lead {i.leadId}</span>}
               </li>
             ))}
           </ul>
