@@ -82,6 +82,7 @@ type Satisfaction = {
     handoffs?: { openEscalations: number; handoffRequested7d: number };
   };
   note?: string;
+  draftsOpen?: number;
 };
 
 export function Home({ locationId }: { locationId: string }) {
@@ -143,9 +144,17 @@ export function Home({ locationId }: { locationId: string }) {
             </div>
           ) : (
             <p className="muted small">
-              {sat.data.reason === 'no_survey_responses'
-                ? 'No CSI responses recorded yet — create drafts via Surveys API (no auto-SMS).'
-                : `Survey scores unavailable (${sat.data.reason ?? 'unknown'}). Proxy signals only.`}
+              {sat.data.reason === 'no_survey_responses' ? (
+                <>
+                  No CSI responses in the last 7 days —{' '}
+                  <a href="#/surveys">open CSI surveys</a>
+                  {sat.data.draftsOpen
+                    ? ` (${sat.data.draftsOpen} draft${sat.data.draftsOpen === 1 ? '' : 's'} awaiting score).`
+                    : ' to record in-person or phone scores (no auto-SMS).'}
+                </>
+              ) : (
+                `Survey scores unavailable (${sat.data.reason ?? 'unknown'}). Proxy signals only.`
+              )}
             </p>
           )}
           {sat.data.signals?.replyFeedback && (

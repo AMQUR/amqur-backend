@@ -793,6 +793,16 @@ export class OperationsService {
         status: { in: ['CONFIRMED', 'REQUESTED', 'PENDING_CONFIRMATION'] },
       },
     });
+    let csiDraftsOpen = 0;
+    if (this.surveyProviderConnected() && this.prisma.customerSurvey) {
+      csiDraftsOpen = await this.prisma.customerSurvey.count({
+        where: {
+          tenantId: scope.tenantId,
+          ...this.loc(scope),
+          status: 'DRAFT',
+        },
+      });
+    }
     const priorities: Array<{ key: string; count: number; href: string }> = [
       {
         key: 'unanswered_inbound',
@@ -833,6 +843,11 @@ export class OperationsService {
         key: 'finance_open',
         count: overview.attention.financeOpen,
         href: '#/queues',
+      },
+      {
+        key: 'csi_drafts_open',
+        count: csiDraftsOpen,
+        href: '#/surveys',
       },
     ].filter((x) => x.count > 0);
 
@@ -1098,7 +1113,13 @@ export class OperationsService {
   async satisfaction(scope: Scope) {
     const base = { tenantId: scope.tenantId, ...this.loc(scope) };
     const since = new Date(Date.now() - 7 * 86_400_000);
-    const [overview, handoffRequested7d] = await Promise.all([
+    const draftsOpenP =
+      this.surveyProviderConnected() && this.prisma.customerSurvey
+        ? this.prisma.customerSurvey.count({
+            where: { ...base, status: 'DRAFT' },
+          })
+        : Promise.resolve(0);
+    const [overview, handoffRequested7d, draftsOpen] = await Promise.all([
       this.overview(scope),
       this.prisma.analyticsEvent.count({
         where: {
@@ -1107,6 +1128,7 @@ export class OperationsService {
           occurredAt: { gte: since },
         },
       }),
+      draftsOpenP,
     ]);
 
     const proxy = this.satisfactionProxySignals(overview, handoffRequested7d);
@@ -1135,6 +1157,7 @@ export class OperationsService {
           source: 'customer_survey_internal' as const,
           window: overview.window,
           csat: { average, count: scores.length, scale: '1-10' as const },
+          draftsOpen,
           signals: proxy,
           note: 'CSAT from staff-recorded CustomerSurvey responses only. Mass SMS send is not enabled.',
         };
@@ -1143,6 +1166,7 @@ export class OperationsService {
         available: false as const,
         reason: 'no_survey_responses' as const,
         window: overview.window,
+        draftsOpen,
         signals: proxy,
         note: 'CustomerSurvey model is live. Record in-person/phone CSI via POST /ops/surveys — no auto-send.',
       };
@@ -1152,6 +1176,7 @@ export class OperationsService {
       available: false as const,
       reason: 'survey_provider_not_connected' as const,
       window: overview.window,
+      draftsOpen: 0,
       signals: proxy,
       note: 'Proxy signals from staff reply feedback and handoff analytics only. Connect a survey provider for CSAT scores.',
     };

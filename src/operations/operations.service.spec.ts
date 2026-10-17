@@ -84,6 +84,7 @@ describe('OperationsService.satisfaction', () => {
       ...prisma,
       customerSurvey: {
         findMany: jest.fn().mockResolvedValue([{ score: 9 }, { score: 7 }]),
+        count: jest.fn().mockResolvedValue(1),
       },
     };
     const svc2 = makeOperationsService(prismaWithSurvey);
