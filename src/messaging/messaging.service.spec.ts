@@ -1,5 +1,102 @@
 import { Prisma } from '@prisma/client';
+import { fromZoned, toZoned } from '../common/time/zoned-time';
 import { MessagingService } from './messaging.service';
+
+const defaultQuiet = {
+  tz: 'America/Chicago',
+  start: 21 * 60,
+  end: 8 * 60,
+};
+
+function localInstant(
+  tz: string,
+  parts: { year: number; month: number; day: number; hour: number; minute: number },
+): Date {
+  return fromZoned(parts, tz);
+}
+
+describe('MessagingService.nextAllowed DST quiet hours', () => {
+  it('defers spring-forward night (America/Chicago) to 08:00 local, not during quiet', () => {
+    const now = localInstant('America/Chicago', {
+      year: 2026,
+      month: 3,
+      day: 8,
+      hour: 22,
+      minute: 30,
+    });
+    const deferred = MessagingService.nextAllowed(now, defaultQuiet);
+    expect(deferred).not.toBeNull();
+    expect(deferred!.toISOString()).toBe('2026-03-09T13:00:00.000Z');
+    const endLocal = toZoned(deferred!, 'America/Chicago');
+    expect(endLocal).toMatchObject({ year: 2026, month: 3, day: 9, hour: 8, minute: 0 });
+    expect(MessagingService.nextAllowed(deferred!, defaultQuiet)).toBeNull();
+  });
+
+  it('defers fall-back early morning (America/Chicago) to same-day 08:00 local', () => {
+    const now = localInstant('America/Chicago', {
+      year: 2026,
+      month: 11,
+      day: 1,
+      hour: 7,
+      minute: 30,
+    });
+    const deferred = MessagingService.nextAllowed(now, defaultQuiet);
+    expect(deferred).not.toBeNull();
+    expect(deferred!.toISOString()).toBe('2026-11-01T14:00:00.000Z');
+    const endLocal = toZoned(deferred!, 'America/Chicago');
+    expect(endLocal).toMatchObject({ year: 2026, month: 11, day: 1, hour: 8, minute: 0 });
+    expect(MessagingService.nextAllowed(deferred!, defaultQuiet)).toBeNull();
+  });
+
+  it('allows send midday on US spring-forward transition day (America/Chicago)', () => {
+    const now = localInstant('America/Chicago', {
+      year: 2026,
+      month: 3,
+      day: 8,
+      hour: 9,
+      minute: 0,
+    });
+    expect(MessagingService.nextAllowed(now, defaultQuiet)).toBeNull();
+  });
+
+  it('defers spring-forward and fall-back boundaries in America/New_York', () => {
+    const nyQuiet = { tz: 'America/New_York', start: 21 * 60, end: 8 * 60 };
+    const springNight = localInstant('America/New_York', {
+      year: 2026,
+      month: 3,
+      day: 8,
+      hour: 22,
+      minute: 30,
+    });
+    const springDeferred = MessagingService.nextAllowed(springNight, nyQuiet);
+    expect(springDeferred!.toISOString()).toBe('2026-03-09T12:00:00.000Z');
+    expect(toZoned(springDeferred!, nyQuiet.tz)).toMatchObject({
+      year: 2026,
+      month: 3,
+      day: 9,
+      hour: 8,
+      minute: 0,
+    });
+
+    const fallEarly = localInstant('America/New_York', {
+      year: 2026,
+      month: 11,
+      day: 1,
+      hour: 7,
+      minute: 30,
+    });
+    const fallDeferred = MessagingService.nextAllowed(fallEarly, nyQuiet);
+    expect(fallDeferred!.toISOString()).toBe('2026-11-01T13:00:00.000Z');
+    expect(toZoned(fallDeferred!, nyQuiet.tz)).toMatchObject({
+      year: 2026,
+      month: 11,
+      day: 1,
+      hour: 8,
+      minute: 0,
+    });
+    expect(MessagingService.nextAllowed(fallDeferred!, nyQuiet)).toBeNull();
+  });
+});
 
 describe('MessagingService.queue idempotency', () => {
   const queuedRow = { id: 'msg-1', status: 'QUEUED' as const };
