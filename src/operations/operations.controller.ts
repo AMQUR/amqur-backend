@@ -43,6 +43,11 @@ import {
   PartsInquiryService,
   STAFF_PARTS_STATUSES,
 } from '../parts/parts-inquiry.service';
+import {
+  AppointmentService,
+  STAFF_APPOINTMENT_QUEUE_STATUSES,
+} from '../appointments/appointment.service';
+import { AppointmentStatus } from '@prisma/client';
 import { RooftopReadinessService } from './rooftop-readiness';
 import { AppraisalService } from '../trade/appraisal.service';
 import { IsNumber, Max, Min } from 'class-validator';
@@ -124,6 +129,15 @@ class PartsInquiryPatchDto {
   @IsOptional() @IsBoolean() acknowledgeEscalation?: boolean;
 }
 
+class AppointmentRequestPatchDto {
+  @IsOptional()
+  @IsIn(STAFF_APPOINTMENT_QUEUE_STATUSES)
+  status?: AppointmentStatus;
+  @IsOptional() @IsString() @MaxLength(4000) notes?: string;
+  /** ISO instant when confirming; defaults to requestedAt if omitted. */
+  @IsOptional() @IsString() @MaxLength(40) scheduledAt?: string;
+}
+
 const REPLY_FEEDBACK = [
   'too_long',
   'sounds_robotic',
@@ -158,6 +172,7 @@ export class OperationsController {
     private readonly uploads: UploadsService,
     private readonly financeRequests: FinanceRequestService,
     private readonly partsInquiries: PartsInquiryService,
+    private readonly appointments: AppointmentService,
   ) {}
 
   // ── trade-in appraisal workflow (staff records; managers issue offers)
@@ -288,6 +303,29 @@ export class OperationsController {
         status: b.status,
         notes: b.notes,
         acknowledgeEscalation: b.acknowledgeEscalation,
+      },
+    );
+  }
+
+  /** Update service / appointment queue item — staff notes and lifecycle only (no RO status). */
+  @Roles(...STAFF)
+  @Patch('appointment-requests/:id')
+  patchAppointmentRequest(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: AppointmentRequestPatchDto,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, undefined, l);
+    return this.appointments.updateStaff(
+      s.tenantId,
+      s.locationId,
+      id,
+      u.sub,
+      {
+        status: b.status,
+        notes: b.notes,
+        scheduledAt: b.scheduledAt,
       },
     );
   }

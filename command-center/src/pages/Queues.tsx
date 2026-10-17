@@ -4,6 +4,7 @@ import { ago, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 
 type Q = {
+  appointments: Array<{ id: string; conversationId: string | null; locationId: string | null; type: string; status: string; requestedDate: string | null; requestedTime: string | null; requestedAt: string | null; scheduledAt: string | null; vehicleVin: string | null; serviceType: string | null; transportation: string | null; notes: string | null; availabilityVerified: boolean; provider: string; customerName: string | null; createdAt: string }>;
   finance: Array<{ id: string; conversationId: string | null; locationId: string | null; vehicleVin: string | null; downPayment: number | null; desiredPayment: number | null; creditLinkState: string; aprSource: string; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
   parts: Array<{ id: string; conversationId: string | null; locationId: string | null; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; notes: string | null; installationRequested: boolean; createdAt: string; customerName: string | null }>;
   trades: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; createdAt: string; customerName: string | null }>;
@@ -19,6 +20,7 @@ type Q = {
 
 const FINANCE_STATUSES = ['REQUESTED', 'PENDING_STAFF', 'ESTIMATE_SHARED', 'HANDED_OFF', 'CLOSED', 'CANCELLED'] as const;
 const PARTS_STATUSES = ['REQUESTED', 'PENDING_STAFF', 'FITMENT_PENDING', 'QUOTED', 'ORDERED', 'CLOSED', 'CANCELLED'] as const;
+const APPOINTMENT_STAFF_STATUSES = ['PENDING_CONFIRMATION', 'CONFIRMED', 'CANCELLED'] as const;
 
 export function Queues({ locationId }: { locationId: string }) {
   const { data, error, reload } = useAsync(() => api<Q>(`/ops/queues${locationId ? `?locationId=${locationId}` : ''}`), [locationId]);
@@ -83,6 +85,39 @@ export function Queues({ locationId }: { locationId: string }) {
                   <li key={e.id}>
                     <span>{e.reason}</span>
                     <span className="row"><Badge tone={e.urgency === 'HIGH' || e.urgency === 'CRITICAL' ? 'bad' : 'neutral'}>{e.urgency}</Badge><Badge tone={e.notifiedAt ? 'ok' : 'warn'}>{e.notifiedAt ? 'notified' : 'not delivered'}</Badge><span className="muted small">{ago(e.createdAt)}</span></span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <Card title={`Service & appointment requests (${data.appointments?.length ?? 0})`}>
+            {!data.appointments?.length ? <Empty>None awaiting staff.</Empty> : (
+              <ul className="list">
+                {data.appointments.map((a) => (
+                  <li key={a.id} className="stack">
+                    <span className="row">
+                      <span>
+                        {a.type === 'SERVICE' ? 'Service' : a.type.replace(/_/g, ' ').toLowerCase()} · {a.requestedDate ?? '—'} {a.requestedTime ?? ''}
+                        {a.customerName ? ` · ${a.customerName}` : ''}
+                      </span>
+                      <Badge tone={statusTone(a.status)}>{a.status === 'REQUESTED' ? 'request' : a.status.replace(/_/g, ' ').toLowerCase()}</Badge>
+                    </span>
+                    <span className="row">
+                      {!a.availabilityVerified && <Badge tone="warn">not confirmed</Badge>}
+                      {(a.serviceType || a.vehicleVin) && <Badge tone="info">{a.serviceType ?? a.vehicleVin}</Badge>}
+                      {a.transportation && <Badge tone="neutral">{a.transportation}</Badge>}
+                      {a.provider !== 'NONE' && <Badge tone="ok">{a.provider}</Badge>}
+                      <span className="muted small">{ago(a.createdAt)}</span>
+                    </span>
+                    <AppointmentRequestActions
+                      appointmentId={a.id}
+                      conversationId={a.conversationId}
+                      status={a.status}
+                      notes={a.notes}
+                      requestedAt={a.requestedAt}
+                      locationId={locationId || a.locationId || ''}
+                      onUpdated={() => void reload()}
+                    />
                   </li>
                 ))}
               </ul>
@@ -185,6 +220,100 @@ type CreditStatus = {
   vault: null | { authorized: boolean; linkType: string };
   customerFacing: { available: boolean; preview?: boolean; reason?: string };
 };
+
+/** Status and internal notes — never claims repair-order / DMS readiness. */
+function AppointmentRequestActions(props: {
+  appointmentId: string;
+  conversationId: string | null;
+  status: string;
+  notes: string | null;
+  requestedAt: string | null;
+  locationId: string;
+  onUpdated: () => void;
+}) {
+  const [status, setStatus] = useState(props.status);
+  const [notes, setNotes] = useState(props.notes ?? '');
+  useEffect(() => {
+    setStatus(props.status);
+    setNotes(props.notes ?? '');
+  }, [props.appointmentId, props.status, props.notes]);
+  const [convNote, setConvNote] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
+  const locQ = props.locationId ? `?locationId=${encodeURIComponent(props.locationId)}` : '';
+  const patch = async (body: { status?: string; notes?: string; scheduledAt?: string }) => {
+    setMsg(null);
+    try {
+      await api(`/ops/appointment-requests/${props.appointmentId}${locQ}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      setMsg('Saved');
+      props.onUpdated();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const saveConvNote = async () => {
+    if (!props.conversationId || !convNote.trim()) return;
+    setMsg(null);
+    try {
+      await api(`/ops/conversations/${props.conversationId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ text: convNote.trim() }),
+      });
+      setConvNote('');
+      setMsg('Conversation note saved (internal)');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const confirmWithSlot = () => {
+    const defaultAt = props.requestedAt?.slice(0, 16) ?? '';
+    const at = window.prompt(
+      'Confirmed date/time (ISO). Uses customer preference if you leave blank.',
+      defaultAt,
+    );
+    if (at === null) return;
+    const scheduledAt = at.trim()
+      ? new Date(at).toISOString()
+      : props.requestedAt ?? undefined;
+    void patch({
+      status: 'CONFIRMED',
+      ...(scheduledAt ? { scheduledAt } : {}),
+    });
+  };
+  return (
+    <span className="stack small">
+      <span className="row">
+        <label>
+          Status
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {[props.status, ...APPOINTMENT_STAFF_STATUSES.filter((s) => s !== props.status)].map((s) => (
+              <option key={s} value={s}>{s.replace(/_/g, ' ').toLowerCase()}</option>
+            ))}
+          </select>
+        </label>
+        {status === 'CONFIRMED' && status !== props.status ? (
+          <button className="btn btn--ghost" onClick={() => confirmWithSlot()}>Confirm slot</button>
+        ) : (
+          <button className="btn btn--ghost" disabled={status === props.status} onClick={() => void patch({ status })}>Update status</button>
+        )}
+      </span>
+      <label>
+        Internal notes (appointment record)
+        <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Staff-only — not repair-order status" />
+      </label>
+      <button className="btn btn--ghost" disabled={notes === (props.notes ?? '')} onClick={() => void patch({ notes })}>Save notes</button>
+      {props.conversationId && (
+        <span className="row">
+          <input value={convNote} onChange={(e) => setConvNote(e.target.value)} placeholder="Conversation note (inbox)" aria-label="Conversation note" />
+          <button className="btn btn--ghost" disabled={!convNote.trim()} onClick={() => void saveConvNote()}>Add inbox note</button>
+        </span>
+      )}
+      {msg && <span className="muted">{msg}</span>}
+    </span>
+  );
+}
 
 /** Status and internal notes — fitment/price stay unverified until a parts provider confirms. */
 function PartsActions(props: {

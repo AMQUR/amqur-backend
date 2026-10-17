@@ -109,6 +109,13 @@ const TRANSITIONS: Record<AppointmentStatus, AppointmentStatus[]> = {
   NO_SHOW: [],
 };
 
+/** Statuses staff may set from ops queues — not repair-order / DMS provider fields. */
+export const STAFF_APPOINTMENT_QUEUE_STATUSES: AppointmentStatus[] = [
+  AppointmentStatus.PENDING_CONFIRMATION,
+  AppointmentStatus.CONFIRMED,
+  AppointmentStatus.CANCELLED,
+];
+
 /**
  * First-class appointment lifecycle. Every sales/service/parts/finance/test-drive request
  * becomes a durable Appointment row BEFORE the assistant acknowledges it. Confirmation
@@ -647,6 +654,79 @@ export class AppointmentService {
         },
       })
       .catch(() => undefined);
+    return updated;
+  }
+
+  /**
+   * Staff workflow update from ops queues — notes + lifecycle status only.
+   * Never writes providerStatus or invented repair-order state.
+   */
+  async updateStaff(
+    tenantId: string,
+    locationId: string | null | undefined,
+    appointmentId: string,
+    userId: string,
+    patch: {
+      status?: AppointmentStatus;
+      notes?: string | null;
+      scheduledAt?: string;
+    },
+  ): Promise<Appointment> {
+    const row = await this.prisma.appointment.findFirst({
+      where: {
+        id: appointmentId,
+        tenantId,
+        ...(locationId ? { locationId } : {}),
+      },
+    });
+    if (!row) throw new NotFoundException('Appointment not found');
+
+    let updated = row;
+    const notesChanged = patch.notes !== undefined;
+    if (notesChanged) {
+      const trimmed = patch.notes?.trim() ?? '';
+      updated = await this.prisma.appointment.update({
+        where: { id: row.id },
+        data: { notes: trimmed.length ? trimmed.slice(0, 4000) : null },
+      });
+    }
+
+    if (patch.status !== undefined && patch.status !== row.status) {
+      if (!STAFF_APPOINTMENT_QUEUE_STATUSES.includes(patch.status)) {
+        throw new BadRequestException('Invalid status');
+      }
+      updated = await this.staffTransition({
+        tenantId,
+        appointmentId: row.id,
+        to: patch.status,
+        actorId: userId,
+        scheduledAt: patch.scheduledAt,
+        note:
+          patch.status === AppointmentStatus.CANCELLED
+            ? (patch.notes?.trim().slice(0, 200) ?? 'staff')
+            : undefined,
+      });
+    }
+
+    if (notesChanged || (patch.status !== undefined && patch.status !== row.status)) {
+      await this.prisma.auditLog
+        .create({
+          data: {
+            tenantId,
+            userId,
+            action: 'appointment_request.update',
+            resource: 'Appointment',
+            resourceId: row.id,
+            metadata: {
+              status: patch.status ?? row.status,
+              notesUpdated: notesChanged,
+              type: row.type,
+            },
+          },
+        })
+        .catch(() => undefined);
+    }
+
     return updated;
   }
 
