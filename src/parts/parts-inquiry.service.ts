@@ -1,7 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PartsInquiry, PartsInquiryStatus, Prisma } from '@prisma/client';
 import { isValidVinFormat } from '../common/vin/vin.util';
+
+/** Staff workflow statuses — never auto-sets fitment/price/availability flags. */
+export const STAFF_PARTS_STATUSES: PartsInquiryStatus[] = [
+  'REQUESTED',
+  'PENDING_STAFF',
+  'FITMENT_PENDING',
+  'QUOTED',
+  'ORDERED',
+  'CLOSED',
+  'CANCELLED',
+];
 
 export type PartsUpsertInput = {
   tenantId: string;
@@ -220,6 +235,89 @@ export class PartsInquiryService {
       orderBy: { createdAt: 'desc' },
       take: Math.min(opts.take ?? 50, 200),
     });
+  }
+
+  /** Staff workflow update — never marks fitment/price/availability verified. */
+  async updateStaff(
+    tenantId: string,
+    locationId: string | null | undefined,
+    partsInquiryId: string,
+    userId: string,
+    patch: {
+      status?: PartsInquiryStatus;
+      notes?: string | null;
+      acknowledgeEscalation?: boolean;
+    },
+  ): Promise<PartsInquiry> {
+    const row = await this.prisma.partsInquiry.findFirst({
+      where: {
+        id: partsInquiryId,
+        tenantId,
+        ...(locationId ? { locationId } : {}),
+      },
+    });
+    if (!row) throw new NotFoundException('Parts inquiry not found');
+
+    const data: Prisma.PartsInquiryUpdateInput = {};
+    if (patch.status !== undefined) {
+      if (!STAFF_PARTS_STATUSES.includes(patch.status)) {
+        throw new BadRequestException('Invalid status');
+      }
+      data.status = patch.status;
+    }
+    if (patch.notes !== undefined) {
+      const trimmed = patch.notes?.trim() ?? '';
+      data.notes = trimmed.length ? trimmed.slice(0, 4000) : null;
+    }
+    const hasInquiryPatch = Object.keys(data).length > 0;
+    const updated = hasInquiryPatch
+      ? await this.prisma.partsInquiry.update({
+          where: { id: row.id },
+          data,
+        })
+      : row;
+
+    if (patch.acknowledgeEscalation && row.conversationId) {
+      const open = await this.prisma.escalation.findMany({
+        where: {
+          tenantId,
+          conversationId: row.conversationId,
+          reason: 'PARTS_ADVISOR',
+          status: 'OPEN',
+        },
+      });
+      const match = open.filter((e) => {
+        const meta = e.metadata as { partsInquiryId?: string } | null;
+        return !meta?.partsInquiryId || meta.partsInquiryId === row.id;
+      });
+      if (match.length) {
+        await this.prisma.escalation.updateMany({
+          where: { id: { in: match.map((e) => e.id) } },
+          data: { status: 'ACKNOWLEDGED' },
+        });
+      }
+    }
+
+    if (hasInquiryPatch || patch.acknowledgeEscalation) {
+      await this.prisma.auditLog
+        .create({
+          data: {
+            tenantId,
+            userId,
+            action: 'parts_inquiry.update',
+            resource: 'PartsInquiry',
+            resourceId: row.id,
+            metadata: {
+              status: patch.status ?? row.status,
+              notesUpdated: patch.notes !== undefined,
+              escalationAcknowledged: !!patch.acknowledgeEscalation,
+            },
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return updated;
   }
 
   customerSafeMessage(): string {

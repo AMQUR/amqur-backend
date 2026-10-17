@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { PartsInquiryStatus } from '@prisma/client';
 import { PartsInquiryService } from './parts-inquiry.service';
 
@@ -31,7 +32,7 @@ describe('PartsInquiryService.notifyPartsAdvisor (via upsertForConversation)', (
   };
 
   beforeEach(() => {
-    jest.resetAllMocks();
+    jest.clearAllMocks();
     prisma.escalation.findFirst.mockResolvedValue(null);
     prisma.escalation.create.mockResolvedValue({ id: 'esc-1' });
     prisma.analyticsEvent.create.mockResolvedValue({});
@@ -132,5 +133,87 @@ describe('PartsInquiryService.notifyPartsAdvisor (via upsertForConversation)', (
     await svc.upsertForConversation(upsertInput);
 
     expect(prisma.escalation.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('PartsInquiryService.updateStaff', () => {
+  const prisma = {
+    partsInquiry: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    escalation: {
+      findMany: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+  };
+
+  let svc: PartsInquiryService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    svc = new PartsInquiryService(prisma as never);
+    prisma.partsInquiry.findFirst.mockResolvedValue({
+      id: 'pi-1',
+      tenantId: 'tenant-1',
+      conversationId: 'conv-1',
+      status: PartsInquiryStatus.PENDING_STAFF,
+      fitmentVerified: false,
+      priceVerified: false,
+    });
+    prisma.partsInquiry.update.mockResolvedValue({
+      id: 'pi-1',
+      status: PartsInquiryStatus.QUOTED,
+      notes: 'Checked DMS',
+    });
+    prisma.escalation.findMany.mockResolvedValue([]);
+  });
+
+  it('updates status without touching verification flags', async () => {
+    const row = await svc.updateStaff('tenant-1', 'loc-1', 'pi-1', 'user-1', {
+      status: PartsInquiryStatus.QUOTED,
+    });
+    expect(row.status).toBe('QUOTED');
+    expect(prisma.partsInquiry.update).toHaveBeenCalledWith({
+      where: { id: 'pi-1' },
+      data: { status: 'QUOTED' },
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'parts_inquiry.update',
+          resourceId: 'pi-1',
+        }),
+      }),
+    );
+  });
+
+  it('acknowledges matching PARTS_ADVISOR escalation', async () => {
+    prisma.escalation.findMany.mockResolvedValue([
+      {
+        id: 'esc-1',
+        metadata: { partsInquiryId: 'pi-1' },
+      },
+    ]);
+
+    await svc.updateStaff('tenant-1', 'loc-1', 'pi-1', 'user-1', {
+      acknowledgeEscalation: true,
+    });
+
+    expect(prisma.escalation.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['esc-1'] } },
+      data: { status: 'ACKNOWLEDGED' },
+    });
+    expect(prisma.partsInquiry.update).not.toHaveBeenCalled();
+  });
+
+  it('throws when inquiry is out of scope', async () => {
+    prisma.partsInquiry.findFirst.mockResolvedValue(null);
+    await expect(
+      svc.updateStaff('tenant-1', 'loc-1', 'pi-missing', 'user-1', {
+        notes: 'x',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

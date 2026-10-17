@@ -5,7 +5,7 @@ import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 
 type Q = {
   finance: Array<{ id: string; conversationId: string | null; locationId: string | null; vehicleVin: string | null; downPayment: number | null; desiredPayment: number | null; creditLinkState: string; aprSource: string; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
-  parts: Array<{ id: string; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; installationRequested: boolean; createdAt: string; customerName: string | null }>;
+  parts: Array<{ id: string; conversationId: string | null; locationId: string | null; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; notes: string | null; installationRequested: boolean; createdAt: string; customerName: string | null }>;
   trades: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; createdAt: string; customerName: string | null }>;
   escalations: Array<{ id: string; reason: string; urgency: string; status: string; notifiedAt: string | null; createdAt: string; conversationId: string | null }>;
   quotes?: Array<{ id: string; vehicleLabel: string | null; vehicleVin: string; paymentMethod: string; registrationZip: string | null; status: string; missingInputs: string[]; estimateShown: { total?: number } | null; createdAt: string; customerName: string | null }>;
@@ -18,6 +18,7 @@ type Q = {
 };
 
 const FINANCE_STATUSES = ['REQUESTED', 'PENDING_STAFF', 'ESTIMATE_SHARED', 'HANDED_OFF', 'CLOSED', 'CANCELLED'] as const;
+const PARTS_STATUSES = ['REQUESTED', 'PENDING_STAFF', 'FITMENT_PENDING', 'QUOTED', 'ORDERED', 'CLOSED', 'CANCELLED'] as const;
 
 export function Queues({ locationId }: { locationId: string }) {
   const { data, error, reload } = useAsync(() => api<Q>(`/ops/queues${locationId ? `?locationId=${locationId}` : ''}`), [locationId]);
@@ -90,12 +91,32 @@ export function Queues({ locationId }: { locationId: string }) {
           <Card title={`Parts (${data.parts.length})`}>
             {!data.parts.length ? <Empty>None open.</Empty> : (
               <ul className="list">
-                {data.parts.map((p) => (
-                  <li key={p.id}>
-                    <span>{p.suspectedPart ?? p.partNumber ?? 'Parts request'} · {[p.vehicleYear, p.vehicleModel].filter(Boolean).join(' ')} {p.customerName ? `· ${p.customerName}` : ''}</span>
-                    <span className="row">{!p.vin && !p.partNumber && <Badge tone="warn">needs VIN</Badge>}{p.installationRequested && <Badge tone="info">install</Badge>}<Badge tone={statusTone(p.status)}>{p.status}</Badge></span>
+                {data.parts.map((p) => {
+                  const openPartsAdvisor = data.escalations.some(
+                    (e) =>
+                      e.reason === 'PARTS_ADVISOR' &&
+                      e.status === 'OPEN' &&
+                      e.conversationId === p.conversationId,
+                  );
+                  return (
+                  <li key={p.id} className="stack">
+                    <span className="row">
+                      <span>{p.suspectedPart ?? p.partNumber ?? 'Parts request'} · {[p.vehicleYear, p.vehicleModel].filter(Boolean).join(' ')} {p.customerName ? `· ${p.customerName}` : ''}</span>
+                      <Badge tone={statusTone(p.status)}>{p.status.replace(/_/g, ' ').toLowerCase()}</Badge>
+                    </span>
+                    <span className="row">{!p.vin && !p.partNumber && <Badge tone="warn">needs VIN</Badge>}{p.installationRequested && <Badge tone="info">install</Badge>}{openPartsAdvisor && <Badge tone="warn">advisor handoff</Badge>}<span className="muted small">{ago(p.createdAt)}</span></span>
+                    <PartsActions
+                      partsId={p.id}
+                      conversationId={p.conversationId}
+                      status={p.status}
+                      notes={p.notes}
+                      locationId={locationId || p.locationId || ''}
+                      openPartsAdvisor={openPartsAdvisor}
+                      onUpdated={() => void reload()}
+                    />
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </Card>
@@ -164,6 +185,84 @@ type CreditStatus = {
   vault: null | { authorized: boolean; linkType: string };
   customerFacing: { available: boolean; preview?: boolean; reason?: string };
 };
+
+/** Status and internal notes — fitment/price stay unverified until a parts provider confirms. */
+function PartsActions(props: {
+  partsId: string;
+  conversationId: string | null;
+  status: string;
+  notes: string | null;
+  locationId: string;
+  openPartsAdvisor: boolean;
+  onUpdated: () => void;
+}) {
+  const [status, setStatus] = useState(props.status);
+  const [notes, setNotes] = useState(props.notes ?? '');
+  useEffect(() => {
+    setStatus(props.status);
+    setNotes(props.notes ?? '');
+  }, [props.partsId, props.status, props.notes]);
+  const [convNote, setConvNote] = useState('');
+  const [msg, setMsg] = useState<string | null>(null);
+  const locQ = props.locationId ? `?locationId=${encodeURIComponent(props.locationId)}` : '';
+  const patch = async (body: { status?: string; notes?: string; acknowledgeEscalation?: boolean }) => {
+    setMsg(null);
+    try {
+      await api(`/ops/parts-inquiries/${props.partsId}${locQ}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+      setMsg('Saved');
+      props.onUpdated();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const saveConvNote = async () => {
+    if (!props.conversationId || !convNote.trim()) return;
+    setMsg(null);
+    try {
+      await api(`/ops/conversations/${props.conversationId}/notes`, {
+        method: 'POST',
+        body: JSON.stringify({ text: convNote.trim() }),
+      });
+      setConvNote('');
+      setMsg('Conversation note saved (internal)');
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  return (
+    <span className="stack small">
+      <span className="row">
+        <label>
+          Status
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            {PARTS_STATUSES.map((s) => (
+              <option key={s} value={s}>{s.replace(/_/g, ' ').toLowerCase()}</option>
+            ))}
+          </select>
+        </label>
+        <button className="btn btn--ghost" disabled={status === props.status} onClick={() => void patch({ status })}>Update status</button>
+      </span>
+      <label>
+        Internal notes (parts record)
+        <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Staff-only — no customer-facing fitment/price" />
+      </label>
+      <button className="btn btn--ghost" disabled={notes === (props.notes ?? '')} onClick={() => void patch({ notes })}>Save notes</button>
+      {props.openPartsAdvisor && (
+        <button className="btn btn--ghost" onClick={() => void patch({ acknowledgeEscalation: true })}>Acknowledge parts advisor handoff</button>
+      )}
+      {props.conversationId && (
+        <span className="row">
+          <input value={convNote} onChange={(e) => setConvNote(e.target.value)} placeholder="Conversation note (inbox)" aria-label="Conversation note" />
+          <button className="btn btn--ghost" disabled={!convNote.trim()} onClick={() => void saveConvNote()}>Add inbox note</button>
+        </span>
+      )}
+      {msg && <span className="muted">{msg}</span>}
+    </span>
+  );
+}
 
 /** Status, internal notes, and rooftop credit authorization (fail-closed — no invented approvals). */
 function FinanceActions(props: {

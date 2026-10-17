@@ -39,6 +39,10 @@ import {
   FinanceRequestService,
   STAFF_FINANCE_STATUSES,
 } from '../finance/finance-request.service';
+import {
+  PartsInquiryService,
+  STAFF_PARTS_STATUSES,
+} from '../parts/parts-inquiry.service';
 import { RooftopReadinessService } from './rooftop-readiness';
 import { AppraisalService } from '../trade/appraisal.service';
 import { IsNumber, Max, Min } from 'class-validator';
@@ -112,6 +116,14 @@ class FinanceRequestPatchDto {
   @IsOptional() @IsString() @MaxLength(4000) notes?: string;
 }
 
+class PartsInquiryPatchDto {
+  @IsOptional()
+  @IsIn(STAFF_PARTS_STATUSES)
+  status?: (typeof STAFF_PARTS_STATUSES)[number];
+  @IsOptional() @IsString() @MaxLength(4000) notes?: string;
+  @IsOptional() @IsBoolean() acknowledgeEscalation?: boolean;
+}
+
 const REPLY_FEEDBACK = [
   'too_long',
   'sounds_robotic',
@@ -145,6 +157,7 @@ export class OperationsController {
     private readonly appraisals: AppraisalService,
     private readonly uploads: UploadsService,
     private readonly financeRequests: FinanceRequestService,
+    private readonly partsInquiries: PartsInquiryService,
   ) {}
 
   // ── trade-in appraisal workflow (staff records; managers issue offers)
@@ -253,6 +266,29 @@ export class OperationsController {
       id,
       u.sub,
       { status: b.status, notes: b.notes },
+    );
+  }
+
+  /** Update parts queue item status / notes; optional PARTS_ADVISOR ack — never verifies fitment/price. */
+  @Roles(...STAFF)
+  @Patch('parts-inquiries/:id')
+  patchPartsInquiry(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: PartsInquiryPatchDto,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, undefined, l);
+    return this.partsInquiries.updateStaff(
+      s.tenantId,
+      s.locationId,
+      id,
+      u.sub,
+      {
+        status: b.status,
+        notes: b.notes,
+        acknowledgeEscalation: b.acknowledgeEscalation,
+      },
     );
   }
 

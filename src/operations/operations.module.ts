@@ -9,9 +9,10 @@ import {
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { ChatModule } from '../chat/chat.module';
 import { UploadsModule } from '../uploads/uploads.module';
+import { PartsModule } from '../parts/parts.module';
 
 @Module({
-  imports: [IntegrationsModule, ChatModule, TradeModule, UploadsModule],
+  imports: [IntegrationsModule, ChatModule, TradeModule, UploadsModule, PartsModule],
   controllers: [OperationsController, WidgetLiveController],
   providers: [OperationsService, RooftopReadinessService],
 })
