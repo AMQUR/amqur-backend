@@ -74,7 +74,8 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
     }
   }, [locationId]);
   const nav = NAV.filter((n) => !n.roles || n.roles.includes(props.role));
-  const route = nav.some((n) => n.id === props.route) ? props.route : 'home';
+  const routeBase = props.route.split('?')[0];
+  const route = nav.some((n) => n.id === routeBase) ? routeBase : 'home';
   return (
     <div className="shell">
       <a className="skip" href="#main">Skip to content</a>

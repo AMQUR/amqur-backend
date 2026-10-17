@@ -99,6 +99,30 @@ describe('EscalationsService handoff queue', () => {
     expect(prisma.auditLog.create).toHaveBeenCalled();
   });
 
+  it('acknowledge transitions to ACKNOWLEDGED with audit', async () => {
+    prisma.escalation.findFirst.mockResolvedValue({
+      id: 'esc1',
+      tenantId: 't1',
+      status: 'OPEN',
+      metadata: {},
+    });
+    prisma.escalation.update.mockResolvedValue({
+      id: 'esc1',
+      status: 'ACKNOWLEDGED',
+    });
+    const updated = await svc.acknowledge({
+      tenantId: 't1',
+      escalationId: 'esc1',
+      actorUserId: 'user1',
+    });
+    expect(updated.status).toBe('ACKNOWLEDGED');
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ action: 'escalation.acknowledge' }),
+      }),
+    );
+  });
+
   it('claim transitions to IN_PROGRESS with audit', async () => {
     prisma.escalation.findFirst.mockResolvedValue({
       id: 'esc1',

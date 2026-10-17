@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import { api, session } from '../api';
 import { ago, fmtDate, useAsync } from '../hooks';
+import { EscalationActions, isOpenEscalation, type EscalationRow } from '../EscalationActions';
 import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
+
+function hashConversationId(): string | null {
+  const hash = window.location.hash.replace(/^#\/?/, '');
+  const q = hash.indexOf('?');
+  if (q < 0) return null;
+  return new URLSearchParams(hash.slice(q + 1)).get('conversation');
+}
 
 type Item = {
   id: string; channel: string; handoffState: string; aiPaused: boolean; assignedUserId: string | null; language: string; lastActivityAt: string;
@@ -18,12 +26,13 @@ type Detail = {
   tradeRequests: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null }>;
   financeRequests: Array<{ id: string; creditLinkState: string; downPayment: number | null; desiredPayment: number | null }>;
   partsInquiries: Array<{ id: string; suspectedPart: string | null; vin: string | null; status: string }>;
+  escalations: EscalationRow[];
 };
 
 export function Inbox({ locationId }: { locationId: string }) {
   const [filter, setFilter] = useState<'all' | 'open' | 'mine'>('open');
   const [q, setQ] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(() => hashConversationId());
   const qs = new URLSearchParams({ ...(locationId ? { locationId } : {}), ...(filter === 'open' ? { handoff: 'open' } : {}), ...(filter === 'mine' ? { mine: 'true' } : {}), ...(q ? { q } : {}) }).toString();
   const list = useAsync(() => api<{ items: Item[] }>(`/ops/inbox?${qs}`), [qs]);
   useEffect(() => {
@@ -191,6 +200,16 @@ function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) 
           {c.partsInquiries.map((p) => (
             <Card key={p.id} title="Parts">
               {p.suspectedPart ?? 'Request'} · <Badge tone={statusTone(p.status)}>{p.status}</Badge> {p.vin ? '· VIN on file' : '· needs VIN'}
+            </Card>
+          ))}
+          {(c.escalations ?? []).filter((e) => isOpenEscalation(e.status)).map((e) => (
+            <Card key={e.id} title="Open handoff">
+              <p className="small">{e.reason}{e.summary ? ` — ${e.summary.slice(0, 160)}` : ''}</p>
+              <span className="row">
+                <Badge tone={e.urgency === 'HIGH' || e.urgency === 'CRITICAL' ? 'bad' : 'neutral'}>{e.urgency}</Badge>
+                <Badge tone={e.notifiedAt ? 'ok' : 'warn'}>{e.notifiedAt ? 'CRM notified' : 'no outbound notify'}</Badge>
+              </span>
+              <EscalationActions escalation={e} onUpdated={() => void d.reload()} />
             </Card>
           ))}
           <Card title="Attachments">

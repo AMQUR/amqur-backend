@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, session } from '../api';
 import { ago, useAsync } from '../hooks';
+import { EscalationActions, type EscalationRow } from '../EscalationActions';
 import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 
 type Q = {
@@ -8,7 +9,7 @@ type Q = {
   finance: Array<{ id: string; conversationId: string | null; locationId: string | null; vehicleVin: string | null; downPayment: number | null; desiredPayment: number | null; creditLinkState: string; aprSource: string; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
   parts: Array<{ id: string; conversationId: string | null; locationId: string | null; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; notes: string | null; installationRequested: boolean; createdAt: string; customerName: string | null }>;
   trades: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; createdAt: string; customerName: string | null }>;
-  escalations: Array<{ id: string; reason: string; urgency: string; status: string; notifiedAt: string | null; createdAt: string; conversationId: string | null }>;
+  escalations: EscalationRow[];
   quotes?: Array<{ id: string; vehicleLabel: string | null; vehicleVin: string; paymentMethod: string; registrationZip: string | null; status: string; missingInputs: string[]; estimateShown: { total?: number } | null; createdAt: string; customerName: string | null }>;
   prioritized?: {
     unansweredInbound: Array<{ id: string; channel: string; preview: string; lastActivityAt: string; reason: string }>;
@@ -82,9 +83,19 @@ export function Queues({ locationId }: { locationId: string }) {
             {!data.escalations.length ? <Empty>None open.</Empty> : (
               <ul className="list">
                 {data.escalations.map((e) => (
-                  <li key={e.id}>
-                    <span>{e.reason}</span>
-                    <span className="row"><Badge tone={e.urgency === 'HIGH' || e.urgency === 'CRITICAL' ? 'bad' : 'neutral'}>{e.urgency}</Badge><Badge tone={e.notifiedAt ? 'ok' : 'warn'}>{e.notifiedAt ? 'notified' : 'not delivered'}</Badge><span className="muted small">{ago(e.createdAt)}</span></span>
+                  <li key={e.id} className="stack">
+                    <span className="row">
+                      <span>{e.reason}{e.summary ? ` · ${e.summary.slice(0, 120)}` : ''}</span>
+                      <Badge tone={e.urgency === 'HIGH' || e.urgency === 'CRITICAL' ? 'bad' : 'neutral'}>{e.urgency}</Badge>
+                    </span>
+                    <span className="row">
+                      <Badge tone={e.notifiedAt ? 'ok' : 'warn'}>{e.notifiedAt ? 'CRM notified' : 'no outbound notify'}</Badge>
+                      <span className="muted small">{e.createdAt ? ago(e.createdAt) : ''}</span>
+                      {e.conversationId && (
+                        <a className="small" href={`#/inbox?conversation=${e.conversationId}`}>Open inbox</a>
+                      )}
+                    </span>
+                    <EscalationActions escalation={e} onUpdated={() => void reload()} />
                   </li>
                 ))}
               </ul>
