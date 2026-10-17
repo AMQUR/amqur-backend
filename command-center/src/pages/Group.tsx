@@ -1,14 +1,25 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote } from '../ui';
 
+type GroupSummary = { id: string; name: string };
+
+type StoreRates = {
+  leadPerConversation: number | null;
+  appointmentConfirmation: number | null;
+  handoffDelivery: number | null;
+  creditClickThrough: number | null;
+  replyFeedbackGoodRate: number | null;
+};
+
 type Store = {
   tenant: { id: string; slug: string; name: string };
   counts: Record<string, number>;
-  rates: Record<string, number | null>;
+  rates: StoreRates;
   inventory: { liveVehicles: number; staleVehicles: number; syntheticFixturesPresent: boolean };
 };
+
 type Cmp = { windowDays: number; since: string; stores: Store[]; notes: string[] };
 
 const ROWS: Array<[string, string]> = [
@@ -28,20 +39,58 @@ const ROWS: Array<[string, string]> = [
   ['partsInquiries', 'Parts inquiries'],
   ['openHandoffs', 'Open handoffs'],
 ];
+
 const pct = (v: number | null) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+
+const RATE_ROWS: Array<[keyof StoreRates, string]> = [
+  ['leadPerConversation', 'Leads per conversation'],
+  ['appointmentConfirmation', 'Appointment confirmation rate'],
+  ['handoffDelivery', 'Handoff delivery rate'],
+  ['creditClickThrough', 'Credit link click-through'],
+  ['replyFeedbackGoodRate', 'AI reply feedback (% good)'],
+];
 
 /** Group executives: all-store comparison from persisted records only (membership-checked). */
 export function Group() {
-  const groups = useAsync(() => api<Array<{ id: string; name: string }>>('/dealer-groups'), []);
+  const groups = useAsync(() => api<GroupSummary[]>('/dealer-groups'), []);
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [days, setDays] = useState(7);
-  const gid = groups.data?.[0]?.id;
-  const cmp = useAsync(() => (gid ? api<Cmp>(`/dealer-groups/${gid}/comparison?days=${days}`) : Promise.resolve(null)), [gid, days]);
+
+  useEffect(() => {
+    if (!groups.data?.length) return;
+    setGroupId((prev) => (prev && groups.data!.some((g) => g.id === prev) ? prev : groups.data![0].id));
+  }, [groups.data]);
+
+  const gid = groupId ?? groups.data?.[0]?.id;
+  const cmp = useAsync(
+    () => (gid ? api<Cmp>(`/dealer-groups/${gid}/comparison?days=${days}`) : Promise.resolve(null)),
+    [gid, days],
+  );
+
+  const loading = groups.loading || (!!gid && cmp.loading);
+
   return (
     <div className="page">
       <h1>Group comparison</h1>
       <ErrorNote error={groups.error ?? cmp.error} />
-      {!gid && groups.data && <Empty>You are not a member of a dealer group.</Empty>}
-      {cmp.data && (
+      {loading && <p className="muted">Loading…</p>}
+      {!loading && !gid && groups.data && <Empty>You are not a member of a dealer group.</Empty>}
+      {!loading && gid && groups.data && groups.data.length > 1 && (
+        <label className="row">
+          <span className="muted small">Dealer group</span>
+          <select value={gid} onChange={(e) => setGroupId(e.target.value)}>
+            {groups.data.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {!loading && cmp.data && cmp.data.stores.length === 0 && (
+        <Empty>No rooftops are linked to this dealer group yet.</Empty>
+      )}
+      {!loading && cmp.data && cmp.data.stores.length > 0 && (
         <>
           <div className="row">
             {[7, 30, 90].map((d) => (
@@ -58,7 +107,8 @@ export function Group() {
                     <th scope="col">Metric</th>
                     {cmp.data.stores.map((s) => (
                       <th scope="col" key={s.tenant.id}>
-                        {s.tenant.name} {s.inventory.syntheticFixturesPresent && <Badge tone="warn">simulated data</Badge>}
+                        {s.tenant.name}{' '}
+                        {s.inventory.syntheticFixturesPresent && <Badge tone="warn">simulated data</Badge>}
                       </th>
                     ))}
                   </tr>
@@ -67,23 +117,19 @@ export function Group() {
                   {ROWS.map(([k, label]) => (
                     <tr key={k}>
                       <th scope="row">{label}</th>
-                      {cmp.data!.stores.map((s) => <td key={s.tenant.id}>{s.counts[k] ?? 0}</td>)}
+                      {cmp.data!.stores.map((s) => (
+                        <td key={s.tenant.id}>{s.counts[k] ?? 0}</td>
+                      ))}
                     </tr>
                   ))}
-                  <tr>
-                    <th scope="row">Appointment confirmation rate</th>
-                    {cmp.data.stores.map((s) => <td key={s.tenant.id}>{pct(s.rates.appointmentConfirmation)}</td>)}
-                  </tr>
-                  <tr>
-                    <th scope="row">Handoff delivery rate</th>
-                    {cmp.data.stores.map((s) => <td key={s.tenant.id}>{pct(s.rates.handoffDelivery)}</td>)}
-                  </tr>
-                  <tr>
-                    <th scope="row">AI reply feedback (% good)</th>
-                    {cmp.data.stores.map((s) => (
-                      <td key={s.tenant.id}>{pct(s.rates.replyFeedbackGoodRate ?? null)}</td>
-                    ))}
-                  </tr>
+                  {RATE_ROWS.map(([k, label]) => (
+                    <tr key={k}>
+                      <th scope="row">{label}</th>
+                      {cmp.data!.stores.map((s) => (
+                        <td key={s.tenant.id}>{pct(s.rates[k] ?? null)}</td>
+                      ))}
+                    </tr>
+                  ))}
                   <tr>
                     <th scope="row">Live vehicles (stale)</th>
                     {cmp.data.stores.map((s) => (

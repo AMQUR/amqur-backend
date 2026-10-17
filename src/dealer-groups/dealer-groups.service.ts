@@ -153,7 +153,22 @@ export class DealerGroupsService {
     });
     const rate = (n: number, d: number) =>
       d > 0 ? Number((n / d).toFixed(4)) : null;
-    const stores: Array<Record<string, unknown>> = [];
+    const stores: Array<{
+      tenant: { id: string; slug: string; name: string };
+      counts: Record<string, number>;
+      rates: {
+        leadPerConversation: number | null;
+        appointmentConfirmation: number | null;
+        handoffDelivery: number | null;
+        creditClickThrough: number | null;
+        replyFeedbackGoodRate: number | null;
+      };
+      inventory: {
+        liveVehicles: number;
+        staleVehicles: number;
+        syntheticFixturesPresent: boolean;
+      };
+    }> = [];
     for (const t of tenants) {
       const w = { tenantId: t.id, createdAt: { gte: since } };
       const [
