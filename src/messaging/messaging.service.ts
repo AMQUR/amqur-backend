@@ -398,6 +398,7 @@ export class MessagingService implements OnModuleInit {
       return;
     }
     if (res.optedOut) {
+      const optOutEvidence = { error: res.error };
       await this.consent.record({
         tenantId: m.tenantId,
         channel: 'SMS',
@@ -405,7 +406,16 @@ export class MessagingService implements OnModuleInit {
         purpose: 'CONVERSATIONAL',
         granted: false,
         source: 'PROVIDER',
-        evidence: { error: res.error },
+        evidence: optOutEvidence,
+      });
+      await this.consent.record({
+        tenantId: m.tenantId,
+        channel: 'SMS',
+        endpoint: m.endpoint,
+        purpose: 'MARKETING',
+        granted: false,
+        source: 'PROVIDER',
+        evidence: optOutEvidence,
       });
       await this.prisma.outboundMessage.update({
         where: { id },

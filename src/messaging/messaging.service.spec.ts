@@ -1,6 +1,11 @@
+jest.mock('./twilio', () => ({
+  twilioSendSms: jest.fn(),
+}));
+
 import { Prisma } from '@prisma/client';
 import { fromZoned, toZoned } from '../common/time/zoned-time';
 import { MessagingService } from './messaging.service';
+import { twilioSendSms } from './twilio';
 
 const defaultQuiet = {
   tz: 'America/Chicago',
@@ -350,6 +355,108 @@ describe('MessagingService.queue location messagingPolicy quiet hours', () => {
       minute: 0,
     });
     expect(MessagingService.nextAllowed(now, defaultQuiet)).toBeNull();
+  });
+});
+
+describe('MessagingService deliver Twilio opt-out', () => {
+  type SendHandler = (p: { outboundMessageId: string }) => Promise<unknown>;
+  const outboundUpdate = jest.fn().mockResolvedValue({});
+  const prisma = {
+    outboundMessage: {
+      findUnique: jest.fn(),
+      update: outboundUpdate,
+    },
+    conversation: { findFirst: jest.fn() },
+    integrationConnection: { findFirst: jest.fn() },
+    location: { findFirst: jest.fn().mockResolvedValue(null) },
+    tenant: { findUnique: jest.fn().mockResolvedValue({ slug: 'demo' }) },
+  };
+  const vault = { isReady: jest.fn().mockReturnValue(true), decrypt: jest.fn().mockReturnValue('secret') };
+  const processor = { registerHandler: jest.fn() };
+  const consent = {
+    status: jest.fn().mockResolvedValue({ allowed: true }),
+    record: jest.fn().mockResolvedValue({}),
+  };
+  const svc = new MessagingService(
+    prisma as never,
+    vault as never,
+    {} as never,
+    processor as never,
+    {} as never,
+    consent as never,
+    { increment: jest.fn() } as never,
+  );
+
+  beforeEach(() => {
+    jest.mocked(twilioSendSms).mockReset();
+    consent.status.mockResolvedValue({ allowed: true });
+    consent.record.mockResolvedValue({});
+    consent.record.mockClear();
+    outboundUpdate.mockClear();
+    processor.registerHandler.mockClear();
+    vault.isReady.mockReturnValue(true);
+    vault.decrypt.mockReturnValue('secret');
+    prisma.outboundMessage.findUnique.mockResolvedValue({
+      id: 'msg-opt-1',
+      tenantId: 'tenant-1',
+      locationId: null,
+      conversationId: null,
+      endpoint: '+15551234567',
+      purpose: 'CONVERSATIONAL',
+      body: 'Hi',
+      status: 'QUEUED',
+      campaignId: null,
+    });
+    prisma.integrationConnection.findFirst.mockResolvedValue({
+      secrets: [
+        { keyName: 'accountSid', ciphertext: 'x' },
+        { keyName: 'authToken', ciphertext: 'x' },
+        { keyName: 'messagingServiceSid', ciphertext: 'x' },
+      ],
+    });
+    jest.mocked(twilioSendSms).mockResolvedValue({
+      ok: false,
+      optedOut: true,
+      error: 'twilio_21610',
+      retryable: false,
+    });
+    svc.onModuleInit();
+  });
+
+  it('records CONVERSATIONAL and MARKETING opt-out when Twilio reports opted out', async () => {
+    expect(processor.registerHandler).toHaveBeenCalledWith(
+      'messaging.send',
+      expect.any(Function),
+    );
+    const sendHandler = processor.registerHandler.mock.calls.at(-1)![
+      1
+    ] as SendHandler;
+    await sendHandler({ outboundMessageId: 'msg-opt-1' });
+
+    expect(consent.record).toHaveBeenCalledTimes(2);
+    expect(consent.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purpose: 'CONVERSATIONAL',
+        granted: false,
+        source: 'PROVIDER',
+        evidence: { error: 'twilio_21610' },
+      }),
+    );
+    expect(consent.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purpose: 'MARKETING',
+        granted: false,
+        source: 'PROVIDER',
+      }),
+    );
+    expect(outboundUpdate).toHaveBeenCalledWith({
+      where: { id: 'msg-opt-1' },
+      data: {
+        status: 'SUPPRESSED',
+        suppressReason: 'provider_opted_out',
+        error: 'twilio_21610',
+      },
+    });
   });
 });
 
