@@ -16,6 +16,11 @@ export const RESERVED_FLAGS: Record<string, string> = {
   email: 'email_provider_not_selected',
   priceDropAlerts: 'requires_verified_inventory_change_events_and_messaging',
   crossStoreInventory: 'requires_dealer_group_cross_rooftop_permission_model',
+  /**
+   * Inbound SMS AI auto-reply. Forced off until ownership locks, consent,
+   * quiet hours, and provider readiness are explicitly authorized per tenant.
+   */
+  smsAiReply: 'sms_ai_auto_reply_requires_explicit_owner_authorization',
 };
 
 export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
@@ -53,6 +58,8 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   uploads: false,
   appointments: false,
   sms: false,
+  /** Inbound SMS AI — reserved off; see RESERVED_FLAGS.smsAiReply */
+  smsAiReply: false,
   email: false,
   whatsapp: false,
 };

@@ -481,8 +481,20 @@ export class OperationsService {
 
   async queues(scope: Scope) {
     const base = { tenantId: scope.tenantId, ...this.loc(scope) };
-    const [appointments, finance, parts, trades, escalations, quotes] =
-      await Promise.all([
+    const staleBefore = new Date(Date.now() - 2 * 3600_000);
+    const agedBefore = new Date(Date.now() - 7 * 86_400_000);
+    const [
+      appointments,
+      finance,
+      parts,
+      trades,
+      escalations,
+      quotes,
+      unansweredInbound,
+      aiFeedbackFlags,
+      overdueLeads,
+      missedAppointments,
+    ] = await Promise.all([
         this.prisma.appointment.findMany({
           where: {
             ...base,
@@ -527,8 +539,121 @@ export class OperationsService {
           orderBy: { createdAt: 'desc' },
           take: 100,
         }),
+        // Customer last messaged; AI not paused; waiting >2h without staff reply.
+        this.prisma.conversation.findMany({
+          where: {
+            ...base,
+            aiPaused: false,
+            handoffState: { in: ['NONE', 'REQUESTED', 'QUEUED'] },
+            lastActivityAt: { lte: staleBefore },
+            messages: { some: { role: 'USER' } },
+          },
+          orderBy: { lastActivityAt: 'asc' },
+          take: 50,
+          select: {
+            id: true,
+            channel: true,
+            handoffState: true,
+            lastActivityAt: true,
+            locationId: true,
+            messages: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: { role: true, content: true, createdAt: true },
+            },
+          },
+        }),
+        this.prisma.analyticsEvent.findMany({
+          where: {
+            ...base,
+            eventType: 'ai.reply_feedback',
+            occurredAt: { gte: new Date(Date.now() - 7 * 86_400_000) },
+          },
+          orderBy: { occurredAt: 'desc' },
+          take: 50,
+          select: {
+            id: true,
+            occurredAt: true,
+            properties: true,
+            conversationExternalKey: true,
+            locationId: true,
+          },
+        }),
+        this.prisma.lead.findMany({
+          where: {
+            ...base,
+            status: { in: ['OPEN', 'CONTACTED'] },
+            stage: { in: ['HOT', 'WARM'] },
+            updatedAt: { lte: agedBefore },
+          },
+          orderBy: { updatedAt: 'asc' },
+          take: 50,
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            stage: true,
+            status: true,
+            updatedAt: true,
+            phone: true,
+            conversationId: true,
+          },
+        }),
+        this.prisma.appointment.findMany({
+          where: {
+            ...base,
+            status: 'NO_SHOW',
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 50,
+        }),
       ]);
-    return { appointments, finance, parts, trades, escalations, quotes };
+
+    const unanswered = unansweredInbound
+      .filter((c) => c.messages[0]?.role === 'USER')
+      .map((c) => ({
+        id: c.id,
+        channel: c.channel,
+        handoffState: c.handoffState,
+        lastActivityAt: c.lastActivityAt,
+        preview: c.messages[0]?.content?.slice(0, 140) ?? '',
+        reason: 'Unanswered inbound message',
+        priority: 1,
+      }));
+
+    const aiUncertain = aiFeedbackFlags
+      .filter((e) => {
+        const label = (e.properties as { label?: string } | null)?.label;
+        return (
+          label === 'wrong_facts' ||
+          label === 'needed_human' ||
+          label === 'wrong_question' ||
+          label === 'sounds_robotic'
+        );
+      })
+      .map((e) => ({
+        id: e.id,
+        conversationExternalKey: e.conversationExternalKey,
+        occurredAt: e.occurredAt,
+        label: (e.properties as { label?: string })?.label ?? 'feedback',
+        reason: 'AI reply flagged by staff',
+        priority: 2,
+      }));
+
+    return {
+      appointments,
+      finance,
+      parts,
+      trades,
+      escalations,
+      quotes,
+      prioritized: {
+        unansweredInbound: unanswered,
+        aiUncertain,
+        overdueLeads,
+        missedAppointments,
+      },
+    };
   }
 
   async overview(scope: Scope) {

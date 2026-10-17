@@ -9,6 +9,12 @@ type Q = {
   trades: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; createdAt: string; customerName: string | null }>;
   escalations: Array<{ id: string; reason: string; urgency: string; status: string; notifiedAt: string | null; createdAt: string; conversationId: string | null }>;
   quotes?: Array<{ id: string; vehicleLabel: string | null; vehicleVin: string; paymentMethod: string; registrationZip: string | null; status: string; missingInputs: string[]; estimateShown: { total?: number } | null; createdAt: string; customerName: string | null }>;
+  prioritized?: {
+    unansweredInbound: Array<{ id: string; channel: string; preview: string; lastActivityAt: string; reason: string }>;
+    aiUncertain: Array<{ id: string; label: string; occurredAt: string; reason: string; conversationExternalKey: string | null }>;
+    overdueLeads: Array<{ id: string; firstName: string | null; lastName: string | null; stage: string | null; updatedAt: string; conversationId: string | null }>;
+    missedAppointments: Array<{ id: string; type: string; status: string; requestedDate: string | null; updatedAt: string }>;
+  };
 };
 
 export function Queues({ locationId }: { locationId: string }) {
@@ -19,6 +25,54 @@ export function Queues({ locationId }: { locationId: string }) {
       <ErrorNote error={error} />
       {data && (
         <div className="grid2">
+          <Card title={`Unanswered inbound (${data.prioritized?.unansweredInbound.length ?? 0})`}>
+            {!data.prioritized?.unansweredInbound.length ? <Empty>None aging out.</Empty> : (
+              <ul className="list">
+                {data.prioritized.unansweredInbound.map((u) => (
+                  <li key={u.id}>
+                    <span>{u.preview || 'Customer message waiting'}</span>
+                    <span className="row"><Badge>{u.channel}</Badge><span className="muted small">{ago(u.lastActivityAt)}</span></span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <Card title={`AI needs review (${data.prioritized?.aiUncertain.length ?? 0})`}>
+            {!data.prioritized?.aiUncertain.length ? <Empty>No staff flags this week.</Empty> : (
+              <ul className="list">
+                {data.prioritized.aiUncertain.map((a) => (
+                  <li key={a.id}>
+                    <span>{a.reason}</span>
+                    <span className="row"><Badge tone="warn">{a.label}</Badge><span className="muted small">{ago(a.occurredAt)}</span></span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <Card title={`Overdue hot/warm leads (${data.prioritized?.overdueLeads.length ?? 0})`}>
+            {!data.prioritized?.overdueLeads.length ? <Empty>None overdue.</Empty> : (
+              <ul className="list">
+                {data.prioritized.overdueLeads.map((l) => (
+                  <li key={l.id}>
+                    <span>{[l.firstName, l.lastName].filter(Boolean).join(' ') || 'Lead'} · {l.stage}</span>
+                    <span className="muted small">{ago(l.updatedAt)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+          <Card title={`Missed appointments (${data.prioritized?.missedAppointments.length ?? 0})`}>
+            {!data.prioritized?.missedAppointments.length ? <Empty>None recorded.</Empty> : (
+              <ul className="list">
+                {data.prioritized.missedAppointments.map((a) => (
+                  <li key={a.id}>
+                    <span>{a.type} · {a.requestedDate ?? '—'}</span>
+                    <Badge tone="bad">{a.status}</Badge>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
           <Card title={`Handoffs (${data.escalations.length})`}>
             {!data.escalations.length ? <Empty>None open.</Empty> : (
               <ul className="list">
