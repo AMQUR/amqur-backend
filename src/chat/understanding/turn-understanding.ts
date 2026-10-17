@@ -2202,12 +2202,16 @@ export function understandTurn(
     !e.ownVehicle
   ) {
     const n = kids ? (WORD_NUM[kids[1]] ?? Number(kids[1])) : 0;
+    const needsThirdRow = /third row|3rd row/.test(t);
+    const seatsMin = needsThirdRow
+      ? 7
+      : n >= 3
+        ? Math.min(7, n + 2)
+        : undefined;
     e.vehicle = {
       ...e.vehicle,
-      bodyType: e.vehicle?.bodyType ?? 'suv',
-      ...(n >= 3 || /third row|3rd row/.test(t)
-        ? { seatsMin: Math.min(7, n + 2 || 7) }
-        : {}),
+      bodyType: e.vehicle?.bodyType ?? 'SUV',
+      ...(seatsMin !== undefined ? { seatsMin } : {}),
     };
     add('INVENTORY_SEARCH', 0.82, 'family needs');
   }

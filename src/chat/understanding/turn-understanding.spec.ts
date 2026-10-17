@@ -203,3 +203,44 @@ describe('understandTurn — ambiguous words (adversarial)', () => {
     expect(u('am I approved?').entities.customerApr).toBeUndefined();
   });
 });
+
+describe('understandTurn — inventory filter criteria', () => {
+  it('parses max price under $X (comma dollars and k suffix)', () => {
+    expect(u('Any Jeep under $40,000?').entities.maxPrice).toBe(40000);
+    expect(u('SUVs under 45k').entities).toMatchObject({
+      maxPrice: 45000,
+      vehicle: { bodyType: 'SUV' },
+    });
+    expect(u('my budget is 40k for an SUV').entities.maxPrice).toBe(40000);
+  });
+
+  it('parses color and model together with a price cap', () => {
+    const r = u('Show me a red Grand Cherokee under 50k');
+    expect(r.entities.maxPrice).toBe(50000);
+    expect(r.entities.vehicle).toMatchObject({
+      make: 'Jeep',
+      model: 'Grand Cherokee',
+      color: 'red',
+    });
+    expect(r.primary).toBe('INVENTORY_SEARCH');
+  });
+
+  it('parses body type SUV (and crossovers)', () => {
+    expect(u('Do you have any SUVs in stock?').entities.vehicle?.bodyType).toBe(
+      'SUV',
+    );
+    expect(u('Looking at crossovers under 35 grand').entities.vehicle).toMatchObject({
+      bodyType: 'SUV',
+    });
+    expect(u('Need a third row for the family').entities.vehicle).toMatchObject({
+      bodyType: 'SUV',
+      seatsMin: 7,
+    });
+  });
+
+  it('does not treat mileage caps as vehicle price', () => {
+    const r = u('used SUV under 50k miles');
+    expect(r.entities.maxPrice).toBeUndefined();
+    expect(r.entities.vehicle?.maxMileage).toBe(50000);
+  });
+});
