@@ -14,11 +14,9 @@ describe('round-robin assignment', () => {
   it('picks the staffer with the fewest open leads', async () => {
     const prisma = {
       user: {
-        findMany: jest.fn().mockResolvedValue([
-          { id: 'u1' },
-          { id: 'u2' },
-          { id: 'u3' },
-        ]),
+        findMany: jest
+          .fn()
+          .mockResolvedValue([{ id: 'u1' }, { id: 'u2' }, { id: 'u3' }]),
       },
       lead: {
         groupBy: jest.fn().mockResolvedValue([
@@ -36,9 +34,13 @@ describe('round-robin assignment', () => {
   it('does not assign when flag is off', async () => {
     const prisma = { user: { findMany: jest.fn() } } as never;
     await expect(
-      resolveNewLeadAssignee(prisma, { roundRobinAssign: false }, {
-        tenantId: 't1',
-      }),
+      resolveNewLeadAssignee(
+        prisma,
+        { roundRobinAssign: false },
+        {
+          tenantId: 't1',
+        },
+      ),
     ).resolves.toBeNull();
     expect(
       (prisma as { user: { findMany: jest.Mock } }).user.findMany,
@@ -47,10 +49,14 @@ describe('round-robin assignment', () => {
 
   it('keeps an existing assignee', async () => {
     await expect(
-      resolveNewLeadAssignee({} as never, { roundRobinAssign: true }, {
-        tenantId: 't1',
-        existingAssignedUserId: 'keep-me',
-      }),
+      resolveNewLeadAssignee(
+        {} as never,
+        { roundRobinAssign: true },
+        {
+          tenantId: 't1',
+          existingAssignedUserId: 'keep-me',
+        },
+      ),
     ).resolves.toBe('keep-me');
   });
 });

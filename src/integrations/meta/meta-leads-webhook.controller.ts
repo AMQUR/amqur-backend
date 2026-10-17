@@ -60,7 +60,8 @@ export class MetaLeadsWebhookController {
     if (!process.env.META_APP_SECRET?.trim()) {
       throw new ServiceUnavailableException({
         reason: 'not_configured',
-        message: 'Meta lead webhook intake is not configured (META_APP_SECRET).',
+        message:
+          'Meta lead webhook intake is not configured (META_APP_SECRET).',
       });
     }
 

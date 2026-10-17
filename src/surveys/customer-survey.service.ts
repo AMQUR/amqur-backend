@@ -66,7 +66,8 @@ export class CustomerSurveyService {
         select: { id: true, kind: true, defaultChannel: true },
       });
       if (!tpl) throw new BadRequestException('template_not_found');
-      if (tpl.kind !== kind) throw new BadRequestException('template_kind_mismatch');
+      if (tpl.kind !== kind)
+        throw new BadRequestException('template_kind_mismatch');
     }
     const row = await this.prisma.customerSurvey.create({
       data: {
@@ -80,7 +81,9 @@ export class CustomerSurveyService {
         channel,
         status: CustomerSurveyStatus.DRAFT,
         createdByUserId: p.createdByUserId ?? null,
-        metadata: (p.metadata ?? undefined) as Prisma.InputJsonValue | undefined,
+        metadata: (p.metadata ?? undefined) as
+          | Prisma.InputJsonValue
+          | undefined,
       },
     });
     await this.prisma.auditLog
@@ -270,8 +273,7 @@ export class CustomerSurveyService {
       where: { id: existing.id },
       data: {
         followUpStatus: CustomerSurveyFollowUpStatus.RESOLVED,
-        assignedManagerUserId:
-          existing.assignedManagerUserId ?? p.actorUserId,
+        assignedManagerUserId: existing.assignedManagerUserId ?? p.actorUserId,
         managerNote: p.managerNote?.slice(0, 2000) ?? existing.managerNote,
       },
     });
@@ -378,7 +380,12 @@ export class CustomerSurveyService {
             },
           },
         }),
-        this.avgForKind(tenantId, CustomerSurveyKind.SALES, since, opts?.locationId),
+        this.avgForKind(
+          tenantId,
+          CustomerSurveyKind.SALES,
+          since,
+          opts?.locationId,
+        ),
         this.avgForKind(
           tenantId,
           CustomerSurveyKind.SERVICE,

@@ -264,11 +264,10 @@ export class UploadsService {
     if (!this.isAttachableScanStatus(file.scannedStatus)) {
       throw new ForbiddenException('file_not_clean');
     }
-    if (
-      file.conversationId &&
-      file.conversationId !== params.conversationId
-    ) {
-      throw new ConflictException('File already linked to another conversation');
+    if (file.conversationId && file.conversationId !== params.conversationId) {
+      throw new ConflictException(
+        'File already linked to another conversation',
+      );
     }
     if (file.conversationId === params.conversationId) {
       return this.staffAttachmentView(params.tenantId, file);
@@ -284,10 +283,7 @@ export class UploadsService {
     return this.staffAttachmentView(params.tenantId, updated);
   }
 
-  async listConversationAttachments(
-    tenantId: string,
-    conversationId: string,
-  ) {
+  async listConversationAttachments(tenantId: string, conversationId: string) {
     const conv = await this.prisma.conversation.findFirst({
       where: { id: conversationId, tenantId },
       select: { id: true },

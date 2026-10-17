@@ -12,10 +12,7 @@ import {
   normalizePhone,
   pickUniqueMatch,
 } from './contact-identity';
-import {
-  assignableStaffWhere,
-  resolveNewLeadAssignee,
-} from './round-robin';
+import { assignableStaffWhere, resolveNewLeadAssignee } from './round-robin';
 
 @Injectable()
 export class LeadsService {

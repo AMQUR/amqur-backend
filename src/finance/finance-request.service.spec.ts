@@ -115,13 +115,9 @@ describe('FinanceRequestService.updateStaff', () => {
   });
 
   it('updates status and writes audit log', async () => {
-    const row = await svc.updateStaff(
-      'tenant-1',
-      'loc-1',
-      'fr-1',
-      'user-1',
-      { status: 'PENDING_STAFF' },
-    );
+    const row = await svc.updateStaff('tenant-1', 'loc-1', 'fr-1', 'user-1', {
+      status: 'PENDING_STAFF',
+    });
     expect(row.status).toBe('PENDING_STAFF');
     expect(prisma.financeRequest.update).toHaveBeenCalledWith({
       where: { id: 'fr-1' },

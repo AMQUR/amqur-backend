@@ -11,7 +11,9 @@ describe('EscalationsService handoff queue', () => {
       update: jest.fn(),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
-    $transaction: jest.fn(async (fn: (tx: typeof prisma) => unknown) => fn(prisma)),
+    $transaction: jest.fn(async (fn: (tx: typeof prisma) => unknown) =>
+      fn(prisma),
+    ),
   };
 
   const outbox = {
@@ -76,12 +78,18 @@ describe('EscalationsService handoff queue', () => {
     let chain: Promise<unknown> = Promise.resolve();
 
     prisma.conversation.findUnique.mockResolvedValue({ id: 'conv1' });
-    prisma.$transaction.mockImplementation((fn: (tx: typeof prisma) => unknown) => {
-      chain = chain.then(() => fn(prisma));
-      return chain;
-    });
+    prisma.$transaction.mockImplementation(
+      (fn: (tx: typeof prisma) => unknown) => {
+        chain = chain.then(() => fn(prisma));
+        return chain;
+      },
+    );
     prisma.escalation.findFirst.mockImplementation(
-      async ({ where }: { where: { conversationId?: string; status?: { in: string[] } } }) => {
+      async ({
+        where,
+      }: {
+        where: { conversationId?: string; status?: { in: string[] } };
+      }) => {
         const statuses = where.status?.in ?? [...OPEN];
         return (
           store.find(

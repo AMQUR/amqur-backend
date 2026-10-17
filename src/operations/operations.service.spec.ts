@@ -68,11 +68,14 @@ describe('OperationsService.satisfaction', () => {
 
   it('returns available:false with proxy signals (no CSAT score)', async () => {
     spySurveyProviderConnected(svc, false);
-    const r = await svc.satisfaction({ tenantId: 'tenant-1', locationId: null });
+    const r = await svc.satisfaction({
+      tenantId: 'tenant-1',
+      locationId: null,
+    });
     expect(r.available).toBe(false);
-    expect(
-      (r as { reason?: string }).reason,
-    ).toBe('survey_provider_not_connected');
+    expect((r as { reason?: string }).reason).toBe(
+      'survey_provider_not_connected',
+    );
     expect(r.signals.replyFeedback).toEqual({
       total: 8,
       good: 6,
@@ -125,7 +128,10 @@ describe('OperationsService.satisfaction', () => {
     } as Awaited<ReturnType<OperationsService['overview']>>);
     spySurveyProviderConnected(svc2, true);
 
-    const r = await svc2.satisfaction({ tenantId: 'tenant-1', locationId: null });
+    const r = await svc2.satisfaction({
+      tenantId: 'tenant-1',
+      locationId: null,
+    });
     expect(r.available).toBe(true);
     expect((r as { csat?: { average: number; count: number } }).csat).toEqual({
       average: 8,
@@ -279,7 +285,8 @@ describe('OperationsService.takeover', () => {
       svc.takeover(scope, conversationId, otherStaffId),
     ).rejects.toMatchObject({
       response: {
-        message: 'Another team member owns this conversation — transfer it first',
+        message:
+          'Another team member owns this conversation — transfer it first',
         statusCode: 409,
       },
     });
@@ -646,7 +653,10 @@ describe('OperationsService.missedOpportunities', () => {
       },
     } as unknown as Awaited<ReturnType<OperationsService['queues']>>);
 
-    const r = await svc.missedOpportunities({ tenantId: 'tenant-1', locationId: null });
+    const r = await svc.missedOpportunities({
+      tenantId: 'tenant-1',
+      locationId: null,
+    });
 
     expect(r.prioritized).toEqual({
       unansweredInbound: 1,
@@ -675,8 +685,19 @@ describe('OperationsService.executiveExplain', () => {
     const svc = makeOperationsService({});
     jest.spyOn(svc, 'overview').mockResolvedValue({
       window: '7d',
-      outcomes: { leadsCaptured: 12, creditLinksOffered: 0, creditLinksClicked: 0 },
-      attention: { hotLeads: 3, partsOpen: 0, financeOpen: 0, tradesOpen: 0, openHandoffs: 0, appointmentsAwaitingConfirmation: 0 },
+      outcomes: {
+        leadsCaptured: 12,
+        creditLinksOffered: 0,
+        creditLinksClicked: 0,
+      },
+      attention: {
+        hotLeads: 3,
+        partsOpen: 0,
+        financeOpen: 0,
+        tradesOpen: 0,
+        openHandoffs: 0,
+        appointmentsAwaitingConfirmation: 0,
+      },
       aiQuality: {
         inventoryMisses: 0,
         knowledgeMisses: 0,
@@ -709,8 +730,19 @@ describe('OperationsService.executiveExplain', () => {
     const svc = makeOperationsService({});
     jest.spyOn(svc, 'overview').mockResolvedValue({
       window: '7d',
-      outcomes: { leadsCaptured: 0, creditLinksOffered: 0, creditLinksClicked: 0 },
-      attention: { hotLeads: 0, partsOpen: 0, financeOpen: 0, tradesOpen: 0, openHandoffs: 0, appointmentsAwaitingConfirmation: 0 },
+      outcomes: {
+        leadsCaptured: 0,
+        creditLinksOffered: 0,
+        creditLinksClicked: 0,
+      },
+      attention: {
+        hotLeads: 0,
+        partsOpen: 0,
+        financeOpen: 0,
+        tradesOpen: 0,
+        openHandoffs: 0,
+        appointmentsAwaitingConfirmation: 0,
+      },
       aiQuality: {
         inventoryMisses: 0,
         knowledgeMisses: 5,
@@ -829,11 +861,13 @@ describe('OperationsService.recentKnowledgeMisses', () => {
     };
     const prisma = {
       analyticsEvent: {
-        findMany: jest.fn().mockImplementation(({ where }: { where: { tenantId: string } }) =>
-          where.tenantId === 'tenant-a'
-            ? Promise.resolve([otherTenantRow])
-            : Promise.resolve([]),
-        ),
+        findMany: jest
+          .fn()
+          .mockImplementation(({ where }: { where: { tenantId: string } }) =>
+            where.tenantId === 'tenant-a'
+              ? Promise.resolve([otherTenantRow])
+              : Promise.resolve([]),
+          ),
       },
     };
     const svc = makeOperationsService(prisma);
@@ -857,7 +891,13 @@ describe('OperationsService.listInventory', () => {
     const svc = makeOperationsService({}, { inventory: { browseForStaff } });
     await svc.listInventory(
       { tenantId: 'tenant-1', locationId: 'loc-1' },
-      { vin: '1C4', stock: 'STK', make: 'Jeep', model: 'Wrangler', q: 'rubicon' },
+      {
+        vin: '1C4',
+        stock: 'STK',
+        make: 'Jeep',
+        model: 'Wrangler',
+        q: 'rubicon',
+      },
     );
     expect(browseForStaff).toHaveBeenCalledWith({
       tenantId: 'tenant-1',

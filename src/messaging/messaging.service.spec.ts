@@ -15,7 +15,13 @@ const defaultQuiet = {
 
 function localInstant(
   tz: string,
-  parts: { year: number; month: number; day: number; hour: number; minute: number },
+  parts: {
+    year: number;
+    month: number;
+    day: number;
+    hour: number;
+    minute: number;
+  },
 ): Date {
   return fromZoned(parts, tz);
 }
@@ -33,7 +39,13 @@ describe('MessagingService.nextAllowed DST quiet hours', () => {
     expect(deferred).not.toBeNull();
     expect(deferred!.toISOString()).toBe('2026-03-09T13:00:00.000Z');
     const endLocal = toZoned(deferred!, 'America/Chicago');
-    expect(endLocal).toMatchObject({ year: 2026, month: 3, day: 9, hour: 8, minute: 0 });
+    expect(endLocal).toMatchObject({
+      year: 2026,
+      month: 3,
+      day: 9,
+      hour: 8,
+      minute: 0,
+    });
     expect(MessagingService.nextAllowed(deferred!, defaultQuiet)).toBeNull();
   });
 
@@ -49,7 +61,13 @@ describe('MessagingService.nextAllowed DST quiet hours', () => {
     expect(deferred).not.toBeNull();
     expect(deferred!.toISOString()).toBe('2026-11-01T14:00:00.000Z');
     const endLocal = toZoned(deferred!, 'America/Chicago');
-    expect(endLocal).toMatchObject({ year: 2026, month: 11, day: 1, hour: 8, minute: 0 });
+    expect(endLocal).toMatchObject({
+      year: 2026,
+      month: 11,
+      day: 1,
+      hour: 8,
+      minute: 0,
+    });
     expect(MessagingService.nextAllowed(deferred!, defaultQuiet)).toBeNull();
   });
 
@@ -118,11 +136,12 @@ describe('MessagingService.queue idempotency', () => {
     },
     integrationConnection: { findFirst: jest.fn() },
     location: { findFirst: jest.fn().mockResolvedValue(null) },
-    $transaction: jest.fn(async (fn: (client: typeof tx) => unknown) =>
-      fn(tx),
-    ),
+    $transaction: jest.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)),
   };
-  const vault = { isReady: jest.fn().mockReturnValue(true), decrypt: jest.fn() };
+  const vault = {
+    isReady: jest.fn().mockReturnValue(true),
+    decrypt: jest.fn(),
+  };
   const outbox = { enqueue: jest.fn().mockResolvedValue({ id: 'ob-1' }) };
   const processor = { registerHandler: jest.fn() };
   const flags = { resolve: jest.fn().mockResolvedValue({ sms: true }) };
@@ -168,8 +187,8 @@ describe('MessagingService.queue idempotency', () => {
     flags.resolve.mockResolvedValue({ sms: true });
     consent.status.mockResolvedValue({ allowed: true });
     tx.outboundMessage.create.mockResolvedValue(queuedRow);
-    prisma.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) =>
-      fn(tx),
+    prisma.$transaction.mockImplementation(
+      async (fn: (client: typeof tx) => unknown) => fn(tx),
     );
   });
 
@@ -257,11 +276,12 @@ describe('MessagingService.queue location messagingPolicy quiet hours', () => {
     },
     integrationConnection: { findFirst: jest.fn() },
     location: { findFirst: jest.fn() },
-    $transaction: jest.fn(async (fn: (client: typeof tx) => unknown) =>
-      fn(tx),
-    ),
+    $transaction: jest.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)),
   };
-  const vault = { isReady: jest.fn().mockReturnValue(true), decrypt: jest.fn() };
+  const vault = {
+    isReady: jest.fn().mockReturnValue(true),
+    decrypt: jest.fn(),
+  };
   const outbox = { enqueue: jest.fn().mockResolvedValue({ id: 'ob-quiet-1' }) };
   const processor = { registerHandler: jest.fn() };
   const flags = { resolve: jest.fn().mockResolvedValue({ sms: true }) };
@@ -303,8 +323,8 @@ describe('MessagingService.queue location messagingPolicy quiet hours', () => {
     flags.resolve.mockResolvedValue({ sms: true });
     consent.status.mockResolvedValue({ allowed: true });
     tx.outboundMessage.create.mockResolvedValue(queuedRow);
-    prisma.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) =>
-      fn(tx),
+    prisma.$transaction.mockImplementation(
+      async (fn: (client: typeof tx) => unknown) => fn(tx),
     );
   });
 
@@ -374,7 +394,10 @@ describe('MessagingService deliver Twilio opt-out', () => {
     location: { findFirst: jest.fn().mockResolvedValue(null) },
     tenant: { findUnique: jest.fn().mockResolvedValue({ slug: 'demo' }) },
   };
-  const vault = { isReady: jest.fn().mockReturnValue(true), decrypt: jest.fn().mockReturnValue('secret') };
+  const vault = {
+    isReady: jest.fn().mockReturnValue(true),
+    decrypt: jest.fn().mockReturnValue('secret'),
+  };
   const processor = { registerHandler: jest.fn() };
   const consent = {
     status: jest.fn().mockResolvedValue({ allowed: true }),
@@ -431,9 +454,9 @@ describe('MessagingService deliver Twilio opt-out', () => {
       'messaging.send',
       expect.any(Function),
     );
-    const sendHandler = processor.registerHandler.mock.calls.at(-1)![
-      1
-    ] as SendHandler;
+    const sendHandler = processor.registerHandler.mock.calls.at(
+      -1,
+    )![1] as SendHandler;
     await sendHandler({ outboundMessageId: 'msg-opt-1' });
 
     expect(consent.record).toHaveBeenCalledTimes(2);

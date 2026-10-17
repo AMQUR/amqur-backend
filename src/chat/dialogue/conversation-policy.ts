@@ -228,7 +228,10 @@ export function resolveVerbosityMode(params: {
   if (params.turnKind === 'regulatory_notice') return 'regulatory';
   if (params.turnKind === 'requested_detailed_answer') return 'detailed';
   if (DETAILED_HINT.test(params.customerMessage)) return 'detailed';
-  if (REGULATORY_HINT.test(params.customerMessage) && DETAILED_HINT.test(params.customerMessage))
+  if (
+    REGULATORY_HINT.test(params.customerMessage) &&
+    DETAILED_HINT.test(params.customerMessage)
+  )
     return 'regulatory';
   return 'concise';
 }
@@ -250,7 +253,10 @@ export function inferTurnKind(params: {
     return 'finance_education';
   if (intents.some((i) => /SERVICE/.test(i))) return 'service';
   if (intents.some((i) => /PARTS/.test(i))) return 'parts';
-  if (params.hasCards || intents.some((i) => /INVENTORY|VEHICLE|SEARCH/.test(i)))
+  if (
+    params.hasCards ||
+    intents.some((i) => /INVENTORY|VEHICLE|SEARCH/.test(i))
+  )
     return 'inventory_result';
   if (params.socialOnly) return 'small_talk';
   return 'simple_answer';
@@ -397,7 +403,11 @@ export function planConciseResponse(
   }
   if (turnKind === 'complaint' && followUp) {
     // Complaints: no sales-progression question; keep only if it's about human help.
-    if (!/\b(human|person|agent|specialist|call|connect|transfer)\b/i.test(followUp))
+    if (
+      !/\b(human|person|agent|specialist|call|connect|transfer)\b/i.test(
+        followUp,
+      )
+    )
       followUp = undefined;
   }
   if (
@@ -464,9 +474,7 @@ export function acceptCustomerReply(
   )
     return { accept: false, length, reason: 'too_many_words' };
   // Scripted filler is never acceptable on the customer path.
-  if (
-    /\b(i'?d be more than happy|great question|absolutely[!])/i.test(reply)
-  )
+  if (/\b(i'?d be more than happy|great question|absolutely[!])/i.test(reply))
     return { accept: false, length, reason: 'banned_filler' };
   return { accept: true, length };
 }
@@ -528,7 +536,10 @@ export function trimToSentenceBudget(
   if (body[0]) keep.push(body[0]);
   const caveat = body.find((s, i) => i > 0 && CAVEAT.test(s));
   if (caveat) keep.push(caveat);
-  const maxBody = Math.max(keep.length, budget.maxSentences - (question ? 1 : 0));
+  const maxBody = Math.max(
+    keep.length,
+    budget.maxSentences - (question ? 1 : 0),
+  );
   for (const s of body) {
     if (keep.includes(s)) continue;
     const next = [...keep, s].join(' ');

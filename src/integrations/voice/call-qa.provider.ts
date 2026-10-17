@@ -73,7 +73,9 @@ export class DisabledCallQaProvider implements CallQaProvider {
     return false;
   }
 
-  async summarizeCall(_params: SummarizeCallParams): Promise<SummarizeCallResult> {
+  async summarizeCall(
+    _params: SummarizeCallParams,
+  ): Promise<SummarizeCallResult> {
     return callQaBlocked('voice_not_live');
   }
 

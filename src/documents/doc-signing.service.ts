@@ -23,7 +23,9 @@ export class DocSigningService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async requestSign(params: CreateEnvelopeParams): Promise<CreateEnvelopeResult> {
+  async requestSign(
+    params: CreateEnvelopeParams,
+  ): Promise<CreateEnvelopeResult> {
     const gate = await this.resolveGate(params.tenantId, params.locationId);
     if (!gate.allowed) {
       return docSigningBlocked(gate.reason);

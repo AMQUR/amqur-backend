@@ -56,15 +56,8 @@ export class MessagingService implements OnModuleInit {
     to: string;
     purpose: ConsentPurpose;
   }): Promise<{ allowed: boolean; reason?: string }> {
-    const c = await this.consent.status(
-      p.tenantId,
-      p.channel,
-      p.to,
-      p.purpose,
-    );
-    return c.allowed
-      ? { allowed: true }
-      : { allowed: false, reason: c.reason };
+    const c = await this.consent.status(p.tenantId, p.channel, p.to, p.purpose);
+    return c.allowed ? { allowed: true } : { allowed: false, reason: c.reason };
   }
 
   /** Per-tenant Twilio credentials from the vault; null unless explicitly enabled + live-ready. */

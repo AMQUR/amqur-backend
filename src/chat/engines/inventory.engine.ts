@@ -319,8 +319,7 @@ export class InventoryEngine {
     if (c.locationId)
       AND.push({ OR: [{ locationId: c.locationId }, { locationId: null }] });
     const make = c.make?.trim();
-    if (make)
-      AND.push({ make: { contains: make, mode: 'insensitive' } });
+    if (make) AND.push({ make: { contains: make, mode: 'insensitive' } });
     const model = c.model?.trim();
     if (model)
       AND.push({

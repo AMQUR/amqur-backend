@@ -4,11 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  PlaybookDepartment,
-  PlaybookStatus,
-  Prisma,
-} from '@prisma/client';
+import { PlaybookDepartment, PlaybookStatus, Prisma } from '@prisma/client';
 import { createHash } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -63,9 +59,7 @@ export class PlaybookService {
         tenantId,
         OR: [
           { locationScope: '_' },
-          ...(locationId
-            ? [{ locationScope: locationId, locationId }]
-            : []),
+          ...(locationId ? [{ locationScope: locationId, locationId }] : []),
         ],
       },
       orderBy: [{ key: 'asc' }, { version: 'desc' }],
@@ -125,7 +119,10 @@ export class PlaybookService {
     patch: Partial<PlaybookInput>,
   ) {
     const row = await this.get(tenantId, id);
-    if (row.status !== PlaybookStatus.DRAFT && row.status !== PlaybookStatus.REJECTED)
+    if (
+      row.status !== PlaybookStatus.DRAFT &&
+      row.status !== PlaybookStatus.REJECTED
+    )
       throw new BadRequestException('Only drafts can be edited');
     if (patch.key || patch.title || patch.tone || patch.brevity)
       this.validate({
@@ -171,7 +168,10 @@ export class PlaybookService {
 
   async submitForReview(tenantId: string, userId: string, id: string) {
     const row = await this.get(tenantId, id);
-    if (row.status !== PlaybookStatus.DRAFT && row.status !== PlaybookStatus.REJECTED)
+    if (
+      row.status !== PlaybookStatus.DRAFT &&
+      row.status !== PlaybookStatus.REJECTED
+    )
       throw new BadRequestException('Only drafts can be submitted');
     const updated = await this.prisma.conversationPlaybook.update({
       where: { id },
@@ -217,9 +217,7 @@ export class PlaybookService {
       row.status !== PlaybookStatus.APPROVED &&
       row.status !== PlaybookStatus.PUBLISHED
     )
-      throw new BadRequestException(
-        'Playbook must be approved before publish',
-      );
+      throw new BadRequestException('Playbook must be approved before publish');
 
     return this.prisma.$transaction(async (tx) => {
       const previous = await tx.conversationPlaybook.findMany({
@@ -254,7 +252,10 @@ export class PlaybookService {
         phrases: published.approvedPhrases,
         forbidden: published.forbiddenPhrases,
       });
-      const checksum = createHash('sha256').update(snapshot).digest('hex').slice(0, 32);
+      const checksum = createHash('sha256')
+        .update(snapshot)
+        .digest('hex')
+        .slice(0, 32);
       await tx.promptVersion.create({
         data: {
           tenantId,
@@ -294,11 +295,7 @@ export class PlaybookService {
   }
 
   /** Roll back to a prior archived/published version by re-publishing it. */
-  async rollback(
-    tenantId: string,
-    userId: string,
-    targetId: string,
-  ) {
+  async rollback(tenantId: string, userId: string, targetId: string) {
     const target = await this.get(tenantId, targetId);
     if (
       target.status !== PlaybookStatus.ARCHIVED &&
@@ -363,7 +360,7 @@ export class PlaybookService {
         orderBy: { publishedAt: 'desc' },
       });
     const locScope = locationId ? locationId : null;
-    let row =
+    const row =
       (locScope ? await tryFind(locScope, dept) : null) ??
       (await tryFind('_', dept)) ??
       (locScope ? await tryFind(locScope, PlaybookDepartment.GENERAL) : null) ??
@@ -403,10 +400,7 @@ export class PlaybookService {
       if (phrase && candidate.toLowerCase().includes(phrase.toLowerCase()))
         reasons.push(`forbidden_phrase:${phrase.slice(0, 40)}`);
     }
-    if (
-      (playbook.brevity ?? 'short') === 'short' &&
-      candidate.length > 480
-    )
+    if ((playbook.brevity ?? 'short') === 'short' && candidate.length > 480)
       reasons.push('too_long_for_short_brevity');
     return {
       ok: reasons.length === 0,
@@ -427,8 +421,7 @@ export class PlaybookService {
       throw new BadRequestException(
         'key must be lowercase alphanumeric with -/_',
       );
-    if (!input.title?.trim())
-      throw new BadRequestException('title required');
+    if (!input.title?.trim()) throw new BadRequestException('title required');
     if (input.tone && !TONES.has(input.tone))
       throw new BadRequestException('invalid tone');
     if (input.brevity && !BREVITY.has(input.brevity))

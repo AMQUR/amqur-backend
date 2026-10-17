@@ -229,13 +229,17 @@ describe('understandTurn — inventory filter criteria', () => {
     expect(u('Do you have any SUVs in stock?').entities.vehicle?.bodyType).toBe(
       'SUV',
     );
-    expect(u('Looking at crossovers under 35 grand').entities.vehicle).toMatchObject({
+    expect(
+      u('Looking at crossovers under 35 grand').entities.vehicle,
+    ).toMatchObject({
       bodyType: 'SUV',
     });
-    expect(u('Need a third row for the family').entities.vehicle).toMatchObject({
-      bodyType: 'SUV',
-      seatsMin: 7,
-    });
+    expect(u('Need a third row for the family').entities.vehicle).toMatchObject(
+      {
+        bodyType: 'SUV',
+        seatsMin: 7,
+      },
+    );
   });
 
   it('does not treat mileage caps as vehicle price', () => {

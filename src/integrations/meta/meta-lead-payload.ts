@@ -100,7 +100,9 @@ export function extractMetaLeadgenWebhookContext(
         adId: readMetaId(v.ad_id),
         adgroupId: readMetaId(v.adgroup_id),
         createdTime:
-          typeof v.created_time === 'string' ? v.created_time.slice(0, 64) : undefined,
+          typeof v.created_time === 'string'
+            ? v.created_time.slice(0, 64)
+            : undefined,
       };
     }
   }

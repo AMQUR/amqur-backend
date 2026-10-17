@@ -1,10 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import {
-  IsOptional,
-  IsString,
-  MaxLength,
-  MinLength,
-} from 'class-validator';
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import {

@@ -341,8 +341,7 @@ export class CampaignEngine implements OnModuleInit {
     c: FollowUpCampaign,
     take: number,
   ): Promise<string[]> {
-    const loc =
-      c.locationId != null ? { locationId: c.locationId } : {};
+    const loc = c.locationId != null ? { locationId: c.locationId } : {};
     if (c.trigger.startsWith('appointment.')) {
       const status =
         c.trigger === 'appointment.confirmed.reminder'
@@ -471,7 +470,7 @@ export class CampaignEngine implements OnModuleInit {
             campaignId: c.id,
             version: c.version,
             trigger: c.trigger,
-            reason: res.status === 'QUEUED' ? null : res.reason ?? null,
+            reason: res.status === 'QUEUED' ? null : (res.reason ?? null),
           },
         },
       })

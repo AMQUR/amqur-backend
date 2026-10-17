@@ -111,7 +111,9 @@ describe('SoldDealService', () => {
       conversationId: 'conv-1',
     });
     prisma.lead.update.mockResolvedValue({});
-    prisma.message.findMany.mockResolvedValue([{ metadata: { channel: 'SMS' } }]);
+    prisma.message.findMany.mockResolvedValue([
+      { metadata: { channel: 'SMS' } },
+    ]);
     prisma.auditLog.create.mockResolvedValue({});
 
     await svc.recordSoldDeal('tenant-1', actor, {

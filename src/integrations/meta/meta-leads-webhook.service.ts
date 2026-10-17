@@ -4,7 +4,11 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { IntegrationProvider, Prisma, WebhookInboxStatus } from '@prisma/client';
+import {
+  IntegrationProvider,
+  Prisma,
+  WebhookInboxStatus,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { verifyMetaHubSignature256 } from '../../common/security/meta-hub-signature';
 import {
@@ -52,13 +56,17 @@ export class MetaLeadsWebhookService {
     challenge?: string;
   }):
     | { ok: true; challenge: string }
-    | { ok: false; reason: 'not_configured' | 'token_mismatch' | 'invalid_request' } {
+    | {
+        ok: false;
+        reason: 'not_configured' | 'token_mismatch' | 'invalid_request';
+      } {
     const expected = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim();
     if (!expected) return { ok: false, reason: 'not_configured' };
     if (q.mode !== 'subscribe' || !q.verifyToken || !q.challenge) {
       return { ok: false, reason: 'invalid_request' };
     }
-    if (q.verifyToken !== expected) return { ok: false, reason: 'token_mismatch' };
+    if (q.verifyToken !== expected)
+      return { ok: false, reason: 'token_mismatch' };
     return { ok: true, challenge: q.challenge };
   }
 
@@ -85,7 +93,9 @@ export class MetaLeadsWebhookService {
       });
     }
 
-    const externalEventId = extractMetaLeadgenExternalEventId(params.parsedBody);
+    const externalEventId = extractMetaLeadgenExternalEventId(
+      params.parsedBody,
+    );
     if (!externalEventId || !payloadRecord) {
       this.logger.warn('meta lead webhook rejected reason=malformed_payload');
       return this.storeRejected({

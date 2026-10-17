@@ -70,7 +70,10 @@ describe('ReviewRequestIntentService', () => {
       locationId: 'loc-1',
       conversationId: null,
     });
-    messaging.previewConsent.mockResolvedValue({ allowed: false, reason: 'no_consent' });
+    messaging.previewConsent.mockResolvedValue({
+      allowed: false,
+      reason: 'no_consent',
+    });
 
     const result = await svc.checkEligibility({
       tenantId: 't1',

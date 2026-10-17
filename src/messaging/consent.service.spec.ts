@@ -16,7 +16,14 @@ describe('ConsentService.status', () => {
     evidence: {},
   };
 
-  function svc(rows: Array<{ purpose: string; granted: boolean; createdAt: Date; source?: string }>) {
+  function svc(
+    rows: Array<{
+      purpose: string;
+      granted: boolean;
+      createdAt: Date;
+      source?: string;
+    }>,
+  ) {
     const prisma = {
       consentRecord: {
         findMany: jest.fn().mockResolvedValue(
@@ -38,10 +45,28 @@ describe('ConsentService.status', () => {
     const t0 = new Date('2026-10-01T12:00:00Z');
     const t1 = new Date('2026-10-02T12:00:00Z');
     const consent = svc([
-      { purpose: 'MARKETING', granted: false, createdAt: t1, source: 'SMS_KEYWORD' },
-      { purpose: 'CONVERSATIONAL', granted: false, createdAt: t0, source: 'SMS_KEYWORD' },
-      { purpose: 'MARKETING', granted: true, createdAt: new Date('2026-09-01T12:00:00Z') },
-      { purpose: 'CONVERSATIONAL', granted: true, createdAt: new Date('2026-09-01T12:00:00Z') },
+      {
+        purpose: 'MARKETING',
+        granted: false,
+        createdAt: t1,
+        source: 'SMS_KEYWORD',
+      },
+      {
+        purpose: 'CONVERSATIONAL',
+        granted: false,
+        createdAt: t0,
+        source: 'SMS_KEYWORD',
+      },
+      {
+        purpose: 'MARKETING',
+        granted: true,
+        createdAt: new Date('2026-09-01T12:00:00Z'),
+      },
+      {
+        purpose: 'CONVERSATIONAL',
+        granted: true,
+        createdAt: new Date('2026-09-01T12:00:00Z'),
+      },
     ]);
 
     await expect(
@@ -54,9 +79,24 @@ describe('ConsentService.status', () => {
 
   it('keeps MARKETING blocked after START re-grants CONVERSATIONAL only', async () => {
     const consent = svc([
-      { purpose: 'CONVERSATIONAL', granted: true, createdAt: new Date('2026-10-03T12:00:00Z'), source: 'SMS_KEYWORD' },
-      { purpose: 'MARKETING', granted: false, createdAt: new Date('2026-10-02T12:00:00Z'), source: 'SMS_KEYWORD' },
-      { purpose: 'CONVERSATIONAL', granted: false, createdAt: new Date('2026-10-02T11:00:00Z'), source: 'SMS_KEYWORD' },
+      {
+        purpose: 'CONVERSATIONAL',
+        granted: true,
+        createdAt: new Date('2026-10-03T12:00:00Z'),
+        source: 'SMS_KEYWORD',
+      },
+      {
+        purpose: 'MARKETING',
+        granted: false,
+        createdAt: new Date('2026-10-02T12:00:00Z'),
+        source: 'SMS_KEYWORD',
+      },
+      {
+        purpose: 'CONVERSATIONAL',
+        granted: false,
+        createdAt: new Date('2026-10-02T11:00:00Z'),
+        source: 'SMS_KEYWORD',
+      },
     ]);
 
     await expect(

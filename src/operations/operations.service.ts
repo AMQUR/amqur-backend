@@ -463,7 +463,10 @@ export class OperationsService {
     const target = await this.prisma.user.findFirst({
       where: {
         id: toUserId,
-        ...assignableStaffWhere(scope.tenantId, c.locationId ?? scope.locationId),
+        ...assignableStaffWhere(
+          scope.tenantId,
+          c.locationId ?? scope.locationId,
+        ),
       },
     });
     if (!target) {
@@ -482,7 +485,8 @@ export class OperationsService {
         data: {
           conversationId: id,
           role: 'SYSTEM',
-          content: 'Conversation ownership was transferred to another team member.',
+          content:
+            'Conversation ownership was transferred to another team member.',
           metadata: {
             event: 'staff_transferred',
             fromUserId,
@@ -976,7 +980,8 @@ export class OperationsService {
         answer: `${overview.attention.appointmentsAwaitingConfirmation} appointment(s) await confirmation; ${brief.today.appointmentsOnBook} on the book today and ${overview.outcomes.confirmedAppointments} confirmed in the last 7 days.`,
         metrics: {
           ...baseMetrics,
-          awaitingConfirmation: overview.attention.appointmentsAwaitingConfirmation,
+          awaitingConfirmation:
+            overview.attention.appointmentsAwaitingConfirmation,
           appointmentsOnBookToday: brief.today.appointmentsOnBook,
           confirmedAppointments7d: overview.outcomes.confirmedAppointments,
         },
@@ -991,7 +996,8 @@ export class OperationsService {
         metrics: {
           ...baseMetrics,
           serviceRequests7d: overview.outcomes.serviceRequests,
-          awaitingConfirmation: overview.attention.appointmentsAwaitingConfirmation,
+          awaitingConfirmation:
+            overview.attention.appointmentsAwaitingConfirmation,
         },
         links: ['#/service', '#/appointments'],
         source: 'platform_records' as const,
@@ -1048,7 +1054,11 @@ export class OperationsService {
         note,
       };
     }
-    if (query.includes('csi') || query.includes('satisfaction') || query.includes('csat')) {
+    if (
+      query.includes('csi') ||
+      query.includes('satisfaction') ||
+      query.includes('csat')
+    ) {
       return {
         answer: `${csiDrafts} CSI draft(s) and ${csiFollowUps} manager follow-up(s) are open (internal CSI only — not OEM scores); staff rated ${rf.good}/${rf.total} AI replies good in the last 7 days.`,
         metrics: {
@@ -1171,57 +1181,61 @@ export class OperationsService {
 
     const serviceActive = apptActive(serviceApptCounts);
 
-    const stages: Array<{ key: string; label: string; count: number; href: string }> =
-      [
-        {
-          key: 'leads_new',
-          label: 'New leads',
-          count: leadNew,
-          href: '#/leads',
-        },
-        {
-          key: 'leads_qualified',
-          label: 'Qualified leads',
-          count: leadQualified,
-          href: '#/leads?status=QUALIFIED',
-        },
-        {
-          key: 'leads_converted',
-          label: 'Converted leads',
-          count: leadConverted,
-          href: '#/leads',
-        },
-        {
-          key: 'sold_deal_recorded',
-          label: 'Sold (deal recorded)',
-          count: dealSoldRecorded,
-          href: '#/sold-deals',
-        },
-        {
-          key: 'appointments_active',
-          label: 'Active appointments',
-          count: apptActive(apptCounts),
-          href: '#/appointments',
-        },
-        {
-          key: 'service_visits_active',
-          label: 'Active service visits',
-          count: serviceActive,
-          href: '#/service',
-        },
-        {
-          key: 'service_csi_followups',
-          label: 'Service CSI follow-ups',
-          count: serviceFollowUpsOpen,
-          href: '#/surveys',
-        },
-        {
-          key: 'sales_csi_followups',
-          label: 'Sales CSI follow-ups',
-          count: salesFollowUpsOpen,
-          href: '#/surveys',
-        },
-      ];
+    const stages: Array<{
+      key: string;
+      label: string;
+      count: number;
+      href: string;
+    }> = [
+      {
+        key: 'leads_new',
+        label: 'New leads',
+        count: leadNew,
+        href: '#/leads',
+      },
+      {
+        key: 'leads_qualified',
+        label: 'Qualified leads',
+        count: leadQualified,
+        href: '#/leads?status=QUALIFIED',
+      },
+      {
+        key: 'leads_converted',
+        label: 'Converted leads',
+        count: leadConverted,
+        href: '#/leads',
+      },
+      {
+        key: 'sold_deal_recorded',
+        label: 'Sold (deal recorded)',
+        count: dealSoldRecorded,
+        href: '#/sold-deals',
+      },
+      {
+        key: 'appointments_active',
+        label: 'Active appointments',
+        count: apptActive(apptCounts),
+        href: '#/appointments',
+      },
+      {
+        key: 'service_visits_active',
+        label: 'Active service visits',
+        count: serviceActive,
+        href: '#/service',
+      },
+      {
+        key: 'service_csi_followups',
+        label: 'Service CSI follow-ups',
+        count: serviceFollowUpsOpen,
+        href: '#/surveys',
+      },
+      {
+        key: 'sales_csi_followups',
+        label: 'Sales CSI follow-ups',
+        count: salesFollowUpsOpen,
+        href: '#/surveys',
+      },
+    ];
 
     return {
       source: 'platform_records' as const,
@@ -1428,42 +1442,47 @@ export class OperationsService {
   async appointmentOutcomes(scope: Scope) {
     const base = { tenantId: scope.tenantId, ...this.loc(scope) };
     const since = new Date(Date.now() - 7 * 86_400_000);
-    const [completed, noShow, confirmedOnBook, awaitingConfirmation, cancelled] =
-      await Promise.all([
-        this.prisma.appointment.count({
-          where: {
-            ...base,
-            status: 'COMPLETED',
-            OR: [
-              { completedAt: { gte: since } },
-              { completedAt: null, updatedAt: { gte: since } },
-            ],
-          },
-        }),
-        this.prisma.appointment.count({
-          where: {
-            ...base,
-            status: 'NO_SHOW',
-            updatedAt: { gte: since },
-          },
-        }),
-        this.prisma.appointment.count({
-          where: { ...base, status: 'CONFIRMED' },
-        }),
-        this.prisma.appointment.count({
-          where: {
-            ...base,
-            status: { in: ['REQUESTED', 'PENDING_CONFIRMATION'] },
-          },
-        }),
-        this.prisma.appointment.count({
-          where: {
-            ...base,
-            status: 'CANCELLED',
-            canceledAt: { gte: since },
-          },
-        }),
-      ]);
+    const [
+      completed,
+      noShow,
+      confirmedOnBook,
+      awaitingConfirmation,
+      cancelled,
+    ] = await Promise.all([
+      this.prisma.appointment.count({
+        where: {
+          ...base,
+          status: 'COMPLETED',
+          OR: [
+            { completedAt: { gte: since } },
+            { completedAt: null, updatedAt: { gte: since } },
+          ],
+        },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          ...base,
+          status: 'NO_SHOW',
+          updatedAt: { gte: since },
+        },
+      }),
+      this.prisma.appointment.count({
+        where: { ...base, status: 'CONFIRMED' },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          ...base,
+          status: { in: ['REQUESTED', 'PENDING_CONFIRMATION'] },
+        },
+      }),
+      this.prisma.appointment.count({
+        where: {
+          ...base,
+          status: 'CANCELLED',
+          canceledAt: { gte: since },
+        },
+      }),
+    ]);
     const recorded = completed + noShow;
     const showRate =
       recorded > 0 ? Math.round((completed / recorded) * 1000) / 1000 : null;
@@ -1532,9 +1551,8 @@ export class OperationsService {
       const byKind = this.satisfactionByKind(responded);
       if (scores.length > 0) {
         const average =
-          Math.round(
-            (scores.reduce((a, b) => a + b, 0) / scores.length) * 10,
-          ) / 10;
+          Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) /
+          10;
         return {
           available: true as const,
           source: 'customer_survey_internal' as const,
@@ -1602,9 +1620,8 @@ export class OperationsService {
     for (const [kind, scores] of buckets) {
       out[kind] = {
         average:
-          Math.round(
-            (scores.reduce((a, b) => a + b, 0) / scores.length) * 10,
-          ) / 10,
+          Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) /
+          10,
         count: scores.length,
       };
     }

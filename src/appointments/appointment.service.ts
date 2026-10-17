@@ -827,7 +827,9 @@ export class AppointmentService {
       },
     });
     if (open) return;
-    const when = [row.requestedDate, row.requestedTime].filter(Boolean).join(' ');
+    const when = [row.requestedDate, row.requestedTime]
+      .filter(Boolean)
+      .join(' ');
     const need = row.serviceType ? ` · ${row.serviceType}` : '';
     await this.prisma.escalation.create({
       data: {
@@ -836,10 +838,11 @@ export class AppointmentService {
         conversationId: row.conversationId,
         reason: 'SERVICE_ADVISOR',
         urgency: 'NORMAL',
-        summary: `Service appointment request needs confirmation${need}${when ? ` · ${when}` : ''}`.slice(
-          0,
-          280,
-        ),
+        summary:
+          `Service appointment request needs confirmation${need}${when ? ` · ${when}` : ''}`.slice(
+            0,
+            280,
+          ),
         metadata: {
           appointmentId: row.id,
           availabilityVerified: false,

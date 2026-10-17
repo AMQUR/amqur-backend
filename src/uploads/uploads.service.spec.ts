@@ -29,7 +29,10 @@ describe('UploadsService conversation attachments', () => {
   beforeEach(() => jest.resetAllMocks());
 
   it('attachToConversation denies cross-tenant file lookup', async () => {
-    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1', locationId: null });
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conv-1',
+      locationId: null,
+    });
     prisma.fileObject.findFirst.mockResolvedValue(null);
 
     await expect(
@@ -51,7 +54,10 @@ describe('UploadsService conversation attachments', () => {
   });
 
   it('attachToConversation rejects non-CLEAN files', async () => {
-    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1', locationId: null });
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conv-1',
+      locationId: null,
+    });
     prisma.fileObject.findFirst.mockResolvedValue({
       ...cleanFile,
       scannedStatus: FileScanStatus.PENDING,
@@ -70,7 +76,10 @@ describe('UploadsService conversation attachments', () => {
   it('attachToConversation allows SKIPPED outside production', async () => {
     const prev = process.env.NODE_ENV;
     process.env.NODE_ENV = 'test';
-    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1', locationId: null });
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conv-1',
+      locationId: null,
+    });
     prisma.fileObject.findFirst.mockResolvedValue({
       ...cleanFile,
       scannedStatus: FileScanStatus.SKIPPED,
@@ -118,7 +127,11 @@ describe('UploadsService conversation attachments', () => {
     const result = await svc.listConversationAttachments('tenant-a', 'conv-1');
 
     expect(prisma.fileObject.findMany).toHaveBeenCalledWith({
-      where: { tenantId: 'tenant-a', conversationId: 'conv-1', deletedAt: null },
+      where: {
+        tenantId: 'tenant-a',
+        conversationId: 'conv-1',
+        deletedAt: null,
+      },
       orderBy: { createdAt: 'asc' },
       select: {
         id: true,
@@ -134,11 +147,16 @@ describe('UploadsService conversation attachments', () => {
     expect(result.attachments).toHaveLength(1);
     expect(result.attachments[0].id).toBe('file-1');
     expect(result.attachments[0].scannedStatus).toBe(FileScanStatus.CLEAN);
-    expect(result.attachments[0].downloadPath).toContain('/uploads/file-1/download');
+    expect(result.attachments[0].downloadPath).toContain(
+      '/uploads/file-1/download',
+    );
   });
 
   it('attachToConversation links a CLEAN file', async () => {
-    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1', locationId: 'loc-1' });
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: 'conv-1',
+      locationId: 'loc-1',
+    });
     prisma.fileObject.findFirst.mockResolvedValue(cleanFile);
     prisma.fileObject.update.mockResolvedValue({
       ...cleanFile,

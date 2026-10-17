@@ -32,9 +32,7 @@ export async function pickRoundRobinAssignee(
       tenantId,
       isActive: true,
       role: { in: LEAD_ASSIGNABLE_ROLES },
-      OR: locationId
-        ? [{ locationId }, { locationId: null }]
-        : undefined,
+      OR: locationId ? [{ locationId }, { locationId: null }] : undefined,
     },
     select: { id: true },
     orderBy: { createdAt: 'asc' },

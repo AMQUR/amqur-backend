@@ -20,9 +20,7 @@ describe('InventoryEngine.searchVehicles', () => {
   it('applies maxPrice as price lte', async () => {
     await engine.searchVehicles({ tenantId: 't1', maxPrice: 40000 });
     const { AND } = lastWhere();
-    expect(AND).toEqual(
-      expect.arrayContaining([{ price: { lte: 40000 } }]),
-    );
+    expect(AND).toEqual(expect.arrayContaining([{ price: { lte: 40000 } }]));
   });
 
   it('applies color and model filters together', async () => {
@@ -95,7 +93,10 @@ describe('InventoryEngine.searchVehicles', () => {
         createdAt: new Date(),
       },
     ]);
-    const rows = await engine.searchVehicles({ tenantId: 't1', model: 'Wrangler' });
+    const rows = await engine.searchVehicles({
+      tenantId: 't1',
+      model: 'Wrangler',
+    });
     expect(rows).toHaveLength(1);
     expect(rows[0].vin).toBe('1C4RJFBG0MC100001');
   });
@@ -217,7 +218,10 @@ describe('InventoryEngine.browseForStaff', () => {
 
   it('returns empty when VIN is not in inventory (no placeholder vehicle)', async () => {
     findFirst.mockResolvedValue(null);
-    const rows = await engine.browseForStaff({ tenantId: 't1', vin: 'MISSING' });
+    const rows = await engine.browseForStaff({
+      tenantId: 't1',
+      vin: 'MISSING',
+    });
     expect(rows).toEqual([]);
   });
 

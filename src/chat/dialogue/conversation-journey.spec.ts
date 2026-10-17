@@ -146,8 +146,6 @@ describe('conversation journey (policy-level e2e)', () => {
     expect(widget.length.chars).toBe(long.length);
     expect(sms.length.chars).toBe(long.length);
     // Multi-question still rejected on both.
-    expect(
-      acceptCustomerReply('A? B?', 'concise', 'SMS').accept,
-    ).toBe(false);
+    expect(acceptCustomerReply('A? B?', 'concise', 'SMS').accept).toBe(false);
   });
 });

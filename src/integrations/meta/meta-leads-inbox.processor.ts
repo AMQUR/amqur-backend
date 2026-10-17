@@ -207,7 +207,9 @@ export class MetaLeadsInboxProcessor {
       data: {
         status: WebhookInboxStatus.PROCESSED,
         processedAt: new Date(),
-        ...(note ? { errorMessage: note.slice(0, 500) } : { errorMessage: null }),
+        ...(note
+          ? { errorMessage: note.slice(0, 500) }
+          : { errorMessage: null }),
       },
     });
   }

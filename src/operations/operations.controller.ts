@@ -354,18 +354,12 @@ export class OperationsController {
     @Query('locationId') l?: string,
   ) {
     const s = this.scope(u, undefined, l);
-    return this.appointments.updateStaff(
-      s.tenantId,
-      s.locationId,
-      id,
-      u.sub,
-      {
-        status: b.status,
-        notes: b.notes,
-        scheduledAt: b.scheduledAt,
-        acknowledgeEscalation: b.acknowledgeEscalation,
-      },
-    );
+    return this.appointments.updateStaff(s.tenantId, s.locationId, id, u.sub, {
+      status: b.status,
+      notes: b.notes,
+      scheduledAt: b.scheduledAt,
+      acknowledgeEscalation: b.acknowledgeEscalation,
+    });
   }
 
   @Roles(...STAFF)

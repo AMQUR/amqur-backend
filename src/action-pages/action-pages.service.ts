@@ -161,7 +161,8 @@ export class ActionPagesService {
 
   /** Public resolve — no staffMeta, no PII beyond title/description/form. */
   async resolvePublic(token: string) {
-    if (!token || token.length < 16) return { ok: false as const, reason: 'invalid' };
+    if (!token || token.length < 16)
+      return { ok: false as const, reason: 'invalid' };
     const row = await this.prisma.customerActionPage.findUnique({
       where: { tokenHash: hashToken(token) },
     });
@@ -408,7 +409,8 @@ export class ActionPagesService {
           vin: asString(safe.vin),
           serviceType: asString(safe.serviceType),
           customer: {
-            name: asString(safe.name) ?? asString(safe.customerName) ?? undefined,
+            name:
+              asString(safe.name) ?? asString(safe.customerName) ?? undefined,
             phone:
               asString(safe.phone) ?? asString(safe.customerPhone) ?? undefined,
             email:
@@ -444,7 +446,9 @@ export class ActionPagesService {
             ...(phone ? { phone } : {}),
             ...(email ? { email } : {}),
             ...(firstName ? { firstName } : {}),
-            ...(asString(safe.lastName) ? { lastName: asString(safe.lastName)! } : {}),
+            ...(asString(safe.lastName)
+              ? { lastName: asString(safe.lastName)! }
+              : {}),
           },
         });
         return { routed: true, kind: row.kind, ref: row.leadId };

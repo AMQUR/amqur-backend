@@ -14,7 +14,11 @@ export type VerifyMetaHubResult =
   | { ok: true }
   | {
       ok: false;
-      reason: 'not_configured' | 'missing_headers' | 'malformed' | 'bad_signature';
+      reason:
+        | 'not_configured'
+        | 'missing_headers'
+        | 'malformed'
+        | 'bad_signature';
     };
 
 export function verifyMetaHubSignature256(params: {

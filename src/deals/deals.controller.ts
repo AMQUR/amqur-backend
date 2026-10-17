@@ -35,10 +35,7 @@ export class DealsController {
   /** Reconcile a DMS-attributed sold deal (manager+); fail-closed without live DMS. */
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
   @Post('sold/record')
-  recordSold(
-    @CurrentUser() u: AuthUser,
-    @Body() body: RecordSoldDealDto,
-  ) {
+  recordSold(@CurrentUser() u: AuthUser, @Body() body: RecordSoldDealDto) {
     assertStaffRole(u);
     const tenantId = resolveTenantId(u);
     const scopedLocation = resolveLocationScope(u, body.locationId);

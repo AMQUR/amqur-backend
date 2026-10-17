@@ -30,7 +30,9 @@ describe('ActionPagesService', () => {
         }),
       },
       tenant: {
-        findUnique: jest.fn().mockResolvedValue({ name: 'Demo Motors', slug: 'demo' }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ name: 'Demo Motors', slug: 'demo' }),
       },
     };
     const svc = new ActionPagesService(prisma as never);

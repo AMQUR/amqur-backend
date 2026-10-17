@@ -90,9 +90,14 @@ export function compose(plan: ResponsePlan): {
   // Defensive: never append a second question if the body already asked one.
   const bodyAsks = (first.match(/\?/g) ?? []).length;
   const follow = q && bodyAsks === 0 ? q : undefined;
-  const text = [first, follow].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+  const text = [first, follow]
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   // Split only when it genuinely helps readability: long narrative + a question.
-  const split = plan.deliveryStyle === 'split' || (first.length > 260 && !!follow);
+  const split =
+    plan.deliveryStyle === 'split' || (first.length > 260 && !!follow);
   const segments = split && follow ? [first, follow] : [text];
   return { text, segments };
 }

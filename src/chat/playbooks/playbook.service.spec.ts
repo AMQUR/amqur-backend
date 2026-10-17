@@ -29,7 +29,7 @@ describe('PlaybookService.previewStyle', () => {
 
 describe('MessagingService.nextAllowed DST-safe quiet hours', () => {
   // Import lazily to avoid pulling Nest module graph into this unit file.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
+
   const { MessagingService } = require('../../messaging/messaging.service');
 
   it('defers during overnight quiet window in America/Chicago', () => {

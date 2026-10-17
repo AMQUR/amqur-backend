@@ -7,7 +7,9 @@ describe('DocumentsController', () => {
     requestSign: jest.fn(),
     getEnvelopeStatus: jest.fn(),
   };
-  const ctrl = new DocumentsController(docSigning as unknown as DocSigningService);
+  const ctrl = new DocumentsController(
+    docSigning as unknown as DocSigningService,
+  );
 
   const user = {
     id: 'u1',
@@ -21,7 +23,9 @@ describe('DocumentsController', () => {
   });
 
   it('envelopeStatus rejects missing envelopeId', () => {
-    expect(() => ctrl.envelopeStatus(user, '', 'loc-1')).toThrow(BadRequestException);
+    expect(() => ctrl.envelopeStatus(user, '', 'loc-1')).toThrow(
+      BadRequestException,
+    );
   });
 
   it('envelopeStatus delegates to DocSigningService', async () => {

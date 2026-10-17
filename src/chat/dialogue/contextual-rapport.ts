@@ -8,7 +8,12 @@
  * - Sports/weather facts require verified LIVE payload from LiveInfoService.
  */
 
-export type RapportTopic = 'daypart' | 'weather' | 'sports' | 'weekend' | 'none';
+export type RapportTopic =
+  | 'daypart'
+  | 'weather'
+  | 'sports'
+  | 'weekend'
+  | 'none';
 
 export type RapportConfig = {
   /** Master kill switch — default off until a manager enables it. */

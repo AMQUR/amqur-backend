@@ -274,7 +274,8 @@ export class DealerGroupsService {
           appointmentConfirmation: rate(apptConfirmed, apptRequested),
           handoffDelivery: rate(handoffsNotified, handoffs),
           creditClickThrough: rate(creditClicked, creditOffered),
-          replyFeedbackGoodRate: this.replyFeedbackGoodRate(replyFeedbackEvents),
+          replyFeedbackGoodRate:
+            this.replyFeedbackGoodRate(replyFeedbackEvents),
         },
         inventory: {
           liveVehicles,
@@ -353,8 +354,7 @@ export class DealerGroupsService {
         leads7d,
         confirmedAppts7d,
         openHandoffs,
-        replyFeedbackGoodRate:
-          this.replyFeedbackGoodRate(replyFeedbackEvents),
+        replyFeedbackGoodRate: this.replyFeedbackGoodRate(replyFeedbackEvents),
       });
     }
     return {

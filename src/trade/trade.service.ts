@@ -115,10 +115,11 @@ export class TradeService {
         conversationId: row.conversationId,
         reason: 'TRADE_ADVISOR',
         urgency: 'NORMAL',
-        summary: `Trade request needs staff review${vehicle ? `: ${vehicle}` : ''}${vin}`.slice(
-          0,
-          280,
-        ),
+        summary:
+          `Trade request needs staff review${vehicle ? `: ${vehicle}` : ''}${vin}`.slice(
+            0,
+            280,
+          ),
         metadata: {
           tradeRequestId: row.id,
           appraisalVerified: row.appraisalVerified,
@@ -142,7 +143,11 @@ export class TradeService {
     tenantId: string,
     locationId?: string | null,
   ): Promise<
-    | { status: 'blocked'; reason: 'not_connected' | 'not_configured'; verified: false }
+    | {
+        status: 'blocked';
+        reason: 'not_connected' | 'not_configured';
+        verified: false;
+      }
     | { status: 'ready'; verified: false; providerId: string }
   > {
     const gate = await this.resolveValuationGate(tenantId, locationId ?? null);

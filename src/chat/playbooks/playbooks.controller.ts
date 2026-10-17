@@ -83,10 +83,7 @@ export class PlaybooksController {
 
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
   @Get()
-  list(
-    @CurrentUser() u: AuthUser,
-    @Query('locationId') locationId?: string,
-  ) {
+  list(@CurrentUser() u: AuthUser, @Query('locationId') locationId?: string) {
     const loc = resolveLocationScope(u, locationId);
     return this.playbooks.list(this.tenant(u), loc);
   }

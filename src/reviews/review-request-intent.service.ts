@@ -1,7 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { ConsentService, normalizeEndpoint } from '../messaging/consent.service';
+import {
+  ConsentService,
+  normalizeEndpoint,
+} from '../messaging/consent.service';
 import { MessagingService } from '../messaging/messaging.service';
 
 export const REVIEW_REQUEST_INTENT_ACTION = 'review_request.intent_pending';
@@ -15,8 +18,7 @@ export type ReviewRequestIntentNotes = {
 };
 
 export const REVIEW_REQUEST_INTENT_NOTES: ReviewRequestIntentNotes = {
-  csi:
-    'Internal CSI (CustomerSurvey scores and comments) is private staff feedback for recovery — it never gates or triggers public review requests.',
+  csi: 'Internal CSI (CustomerSurvey scores and comments) is private staff feedback for recovery — it never gates or triggers public review requests.',
   publicReview:
     'A review-request intent records staff intent to ask for a Google or other public review in person or via a future approved channel. This API never posts to Google.',
   sending:
@@ -82,12 +84,15 @@ export class ReviewRequestIntentService {
     return c;
   }
 
-  private async resolveSubject(tenantId: string, p: {
-    leadId?: string | null;
-    conversationId?: string | null;
-    surveyId?: string | null;
-    locationId?: string | null;
-  }) {
+  private async resolveSubject(
+    tenantId: string,
+    p: {
+      leadId?: string | null;
+      conversationId?: string | null;
+      surveyId?: string | null;
+      locationId?: string | null;
+    },
+  ) {
     let leadId = p.leadId ?? null;
     let conversationId = p.conversationId ?? null;
     let locationId = p.locationId ?? null;
@@ -313,9 +318,9 @@ export class ReviewRequestIntentService {
 
     return {
       id: row.id,
-      status: 'PENDING' as const,
       createdAt: row.createdAt,
       ...metadata,
+      status: 'PENDING' as const,
       notes: REVIEW_REQUEST_INTENT_NOTES,
       willSend: false as const,
     };
@@ -337,10 +342,10 @@ export class ReviewRequestIntentService {
         if (!meta) return null;
         return {
           id: r.resourceId ?? r.id,
-          status: meta.status,
           createdAt: r.createdAt,
           createdByUserId: r.userId,
           ...meta,
+          status: meta.status,
           notes: REVIEW_REQUEST_INTENT_NOTES,
           willSend: false as const,
         };

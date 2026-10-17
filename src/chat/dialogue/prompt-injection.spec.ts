@@ -17,7 +17,9 @@ describe('detectPressure (prompt injection / override)', () => {
   });
 
   it('allows ordinary shopping questions', () => {
-    expect(detectPressure('Do you have a black Wrangler under $45k?')).toBeNull();
+    expect(
+      detectPressure('Do you have a black Wrangler under $45k?'),
+    ).toBeNull();
     expect(detectPressure('Can I schedule a test drive Saturday?')).toBeNull();
     expect(detectPressure('What is the listed price on stock ABC?')).toBeNull();
   });

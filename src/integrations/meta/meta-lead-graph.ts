@@ -30,7 +30,10 @@ function firstFieldValue(
   return undefined;
 }
 
-function splitFullName(full: string): { firstName?: string; lastName?: string } {
+function splitFullName(full: string): {
+  firstName?: string;
+  lastName?: string;
+} {
   const parts = full.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return {};
   if (parts.length === 1) {
@@ -47,17 +50,21 @@ export function parseMetaGraphLeadFieldData(
   fieldData: unknown,
 ): MetaLeadgenVerifiedFields {
   const firstName =
-    firstFieldValue(fieldData, ['first_name', 'first name']) ??
-    undefined;
+    firstFieldValue(fieldData, ['first_name', 'first name']) ?? undefined;
   const lastName =
     firstFieldValue(fieldData, ['last_name', 'last name']) ?? undefined;
   const fullName = firstFieldValue(fieldData, ['full_name', 'full name']);
-  const fromFull = !firstName && !lastName && fullName ? splitFullName(fullName) : {};
+  const fromFull =
+    !firstName && !lastName && fullName ? splitFullName(fullName) : {};
 
   return {
     firstName: firstName ?? fromFull.firstName,
     lastName: lastName ?? fromFull.lastName,
-    phone: firstFieldValue(fieldData, ['phone_number', 'phone', 'mobile_phone']),
+    phone: firstFieldValue(fieldData, [
+      'phone_number',
+      'phone',
+      'mobile_phone',
+    ]),
     email: firstFieldValue(fieldData, ['email', 'work_email']),
     zipCode: firstFieldValue(fieldData, ['zip_code', 'zip', 'post_code']),
   };
@@ -67,11 +74,7 @@ export type MetaGraphLeadFetchResult =
   | { ok: true; fieldData: unknown; graphLeadId?: string }
   | {
       ok: false;
-      reason:
-        | 'not_configured'
-        | 'http_error'
-        | 'malformed'
-        | 'lead_not_found';
+      reason: 'not_configured' | 'http_error' | 'malformed' | 'lead_not_found';
       statusCode?: number;
       message?: string;
     };

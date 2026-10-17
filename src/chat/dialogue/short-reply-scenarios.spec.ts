@@ -127,6 +127,8 @@ describe('short-reply acceptance scenarios', () => {
   });
 
   it('15 in-stock answer is short', () => {
-    assertShort('Yes — that Wrangler is still showing as available. Want the details?');
+    assertShort(
+      'Yes — that Wrangler is still showing as available. Want the details?',
+    );
   });
 });
