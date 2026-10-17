@@ -24,6 +24,12 @@ export const CAMPAIGN_TRIGGERS = {
     defaultDelay: 'afterEvent',
     subject: 'appointment',
   },
+  /** Post-sale thank-you / CSI — MARKETING consent required; never auto-enabled. */
+  'deal.sold_recorded': {
+    purpose: 'MARKETING',
+    defaultDelay: 'afterEvent',
+    subject: 'lead',
+  },
 } as const;
 export type CampaignTrigger = keyof typeof CAMPAIGN_TRIGGERS;
 
@@ -360,6 +366,20 @@ export class CampaignEngine implements OnModuleInit {
       });
       return rows.map((r) => r.id);
     }
+    if (c.trigger === 'deal.sold_recorded') {
+      const rows = await this.prisma.lead.findMany({
+        where: {
+          tenantId: c.tenantId,
+          ...loc,
+          status: 'CONVERTED',
+          phone: { not: null },
+        },
+        select: { id: true },
+        orderBy: { updatedAt: 'desc' },
+        take,
+      });
+      return rows.map((r) => r.id);
+    }
     const rows = await this.prisma.lead.findMany({
       where: {
         tenantId: c.tenantId,
@@ -510,6 +530,22 @@ export class CampaignEngine implements OnModuleInit {
       where: { id, tenantId: c.tenantId },
     });
     if (!l) return { stop: 'subject_missing' };
+    if (c.trigger === 'deal.sold_recorded') {
+      if (l.status !== 'CONVERTED')
+        return { stop: `lead_${l.status.toLowerCase()}` };
+      return {
+        conversationId: l.conversationId,
+        leadId: l.id,
+        locationId: l.locationId,
+        phone: l.phone,
+        vars: {
+          firstName: l.firstName,
+          vehicle: null,
+          appointmentDate: null,
+          appointmentTime: null,
+        },
+      };
+    }
     if (['CLOSED', 'CONVERTED', 'SPAM'].includes(l.status))
       return { stop: `lead_${l.status.toLowerCase()}` };
     return {

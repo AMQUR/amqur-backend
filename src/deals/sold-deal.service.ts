@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { LeadStatus } from '@prisma/client';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { CampaignEngine } from '../messaging/campaign.engine';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Structured reconciliation input — never inferred from chat/AI text. */
@@ -53,6 +54,7 @@ export class SoldDealService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly analytics: AnalyticsService,
+    @Optional() private readonly campaigns?: CampaignEngine,
   ) {}
 
   async recordSoldDeal(
@@ -154,6 +156,17 @@ export class SoldDealService {
         },
       },
     });
+
+    // Post-sale campaign enrollment only when a converted lead exists.
+    // Still gated by automatedFollowup + per-campaign enabled + MARKETING consent at send.
+    if (leadId) {
+      await this.campaigns?.onEvent({
+        tenantId,
+        locationId,
+        trigger: 'deal.sold_recorded',
+        subjectId: leadId,
+      });
+    }
 
     return { accepted: true, dmsDealId, leadId };
   }

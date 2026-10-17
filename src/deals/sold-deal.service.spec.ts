@@ -8,8 +8,13 @@ describe('SoldDealService', () => {
     auditLog: { create: jest.fn() },
   };
   const analytics = { trackEvent: jest.fn().mockResolvedValue(null) };
+  const campaigns = { onEvent: jest.fn().mockResolvedValue(undefined) };
 
-  const svc = new SoldDealService(prisma as never, analytics as never);
+  const svc = new SoldDealService(
+    prisma as never,
+    analytics as never,
+    campaigns as never,
+  );
 
   const actor = { id: 'user-1', role: 'MANAGER' };
   const baseInput = {
@@ -20,6 +25,8 @@ describe('SoldDealService', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    campaigns.onEvent.mockResolvedValue(undefined);
+    analytics.trackEvent.mockResolvedValue(null);
   });
 
   it('returns dms_not_connected when no live DMS integration exists', async () => {
@@ -74,6 +81,12 @@ describe('SoldDealService', () => {
       'deal.sold_recorded',
       expect.objectContaining({ campaignId: 'camp-9', leadId: 'lead-1' }),
     );
+    expect(campaigns.onEvent).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      trigger: 'deal.sold_recorded',
+      subjectId: 'lead-1',
+    });
   });
 
   it('omits campaignId when conversation has no campaign metadata', async () => {

@@ -111,4 +111,63 @@ describe('CampaignEngine.execute', () => {
       }),
     });
   });
+
+  it('allows CONVERTED leads for deal.sold_recorded with MARKETING purpose', async () => {
+    const messaging = {
+      queue: jest.fn().mockResolvedValue({ status: 'QUEUED' }),
+    };
+    const prisma = {
+      followUpCampaign: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'camp-sold',
+          tenantId: 'tenant-1',
+          enabled: true,
+          version: 1,
+          trigger: 'deal.sold_recorded',
+          template: 'Hi {firstName}, thanks from {dealerName}.',
+          policy: {},
+          locationId: null,
+          startsAt: null,
+          endsAt: null,
+        }),
+      },
+      lead: {
+        findFirst: jest.fn().mockResolvedValue({
+          id: 'lead-1',
+          status: 'CONVERTED',
+          conversationId: null,
+          locationId: 'loc-1',
+          phone: '+15551234567',
+          firstName: 'Sam',
+        }),
+      },
+      tenant: {
+        findUnique: jest.fn().mockResolvedValue({ name: 'Demo Motors' }),
+      },
+      analyticsEvent: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const engine = new CampaignEngine(
+      prisma as never,
+      {} as never,
+      { registerHandler: jest.fn() } as never,
+      messaging as never,
+      { resolve: async () => ({ automatedFollowup: true }) } as never,
+    );
+
+    const result = await engine.execute({
+      campaignId: 'camp-sold',
+      version: 1,
+      subjectId: 'lead-1',
+      enrolledAt: '2026-10-13T12:00:00.000Z',
+    });
+
+    expect(result).toEqual({ note: 'queued' });
+    expect(messaging.queue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        purpose: 'MARKETING',
+        campaignId: 'camp-sold',
+        to: '+15551234567',
+      }),
+    );
+  });
 });

@@ -117,15 +117,9 @@ describe('DB migration & integrity (disposable Postgres)', () => {
           status: 'OPEN',
         },
       });
-    // App-level dedupe is in EscalationsService; DB allows multiple — document that
-    const a = await mk();
-    const b = await mk();
-    expect(a.id).not.toBe(b.id);
-    const open = await prisma.escalation.count({
-      where: { tenantId: t.id, conversationId: conv.id, status: 'OPEN' },
-    });
-    expect(open).toBeGreaterThanOrEqual(2);
-    // Service-level dedupe covered in unit/e2e handoff tests
+    await mk();
+    // DB partial unique index; app-level dedupe remains in EscalationsService
+    await expect(mk()).rejects.toThrow();
   });
 
   it('FK: location requires valid tenant', async () => {

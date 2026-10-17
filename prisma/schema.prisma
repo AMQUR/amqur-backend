@@ -629,6 +629,7 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+// Partial unique: one active escalation per conversation — see migration SQL (Prisma cannot express partial @@unique).
 model Escalation {
   id String @id @default(cuid())
 
