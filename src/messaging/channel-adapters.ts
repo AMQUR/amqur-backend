@@ -1,5 +1,7 @@
+import { videoMessagingAdapter } from './video-messaging.adapter';
+
 /**
- * Omnichannel outbound adapters. Until Meta/WhatsApp/email providers are wired,
+ * Omnichannel outbound adapters. Until Meta/WhatsApp/email/video providers are wired,
  * every adapter is honestly `not_connected` and never reports delivery.
  */
 export const OMNICHANNEL_ADAPTER_CHANNELS = [
@@ -7,6 +9,7 @@ export const OMNICHANNEL_ADAPTER_CHANNELS = [
   'FACEBOOK_MESSENGER',
   'INSTAGRAM',
   'EMAIL',
+  'VIDEO',
 ] as const;
 
 export type OmnichannelAdapterChannel =
@@ -55,6 +58,7 @@ export const CHANNEL_ADAPTER_REGISTRY: Readonly<
   FACEBOOK_MESSENGER: notConnectedAdapter('FACEBOOK_MESSENGER'),
   INSTAGRAM: notConnectedAdapter('INSTAGRAM'),
   EMAIL: notConnectedAdapter('EMAIL'),
+  VIDEO: videoMessagingAdapter,
 };
 
 export function getChannelAdapter(

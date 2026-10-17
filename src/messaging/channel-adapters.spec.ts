@@ -6,7 +6,7 @@ import {
 } from './channel-adapters';
 
 describe('channel adapters (not_connected)', () => {
-  it('registers WhatsApp, Messenger, Instagram, and email', () => {
+  it('registers WhatsApp, Messenger, Instagram, email, and video', () => {
     expect(Object.keys(CHANNEL_ADAPTER_REGISTRY).sort()).toEqual(
       [...OMNICHANNEL_ADAPTER_CHANNELS].sort(),
     );
