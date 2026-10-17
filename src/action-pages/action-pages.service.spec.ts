@@ -50,6 +50,9 @@ describe('ActionPagesService', () => {
   it('completePublic strips staff/price keys from submission', async () => {
     const token = 'b'.repeat(24);
     const update = jest.fn().mockResolvedValue({});
+    const trade = {
+      createRequest: jest.fn().mockResolvedValue({ id: 'trade-1' }),
+    };
     const prisma = {
       customerActionPage: {
         findUnique: jest
@@ -70,6 +73,8 @@ describe('ActionPagesService', () => {
             id: 'p1',
             tenantId: 't1',
             locationId: null,
+            conversationId: null,
+            leadId: null,
             kind: 'TRADE_INTAKE',
             staffMeta: {},
             status: 'OPEN',
@@ -82,7 +87,12 @@ describe('ActionPagesService', () => {
       },
       analyticsEvent: { create: jest.fn().mockResolvedValue({}) },
     };
-    const svc = new ActionPagesService(prisma as never);
+    const svc = new ActionPagesService(
+      prisma as never,
+      undefined,
+      trade as never,
+      undefined,
+    );
     const res = await svc.completePublic(token, {
       year: '2019',
       staffNote: 'hidden',
@@ -90,8 +100,16 @@ describe('ActionPagesService', () => {
       apr: '0',
     });
     expect(res.ok).toBe(true);
+    expect(trade.createRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 't1', year: 2019 }),
+    );
     const data = update.mock.calls[0][0].data;
     expect(data.staffMeta.customerSubmission).toEqual({ year: '2019' });
     expect(data.staffMeta.customerSubmission.price).toBeUndefined();
+    expect(data.staffMeta.domainRouting).toEqual({
+      routed: true,
+      kind: 'TRADE_INTAKE',
+      ref: 'trade-1',
+    });
   });
 });

@@ -1,11 +1,17 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
-import { Prisma } from '@prisma/client';
+import { AppointmentType, Prisma } from '@prisma/client';
+import { AppointmentService } from '../appointments/appointment.service';
+import { FinanceRequestService } from '../finance/finance-request.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TradeService } from '../trade/trade.service';
+import { parseIsoDate } from '../common/time/zoned-time';
 
 const KINDS = [
   'SCHEDULE',
@@ -22,9 +28,29 @@ function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
+function asString(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
+function asNumber(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim()) {
+    const n = Number(v.replace(/[^\d.-]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 @Injectable()
 export class ActionPagesService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ActionPagesService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly appointments?: AppointmentService,
+    @Optional() private readonly trade?: TradeService,
+    @Optional() private readonly finance?: FinanceRequestService,
+  ) {}
 
   async create(p: {
     tenantId: string;
@@ -180,6 +206,7 @@ export class ActionPagesService {
       if (typeof v === 'string') safe[k] = v.slice(0, 2000);
       else if (typeof v === 'number' || typeof v === 'boolean') safe[k] = v;
     }
+    const domain = await this.routeSubmission(row, safe);
     await this.prisma.customerActionPage.update({
       where: { id: row.id },
       data: {
@@ -189,6 +216,7 @@ export class ActionPagesService {
           ...((row.staffMeta as object) ?? {}),
           customerSubmission: safe,
           submittedAt: new Date().toISOString(),
+          domainRouting: domain,
         } as Prisma.InputJsonValue,
       },
     });
@@ -198,7 +226,12 @@ export class ActionPagesService {
           tenantId: row.tenantId,
           locationId: row.locationId,
           eventType: 'action_page.completed',
-          properties: { kind: row.kind, pageId: row.id },
+          properties: {
+            kind: row.kind,
+            pageId: row.id,
+            domainRouted: domain.routed,
+            domainRef: domain.ref ?? null,
+          },
         },
       })
       .catch(() => null);
@@ -207,5 +240,166 @@ export class ActionPagesService {
       message:
         'Thanks — your request was saved. A team member will follow up. Nothing was confirmed or approved automatically.',
     };
+  }
+
+  /**
+   * Fan submission into staff queues when enough verified fields exist.
+   * Failures are recorded — never invent appointments, values, or approvals.
+   */
+  private async routeSubmission(
+    row: {
+      id: string;
+      tenantId: string;
+      locationId: string | null;
+      conversationId: string | null;
+      leadId: string | null;
+      kind: string;
+    },
+    safe: Record<string, unknown>,
+  ): Promise<{ routed: boolean; kind: string; ref?: string; reason?: string }> {
+    try {
+      if (row.kind === 'TRADE_INTAKE' && this.trade) {
+        const created = await this.trade.createRequest({
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          conversationId: row.conversationId,
+          vin: asString(safe.vin),
+          year: asNumber(safe.year),
+          make: asString(safe.make),
+          model: asString(safe.model),
+          trim: asString(safe.trim),
+          mileage: asNumber(safe.mileage),
+          condition: asString(safe.condition),
+          customerName: asString(safe.name) ?? asString(safe.customerName),
+          customerPhone: asString(safe.phone) ?? asString(safe.customerPhone),
+          customerEmail: asString(safe.email) ?? asString(safe.customerEmail),
+          notes: asString(safe.notes),
+        });
+        return { routed: true, kind: row.kind, ref: created.id };
+      }
+      if (row.kind === 'FINANCE_INFO' && this.finance) {
+        const created = await this.finance.create({
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          conversationId: row.conversationId,
+          vehicleVin: asString(safe.vin),
+          desiredPayment: asNumber(safe.desiredPayment),
+          downPayment: asNumber(safe.downPayment),
+          termMonths: asNumber(safe.termMonths),
+          leaseOrPurchase: asString(safe.leaseOrPurchase),
+          tradeInterest:
+            safe.tradeInterest === true ||
+            asString(safe.tradeInterest)?.toLowerCase() === 'yes',
+          customerName: asString(safe.name) ?? asString(safe.customerName),
+          customerPhone: asString(safe.phone) ?? asString(safe.customerPhone),
+          customerEmail: asString(safe.email) ?? asString(safe.customerEmail),
+          notes: asString(safe.notes),
+        });
+        return { routed: true, kind: row.kind, ref: created.id };
+      }
+      if (row.kind === 'SCHEDULE' && this.appointments) {
+        const dateRaw = asString(safe.date) ?? asString(safe.requestedDate);
+        const date = dateRaw ? parseIsoDate(dateRaw) : null;
+        if (!date) {
+          return {
+            routed: false,
+            kind: row.kind,
+            reason: 'missing_date',
+          };
+        }
+        const typeRaw = (asString(safe.type) ?? 'SALES').toUpperCase();
+        const type = (
+          ['SALES', 'SERVICE', 'PARTS', 'FINANCE', 'TEST_DRIVE'].includes(
+            typeRaw,
+          )
+            ? typeRaw
+            : 'SALES'
+        ) as AppointmentType;
+        const timeRaw = asString(safe.time) ?? asString(safe.requestedTime);
+        let timeMinutes: number | undefined;
+        if (timeRaw && /^\d{1,2}:\d{2}/.test(timeRaw)) {
+          const [hh, mm] = timeRaw.split(':').map((x) => Number(x));
+          if (Number.isFinite(hh) && Number.isFinite(mm))
+            timeMinutes = hh * 60 + mm;
+        }
+        const podRaw = (
+          asString(safe.partOfDay) ??
+          asString(safe.when) ??
+          ''
+        ).toLowerCase();
+        const partOfDay = (
+          ['morning', 'afternoon', 'evening'] as const
+        ).includes(podRaw as 'morning')
+          ? (podRaw as 'morning' | 'afternoon' | 'evening')
+          : undefined;
+        const result = await this.appointments.request({
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          conversationId: row.conversationId,
+          leadId: row.leadId,
+          type,
+          when: {
+            date,
+            time: timeMinutes,
+            partOfDay,
+            phrase: asString(safe.phrase) ?? 'action_page',
+          },
+          vin: asString(safe.vin),
+          serviceType: asString(safe.serviceType),
+          customer: {
+            name: asString(safe.name) ?? asString(safe.customerName) ?? undefined,
+            phone:
+              asString(safe.phone) ?? asString(safe.customerPhone) ?? undefined,
+            email:
+              asString(safe.email) ?? asString(safe.customerEmail) ?? undefined,
+          },
+          source: 'api',
+          notes: `action_page:${row.id}`,
+          idempotencyKey: `action_page:${row.id}`,
+        });
+        if (result.status === 'saved') {
+          return {
+            routed: true,
+            kind: row.kind,
+            ref: result.appointment.id,
+          };
+        }
+        return {
+          routed: false,
+          kind: row.kind,
+          reason:
+            result.status === 'incomplete'
+              ? `incomplete_${result.missing}`
+              : result.status,
+        };
+      }
+      if (row.kind === 'CONTACT_UPDATE' && row.leadId) {
+        const phone = asString(safe.phone) ?? asString(safe.customerPhone);
+        const email = asString(safe.email) ?? asString(safe.customerEmail);
+        const firstName = asString(safe.firstName) ?? asString(safe.name);
+        await this.prisma.lead.updateMany({
+          where: { id: row.leadId, tenantId: row.tenantId },
+          data: {
+            ...(phone ? { phone } : {}),
+            ...(email ? { email } : {}),
+            ...(firstName ? { firstName } : {}),
+            ...(asString(safe.lastName) ? { lastName: asString(safe.lastName)! } : {}),
+          },
+        });
+        return { routed: true, kind: row.kind, ref: row.leadId };
+      }
+      return { routed: false, kind: row.kind, reason: 'no_domain_route' };
+    } catch (e) {
+      this.logger.warn(
+        `action page domain route failed page=${row.id} kind=${row.kind}: ${
+          e instanceof Error ? e.message : 'error'
+        }`,
+      );
+      return {
+        routed: false,
+        kind: row.kind,
+        reason: 'domain_route_error',
+      };
+    }
   }
 }
