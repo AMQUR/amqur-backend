@@ -46,6 +46,14 @@ jobs:
           fi
       - name: Install Railway CLI
         run: npm i -g @railway/cli
+      - name: Sync missing worker boot vars from staging/api (names only, values never printed)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # worker must share CORS_ORIGINS + INTEGRATION_ENCRYPTION_KEY with api
+          # for encryption compatibility; copy only when worker keys are absent.
+          node scripts/sync-worker-required-from-api.mjs staging
       - name: Preflight — staging variables this build needs to boot (names only, values never printed)
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
@@ -110,13 +118,20 @@ jobs:
         run: echo "approved by required reviewer"
       - name: Install Railway CLI
         run: npm i -g @railway/cli
+      - name: Sync missing worker boot vars from prod-api (names only, values never printed)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/sync-worker-required-from-api.mjs production
       - name: Preflight — production variables this build needs to boot (names only, values never printed)
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
           set -euo pipefail
           for svc in api worker; do
-            railway variables --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment production --json \
+            # Preflight reads logical roles; production Railway services are prod-api / prod-worker.
+            railway variables --project "$RAILWAY_PROJECT_ID" --service "prod-$svc" --environment production --json \
               | node scripts/env-preflight.js production "$svc"
           done
       - name: Deploy api and worker to production
