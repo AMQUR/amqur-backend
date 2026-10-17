@@ -615,6 +615,26 @@ export class AppointmentService {
         subjectId: updated.id,
       });
     }
+    if (params.to === 'COMPLETED' || params.to === 'NO_SHOW') {
+      await this.prisma.analyticsEvent
+        .create({
+          data: {
+            tenantId: params.tenantId,
+            locationId: updated.locationId,
+            eventType:
+              params.to === 'COMPLETED'
+                ? 'appointment.completed'
+                : 'appointment.no_show',
+            properties: {
+              appointmentId: updated.id,
+              type: updated.type,
+              from: appt.status,
+              actorId: params.actorId,
+            },
+          },
+        })
+        .catch(() => undefined);
+    }
     await this.prisma.auditLog
       .create({
         data: {

@@ -4,7 +4,17 @@ import { Badge, Card, ErrorNote, Stat } from '../ui';
 
 type Overview = {
   engagement: { conversations: number; conversationStarts: number; messages: number };
-  outcomes: { leadsCaptured: number; appointmentRequests: number; serviceRequests: number; confirmedAppointments: number; creditLinksOffered: number; creditLinksClicked: number; note: string };
+  outcomes: {
+    leadsCaptured: number;
+    appointmentRequests: number;
+    serviceRequests: number;
+    confirmedAppointments: number;
+    appointmentsCompleted?: number;
+    appointmentsNoShow?: number;
+    creditLinksOffered: number;
+    creditLinksClicked: number;
+    note: string;
+  };
   attention: { hotLeads: number; appointmentsAwaitingConfirmation: number; openHandoffs: number; partsOpen: number; financeOpen: number; sourceConflicts: number };
   technical: { outbox: Record<string, number>; inventory: { freshness: Record<string, number>; recentImports: Array<{ id: string; status: string; startedAt: string; records: number | null; rejected: number | null }> }; llm: Array<{ provider: string; configured: boolean; circuitOpen: boolean }> };
   aiQuality: {
@@ -82,6 +92,7 @@ export function Home({ locationId }: { locationId: string }) {
                 <Stat label="Leads captured" value={data.outcomes.leadsCaptured} />
                 <Stat label="Appointment requests" value={data.outcomes.appointmentRequests + data.outcomes.serviceRequests} />
                 <Stat label="Confirmed appointments" value={data.outcomes.confirmedAppointments} />
+                <Stat label="Completed / no-show" value={`${data.outcomes.appointmentsCompleted ?? 0}/${data.outcomes.appointmentsNoShow ?? 0}`} hint="staff-recorded · 7d" />
                 <Stat label="Credit app clicks" value={`${data.outcomes.creditLinksClicked}/${data.outcomes.creditLinksOffered}`} hint="clicked / offered" />
               </div>
               <p className="muted small">{data.outcomes.note}</p>

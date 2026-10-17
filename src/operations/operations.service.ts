@@ -21,6 +21,7 @@ import {
   validateCreditConfig,
 } from '../finance/credit-application.service';
 import { urlLooksSensitive } from '../finance/credit-destination';
+import { listChannelAdapterStatuses } from '../messaging/channel-adapters';
 
 /** Staff-safe view of the customer-facing credit-link state (never the URL/token). */
 function publicCreditView(r: CreditLinkResolution) {
@@ -844,9 +845,11 @@ export class OperationsService {
         appointmentRequests: ev.appointment_requested ?? 0,
         serviceRequests: ev.service_appointment_requested ?? 0,
         confirmedAppointments: apptConfirmed,
+        appointmentsCompleted: ev['appointment.completed'] ?? 0,
+        appointmentsNoShow: ev['appointment.no_show'] ?? 0,
         creditLinksOffered: ev.credit_link_offered ?? 0,
         creditLinksClicked: ev.credit_link_clicked ?? 0,
-        note: 'Sold/show outcomes appear only when an authoritative DMS/CRM outcome source is connected.',
+        note: 'Completed/no-show counts come from staff-recorded appointment transitions. Sold/show DMS attribution appears only when an authoritative CRM outcome source is connected.',
       },
       attention: {
         hotLeads,
@@ -960,6 +963,8 @@ export class OperationsService {
         sms: 'awaiting_provider_configuration',
         email: 'awaiting_provider_configuration',
         voice: 'awaiting_provider_configuration',
+        /** Honest omnichannel adapter status — never implies live delivery. */
+        channels: listChannelAdapterStatuses(),
       },
       errorMonitoring: { sentryConfigured: !!process.env.SENTRY_DSN },
       crmWebhook: {
