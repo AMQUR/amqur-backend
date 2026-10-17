@@ -8,7 +8,7 @@ type Q = {
   appointments: Array<{ id: string; conversationId: string | null; locationId: string | null; type: string; status: string; requestedDate: string | null; requestedTime: string | null; requestedAt: string | null; scheduledAt: string | null; vehicleVin: string | null; serviceType: string | null; transportation: string | null; notes: string | null; availabilityVerified: boolean; provider: string; customerName: string | null; createdAt: string }>;
   finance: Array<{ id: string; conversationId: string | null; locationId: string | null; vehicleVin: string | null; downPayment: number | null; desiredPayment: number | null; creditLinkState: string; aprSource: string; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
   parts: Array<{ id: string; conversationId: string | null; locationId: string | null; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; notes: string | null; installationRequested: boolean; createdAt: string; customerName: string | null }>;
-  trades: Array<{ id: string; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; createdAt: string; customerName: string | null }>;
+  trades: Array<{ id: string; conversationId: string | null; locationId: string | null; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
   escalations: EscalationRow[];
   quotes?: Array<{ id: string; vehicleLabel: string | null; vehicleVin: string; paymentMethod: string; registrationZip: string | null; status: string; missingInputs: string[]; estimateShown: { total?: number } | null; createdAt: string; customerName: string | null }>;
   prioritized?: {
@@ -169,13 +169,29 @@ export function Queues({ locationId }: { locationId: string }) {
           <Card title={`Finance (${data.finance.length})`}>
             {!data.finance.length ? <Empty>None open.</Empty> : (
               <ul className="list">
-                {data.finance.map((f) => (
+                {data.finance.map((f) => {
+                  const openFinanceAdvisor = data.escalations.some(
+                    (e) =>
+                      e.reason === 'FINANCE_ADVISOR' &&
+                      e.status === 'OPEN' &&
+                      e.conversationId === f.conversationId,
+                  );
+                  return (
                   <li key={f.id} className="stack">
                     <span className="row">
                       <span>{f.customerName ?? 'Visitor'} · {f.vehicleVin ?? 'no vehicle'} {f.downPayment ? `· $${f.downPayment.toLocaleString()} down` : ''} {f.desiredPayment ? `· target $${f.desiredPayment}/mo` : ''}</span>
                       <Badge tone={statusTone(f.status)}>{f.status.replace(/_/g, ' ').toLowerCase()}</Badge>
                     </span>
-                    <span className="row"><Badge tone={statusTone(f.creditLinkState)}>credit {f.creditLinkState.toLowerCase()}</Badge><span className="muted small">{ago(f.createdAt)}</span></span>
+                    <span className="row">
+                      <Badge tone={statusTone(f.creditLinkState)}>credit {f.creditLinkState.toLowerCase()}</Badge>
+                      {openFinanceAdvisor && <Badge tone="warn">advisor handoff</Badge>}
+                      <span className="muted small">{ago(f.createdAt)}</span>
+                      {f.conversationId && (
+                        <a className="small" href={`#/inbox?conversation=${f.conversationId}`}>
+                          Open inbox
+                        </a>
+                      )}
+                    </span>
                     <FinanceActions
                       financeId={f.id}
                       conversationId={f.conversationId}
@@ -185,7 +201,8 @@ export function Queues({ locationId }: { locationId: string }) {
                       onUpdated={() => void reload()}
                     />
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </Card>
@@ -208,15 +225,34 @@ export function Queues({ locationId }: { locationId: string }) {
           <Card title={`Trade-ins (${data.trades.length})`}>
             {!data.trades.length ? <Empty>None open.</Empty> : (
               <ul className="list">
-                {data.trades.map((t) => (
+                {data.trades.map((t) => {
+                  const openTradeAdvisor = data.escalations.some(
+                    (e) =>
+                      e.reason === 'TRADE_ADVISOR' &&
+                      e.status === 'OPEN' &&
+                      e.conversationId === t.conversationId,
+                  );
+                  const tradeAdvisorEsc = data.escalations.find(
+                    (e) =>
+                      e.reason === 'TRADE_ADVISOR' &&
+                      e.status === 'OPEN' &&
+                      e.conversationId === t.conversationId,
+                  );
+                  return (
                   <li key={t.id} className="stack">
                     <span className="row">
                       <span>{[t.year, t.make, t.model].filter(Boolean).join(' ') || 'Vehicle'} {t.mileage ? `· ${t.mileage.toLocaleString()} mi` : ''} {t.customerName ? `· ${t.customerName}` : ''}</span>
-                      <Badge tone={statusTone(t.status)}>{t.status}</Badge>
+                      <Badge tone={statusTone(t.status)}>{t.status.replace(/_/g, ' ').toLowerCase()}</Badge>
                     </span>
-                    <TradeActions tradeId={t.id} />
+                    <span className="row">{openTradeAdvisor && <Badge tone="warn">advisor handoff</Badge>}<span className="muted small">{ago(t.createdAt)}</span>{t.conversationId && <a className="small" href={`#/inbox?conversation=${t.conversationId}`}>Open inbox</a>}</span>
+                    <TradeActions
+                      tradeId={t.id}
+                      tradeAdvisorEscalationId={tradeAdvisorEsc?.id ?? null}
+                      onUpdated={() => void reload()}
+                    />
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </Card>
@@ -538,7 +574,12 @@ function FinanceActions(props: {
 }
 
 /** Staff record an appraisal; managers issue an expiring offer (the only value customers see). */
-function TradeActions({ tradeId }: { tradeId: string }) {
+function TradeActions(props: {
+  tradeId: string;
+  tradeAdvisorEscalationId: string | null;
+  onUpdated: () => void;
+}) {
+  const { tradeId } = props;
   const [amount, setAmount] = useState('');
   const [days, setDays] = useState('7');
   const [msg, setMsg] = useState<string | null>(null);
@@ -548,12 +589,28 @@ function TradeActions({ tradeId }: { tradeId: string }) {
     try {
       await api(`/ops/trades/${tradeId}/${path}`, { method: 'POST', body: JSON.stringify(body) });
       setMsg(ok);
+      props.onUpdated();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : 'Failed');
+    }
+  };
+  const ackTradeAdvisor = async () => {
+    if (!props.tradeAdvisorEscalationId) return;
+    setMsg(null);
+    try {
+      await api(`/escalations/${props.tradeAdvisorEscalationId}/acknowledge`, { method: 'POST' });
+      setMsg('Advisor handoff acknowledged');
+      props.onUpdated();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : 'Failed');
     }
   };
   const n = Number(amount);
   return (
+    <span className="stack small">
+      {props.tradeAdvisorEscalationId && (
+        <button type="button" className="btn btn--ghost" onClick={() => void ackTradeAdvisor()}>Acknowledge trade advisor handoff</button>
+      )}
     <span className="row small">
       <label>Amount $<input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} style={{ width: 90 }} /></label>
       <button className="btn btn--ghost" disabled={!(n > 0)} onClick={() => void post('appraisals', { amount: n }, 'Appraisal recorded (internal)')}>Record appraisal</button>
@@ -564,6 +621,7 @@ function TradeActions({ tradeId }: { tradeId: string }) {
         </>
       )}
       {msg && <span className="muted">{msg}</span>}
+    </span>
     </span>
   );
 }

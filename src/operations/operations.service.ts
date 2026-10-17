@@ -648,7 +648,9 @@ export class OperationsService {
       this.prisma.tradeRequest.findMany({
         where: {
           ...base,
-          status: { in: ['REQUESTED', 'PENDING_STAFF', 'APPRAISAL_PENDING'] },
+          status: {
+            in: ['REQUESTED', 'PENDING_STAFF', 'APPRAISAL_PENDING', 'QUOTED'],
+          },
         },
         orderBy: { createdAt: 'desc' },
         take: 100,
