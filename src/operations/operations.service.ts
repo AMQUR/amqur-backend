@@ -1092,8 +1092,8 @@ export class OperationsService {
   }
 
   /**
-   * CSAT / satisfaction read surface. Never invents survey scores — only persisted
-   * proxy signals until a CustomerSurvey model + provider is connected.
+   * CSAT / satisfaction read surface. Never invents survey scores — uses
+   * RESPONDED CustomerSurvey rows when present, otherwise proxy signals only.
    */
   async satisfaction(scope: Scope) {
     const base = { tenantId: scope.tenantId, ...this.loc(scope) };
@@ -1109,16 +1109,51 @@ export class OperationsService {
       }),
     ]);
 
-    const note = this.surveyProviderConnected()
-      ? 'CustomerSurvey model present but no authoritative CSAT feed is connected.'
-      : 'Proxy signals from staff reply feedback and handoff analytics only. Connect a survey provider for CSAT scores.';
+    const proxy = this.satisfactionProxySignals(overview, handoffRequested7d);
+
+    if (this.surveyProviderConnected() && this.prisma.customerSurvey) {
+      const responded = await this.prisma.customerSurvey.findMany({
+        where: {
+          ...base,
+          status: 'RESPONDED',
+          respondedAt: { gte: since },
+          score: { not: null },
+        },
+        select: { score: true },
+        take: 2000,
+      });
+      const scores = responded
+        .map((r) => r.score)
+        .filter((s): s is number => typeof s === 'number');
+      if (scores.length > 0) {
+        const average =
+          Math.round(
+            (scores.reduce((a, b) => a + b, 0) / scores.length) * 10,
+          ) / 10;
+        return {
+          available: true as const,
+          source: 'customer_survey_internal' as const,
+          window: overview.window,
+          csat: { average, count: scores.length, scale: '1-10' as const },
+          signals: proxy,
+          note: 'CSAT from staff-recorded CustomerSurvey responses only. Mass SMS send is not enabled.',
+        };
+      }
+      return {
+        available: false as const,
+        reason: 'no_survey_responses' as const,
+        window: overview.window,
+        signals: proxy,
+        note: 'CustomerSurvey model is live. Record in-person/phone CSI via POST /ops/surveys — no auto-send.',
+      };
+    }
 
     return {
       available: false as const,
       reason: 'survey_provider_not_connected' as const,
       window: overview.window,
-      signals: this.satisfactionProxySignals(overview, handoffRequested7d),
-      note,
+      signals: proxy,
+      note: 'Proxy signals from staff reply feedback and handoff analytics only. Connect a survey provider for CSAT scores.',
     };
   }
 

@@ -119,6 +119,7 @@ model Tenant {
   conversationPlaybooks  ConversationPlaybook[]
   promptVersions         PromptVersion[]
   customerActionPages    CustomerActionPage[]
+  customerSurveys        CustomerSurvey[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1722,6 +1723,48 @@ model CustomerActionPage {
 
   @@index([tenantId, status])
   @@index([tenantId, leadId])
+}
+
+/// Internal CSI / CSAT capture — staff-created drafts only until an approved send path exists.
+/// Never auto-SMS. Scores come only from RESPONDED rows (or a future connected provider).
+model CustomerSurvey {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId     String?
+  leadId         String?
+  conversationId String?
+
+  /// SMS | EMAIL | LINK | IN_PERSON
+  channel String  @default("LINK")
+  status  CustomerSurveyStatus @default(DRAFT)
+
+  /// 1–10 when the customer responded — null until RESPONDED
+  score   Int?
+  comment String?
+
+  sentAt       DateTime?
+  respondedAt  DateTime?
+  createdByUserId String?
+  metadata     Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, status])
+  @@index([tenantId, locationId])
+  @@index([leadId])
+}
+
+enum CustomerSurveyStatus {
+  DRAFT
+  QUEUED
+  SENT
+  RESPONDED
+  CLOSED
+  CANCELLED
 }
 
 /// Controlled experiment on customer-facing COPY only (currently: the first greeting).

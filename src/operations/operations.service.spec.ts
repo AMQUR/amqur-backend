@@ -55,9 +55,12 @@ describe('OperationsService.satisfaction', () => {
   });
 
   it('returns available:false with proxy signals (no CSAT score)', async () => {
+    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(false);
     const r = await svc.satisfaction({ tenantId: 'tenant-1', locationId: null });
     expect(r.available).toBe(false);
-    expect(r.reason).toBe('survey_provider_not_connected');
+    expect(
+      (r as { reason?: string }).reason,
+    ).toBe('survey_provider_not_connected');
     expect(r.signals.replyFeedback).toEqual({
       total: 8,
       good: 6,
@@ -73,6 +76,46 @@ describe('OperationsService.satisfaction', () => {
         where: expect.objectContaining({ eventType: 'handoff_requested' }),
       }),
     );
+  });
+
+  it('surfaces internal CSAT when CustomerSurvey responses exist', async () => {
+    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(true);
+    const prismaWithSurvey = {
+      ...prisma,
+      customerSurvey: {
+        findMany: jest.fn().mockResolvedValue([{ score: 9 }, { score: 7 }]),
+      },
+    };
+    const svc2 = makeOperationsService(prismaWithSurvey);
+    jest.spyOn(svc2, 'overview').mockResolvedValue({
+      window: '7d',
+      attention: { openHandoffs: 2 },
+      aiQuality: {
+        replyFeedback: {
+          total: 8,
+          good: 6,
+          goodRate: 0.75,
+          neededHuman: 1,
+          tooLong: 0,
+          robotic: 0,
+          wrongFacts: 0,
+          wrongQuestion: 0,
+          unnecessaryRapport: 0,
+          byLabel: {},
+        },
+        inventoryMisses: 0,
+        knowledgeMisses: 0,
+      },
+    } as Awaited<ReturnType<OperationsService['overview']>>);
+    jest.spyOn(svc2 as never, 'surveyProviderConnected').mockReturnValue(true);
+
+    const r = await svc2.satisfaction({ tenantId: 'tenant-1', locationId: null });
+    expect(r.available).toBe(true);
+    expect((r as { csat?: { average: number; count: number } }).csat).toEqual({
+      average: 8,
+      count: 2,
+      scale: '1-10',
+    });
   });
 });
 

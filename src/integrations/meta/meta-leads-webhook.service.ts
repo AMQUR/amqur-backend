@@ -20,7 +20,7 @@ import {
  *   META_APP_SECRET — Meta app secret for X-Hub-Signature-256 verification
  *   META_LEAD_WEBHOOK_TENANT_ID — tenant cuid that owns inbound leadgen events
  *
- * Optional (hub subscription handshake — not wired in this stub):
+ * Optional (hub subscription handshake via GET /webhooks/meta/leads):
  *   META_WEBHOOK_VERIFY_TOKEN
  */
 @Injectable()
@@ -40,6 +40,26 @@ export class MetaLeadsWebhookService {
       });
     }
     return { appSecret, tenantId };
+  }
+
+  /**
+   * Meta hub subscription handshake. Returns the challenge only when
+   * META_WEBHOOK_VERIFY_TOKEN matches — never invents a success response.
+   */
+  verifyHubSubscription(q: {
+    mode?: string;
+    verifyToken?: string;
+    challenge?: string;
+  }):
+    | { ok: true; challenge: string }
+    | { ok: false; reason: 'not_configured' | 'token_mismatch' | 'invalid_request' } {
+    const expected = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim();
+    if (!expected) return { ok: false, reason: 'not_configured' };
+    if (q.mode !== 'subscribe' || !q.verifyToken || !q.challenge) {
+      return { ok: false, reason: 'invalid_request' };
+    }
+    if (q.verifyToken !== expected) return { ok: false, reason: 'token_mismatch' };
+    return { ok: true, challenge: q.challenge };
   }
 
   async intake(params: {

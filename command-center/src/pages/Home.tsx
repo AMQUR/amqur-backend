@@ -54,6 +54,8 @@ const MISSED_OP_HREF: Record<string, string> = {
   aiUncertainReplies: '#/queues',
   overdueLeads: '#/queues',
   missedAppointments: '#/appointments',
+  partsOpen: '#/queues',
+  financeOpen: '#/queues',
   zeroInventoryResults: '#/inventory',
   knowledgeMiss: '#/knowledge',
 };
@@ -73,6 +75,8 @@ function missedOpRows(missed: Missed): Array<{ key: string; count: number; href:
 type Satisfaction = {
   available: boolean;
   reason?: string;
+  source?: string;
+  csat?: { average: number; count: number; scale: string };
   signals?: {
     replyFeedback?: { total: number; good: number; goodRate: number | null; neededHuman: number };
     handoffs?: { openEscalations: number; handoffRequested7d: number };
@@ -133,11 +137,17 @@ export function Home({ locationId }: { locationId: string }) {
       })()}
       {sat.data && (
         <Card title="Customer satisfaction">
-          {!sat.data.available ? (
+          {sat.data.available && sat.data.csat ? (
+            <div className="stats">
+              <Stat label="CSI average" value={sat.data.csat.average} hint={`${sat.data.csat.count} responses · ${sat.data.csat.scale}`} />
+            </div>
+          ) : (
             <p className="muted small">
-              Survey provider not connected ({sat.data.reason}). Proxy signals only — not a CSAT score.
+              {sat.data.reason === 'no_survey_responses'
+                ? 'No CSI responses recorded yet — create drafts via Surveys API (no auto-SMS).'
+                : `Survey scores unavailable (${sat.data.reason ?? 'unknown'}). Proxy signals only.`}
             </p>
-          ) : null}
+          )}
           {sat.data.signals?.replyFeedback && (
             <div className="stats">
               <Stat

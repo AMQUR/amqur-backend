@@ -20,6 +20,7 @@
  */
 import { PrismaClient, Role } from '@prisma/client';
 import { seedDisabledAppointmentReminderCampaign } from '../src/messaging/seed-appointment-reminder-campaign';
+import { seedDisabledPostSaleCampaign } from '../src/messaging/seed-post-sale-campaign';
 import * as bcrypt from 'bcryptjs';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -119,6 +120,10 @@ async function main() {
       tenantId: tenant.id,
       locationId: location.id,
     });
+  const postSaleCampaign = await seedDisabledPostSaleCampaign(prisma, {
+    tenantId: tenant.id,
+    locationId: location.id,
+  });
 
   const now = new Date();
   for (const v of VEHICLES) {
@@ -197,6 +202,12 @@ async function main() {
           enabled: appointmentReminderCampaign.enabled,
           trigger: appointmentReminderCampaign.trigger,
           note: 'disabled bootstrap playbook — use Campaigns preview; no live SMS',
+        },
+        postSaleCampaign: {
+          id: postSaleCampaign.id,
+          enabled: postSaleCampaign.enabled,
+          trigger: postSaleCampaign.trigger,
+          note: 'disabled MARKETING thank-you — requires automatedFollowup + consent',
         },
         creditApplication:
           'not configured by seed — see npm run credit:destination',
