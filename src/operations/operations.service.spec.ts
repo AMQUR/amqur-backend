@@ -479,6 +479,36 @@ describe('OperationsService.recentKnowledgeMisses', () => {
       }),
     );
   });
+
+  it('returns empty for scoped tenant when rows exist only under another tenant', async () => {
+    const otherTenantRow = {
+      id: 'ev-other-tenant',
+      occurredAt: new Date('2026-10-10T12:00:00.000Z'),
+      locationId: 'loc-other',
+      properties: { count: 3 },
+    };
+    const prisma = {
+      analyticsEvent: {
+        findMany: jest.fn().mockImplementation(({ where }: { where: { tenantId: string } }) =>
+          where.tenantId === 'tenant-a'
+            ? Promise.resolve([otherTenantRow])
+            : Promise.resolve([]),
+        ),
+      },
+    };
+    const svc = makeOperationsService(prisma);
+    const r = await svc.recentKnowledgeMisses({
+      tenantId: 'tenant-b',
+      locationId: null,
+    });
+    expect(r.total).toBe(0);
+    expect(r.events).toEqual([]);
+    expect(prisma.analyticsEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ tenantId: 'tenant-b' }),
+      }),
+    );
+  });
 });
 
 describe('OperationsService.listInventory', () => {
