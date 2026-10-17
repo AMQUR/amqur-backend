@@ -282,4 +282,37 @@ describe('DB migration & integrity (disposable Postgres)', () => {
     });
     expect(inbox.provider).toBe(IntegrationProvider.META);
   });
+
+  it('Escalation_conversationId_active_key partial unique index exists', async () => {
+    const rows = await prisma.$queryRaw<Array<{ indexname: string }>>`
+      SELECT indexname FROM pg_indexes
+      WHERE schemaname = 'public'
+        AND indexname = 'Escalation_conversationId_active_key'
+    `;
+    expect(rows).toHaveLength(1);
+  });
+
+  it('CustomerSurvey table + status enum exist; draft create works', async () => {
+    const enumRows = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
+      SELECT e.enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON e.enumtypid = t.oid
+      WHERE t.typname = 'CustomerSurveyStatus'
+        AND e.enumlabel = 'DRAFT'
+    `;
+    expect(enumRows.map((r) => r.enumlabel)).toContain('DRAFT');
+
+    const t = await prisma.tenant.create({
+      data: { slug: `csi-${Date.now()}`, name: 'CSI T' },
+    });
+    const survey = await prisma.customerSurvey.create({
+      data: {
+        tenantId: t.id,
+        channel: 'LINK',
+        status: 'DRAFT',
+      },
+    });
+    expect(survey.status).toBe('DRAFT');
+    expect(survey.score).toBeNull();
+  });
 });
