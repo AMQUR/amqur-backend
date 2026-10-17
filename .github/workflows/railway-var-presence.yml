@@ -1,0 +1,59 @@
+name: Railway var presence
+
+# Names-only check. Never prints secret values. Does not deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Railway environment
+        required: true
+        default: staging
+        type: choice
+        options: [staging, production]
+      service:
+        description: Railway service
+        required: true
+        default: api
+        type: choice
+        options: [api, worker, prod-api, prod-worker]
+      keys:
+        description: Space-separated variable names to check
+        required: true
+        default: ANTHROPIC_API_KEY OPENAI_API_KEY CORS_ORIGINS INTEGRATION_ENCRYPTION_KEY ERROR_MONITORING_DSN
+
+permissions:
+  contents: read
+
+env:
+  RAILWAY_PROJECT_ID: 3bca40b6-01c6-4f02-9464-8682e6ffcb75
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment == 'production' && 'production' || 'staging' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Guard — token present
+        run: |
+          if [ -z "${{ secrets.RAILWAY_API_TOKEN }}" ]; then
+            echo "RAILWAY_API_TOKEN secret not configured" >&2
+            exit 1
+          fi
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      - name: Presence check (names only)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          node scripts/check-railway-var-presence.mjs \
+            "${{ inputs.environment }}" \
+            "${{ inputs.service }}" \
+            ${{ inputs.keys }} \
+            || true
+          # Always surface results; job fails only if script exits 2 (usage/auth).
+          # Presence MISSING is expected for optional LLM until owner sets the key.
