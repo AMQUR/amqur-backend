@@ -74,7 +74,17 @@ export function Inbox({ locationId }: { locationId: string }) {
           ))}
         </ul>
       </aside>
-      <section className="convo">{selected ? <Conversation id={selected} onChanged={() => void list.reload()} /> : <Empty>Select a conversation.</Empty>}</section>
+      <section className="convo">
+        {selected ? (
+          <Conversation
+            id={selected}
+            locationId={locationId}
+            onChanged={() => void list.reload()}
+          />
+        ) : (
+          <Empty>Select a conversation.</Empty>
+        )}
+      </section>
     </div>
   );
 }
@@ -87,7 +97,15 @@ type Attachment = {
   downloadPath?: string | null;
 };
 
-function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) {
+function Conversation({
+  id,
+  locationId,
+  onChanged,
+}: {
+  id: string;
+  locationId: string;
+  onChanged: () => void;
+}) {
   const d = useAsync(() => api<Detail>(`/ops/conversations/${id}`), [id]);
   const attachments = useAsync(
     () =>
@@ -99,8 +117,17 @@ function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) 
   const [text, setText] = useState('');
   const [note, setNote] = useState('');
   const [fileId, setFileId] = useState('');
+  const [transferTo, setTransferTo] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const me = session.user?.id;
+  const canTransferOverride = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(session.user?.role ?? '');
+  const staff = useAsync(
+    () =>
+      api<Array<{ id: string; firstName: string; lastName: string; role: string }>>(
+        `/ops/users${locationId ? `?locationId=${encodeURIComponent(locationId)}` : ''}`,
+      ),
+    [locationId],
+  );
   useEffect(() => {
     const t = window.setInterval(() => void d.reload(), 8000);
     return () => window.clearInterval(t);
@@ -137,6 +164,36 @@ function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) 
             </button>
           )}
           {c.aiPaused && !mine && <Badge tone="info">Handled by a teammate</Badge>}
+          {c.aiPaused && (mine || canTransferOverride) && (
+            <label className="small">
+              Transfer
+              <select
+                value={transferTo}
+                onChange={(e) => setTransferTo(e.target.value)}
+              >
+                <option value="">Teammate…</option>
+                {(staff.data ?? [])
+                  .filter((u) => u.id !== me)
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.firstName} {u.lastName} ({u.role})
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+          {c.aiPaused && (mine || canTransferOverride) && (
+            <button
+              className="btn"
+              disabled={!transferTo}
+              onClick={() => {
+                if (!transferTo) return;
+                void act('transfer', { toUserId: transferTo }).then(() => setTransferTo(''));
+              }}
+            >
+              Transfer ownership
+            </button>
+          )}
         </div>
       </header>
       <ErrorNote error={err} />

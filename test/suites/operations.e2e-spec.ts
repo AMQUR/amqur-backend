@@ -17,6 +17,7 @@ describe('staff operations (HTTP, Postgres)', () => {
   let seed: Awaited<ReturnType<typeof seedTwoTenants>>;
   let alphaAdmin: string;
   let alphaStaff: string;
+  let alphaStaffUserId: string;
   let betaAdmin: string;
   let widget: string;
   const ORIGIN = 'http://127.0.0.1:18084';
@@ -67,6 +68,12 @@ describe('staff operations (HTTP, Postgres)', () => {
     alphaAdmin = await login('admin@pilot-alpha.test', seed.alpha.password);
     betaAdmin = await login('admin@pilot-beta.test', seed.beta.password);
     alphaStaff = await login('staff@pilot-alpha.test', 'StaffPass123!');
+    alphaStaffUserId = (
+      await ctx.prisma.user.findFirstOrThrow({
+        where: { email: 'staff@pilot-alpha.test' },
+        select: { id: true },
+      })
+    ).id;
     const tok = await api()
       .post('/api/public/widget-token')
       .set('Origin', ORIGIN)
@@ -225,6 +232,73 @@ describe('staff operations (HTTP, Postgres)', () => {
     );
     expect(detail.messages.length).toBeGreaterThan(3);
     expect(typeof detail.summary.text).toBe('string');
+  });
+
+  it('transfer reassigns ownership so another staff member can reply after takeover conflict', async () => {
+    const first = await api()
+      .post('/api/chat')
+      .set('Authorization', `Bearer ${widget}`)
+      .send({ message: 'I need a person please' });
+    const convKey = unwrap<{ conversationId: string }>(
+      first.body,
+    ).conversationId;
+    const conv = await ctx.prisma.conversation.findUniqueOrThrow({
+      where: {
+        tenantId_externalKey: {
+          tenantId: seed.alpha.tenant.id,
+          externalKey: convKey,
+        },
+      },
+    });
+
+    expect(
+      (
+        await api()
+          .post(`/api/ops/conversations/${conv.id}/takeover`)
+          .set('Authorization', `Bearer ${alphaAdmin}`)
+      ).status,
+    ).toBeLessThan(300);
+
+    expect(
+      (
+        await api()
+          .post(`/api/ops/conversations/${conv.id}/takeover`)
+          .set('Authorization', `Bearer ${alphaStaff}`)
+      ).status,
+    ).toBe(409);
+
+    expect(
+      (
+        await api()
+          .post(`/api/ops/conversations/${conv.id}/transfer`)
+          .set('Authorization', `Bearer ${alphaStaff}`)
+          .send({ toUserId: alphaStaffUserId })
+      ).status,
+    ).toBe(403);
+
+    expect(
+      (
+        await api()
+          .post(`/api/ops/conversations/${conv.id}/transfer`)
+          .set('Authorization', `Bearer ${alphaAdmin}`)
+          .send({ toUserId: alphaStaffUserId })
+      ).status,
+    ).toBeLessThan(300);
+
+    expect(
+      (
+        await api()
+          .post(`/api/ops/conversations/${conv.id}/reply`)
+          .set('Authorization', `Bearer ${alphaStaff}`)
+          .send({ text: 'Hi — Riley here, I can help from here.' })
+      ).status,
+    ).toBeLessThan(300);
+
+    const row = await ctx.prisma.conversation.findUniqueOrThrow({
+      where: { id: conv.id },
+    });
+    expect(row.assignedUserId).toBe(alphaStaffUserId);
+    expect(row.aiPaused).toBe(true);
   });
 
   it('knowledge must be approved by a manager and published before customers can retrieve it', async () => {

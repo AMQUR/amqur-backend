@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -63,6 +64,7 @@ import { assignableStaffWhere } from '../leads/round-robin';
 type Scope = { tenantId: string; locationId: string | null };
 
 const OPEN_HANDOFF = ['REQUESTED', 'QUEUED', 'ASSIGNED', 'JOINED'];
+const HANDOFF_REASSIGN_ROLES = new Set(['SUPER_ADMIN', 'ADMIN', 'MANAGER']);
 
 /**
  * Staff-facing operational reads/writes for the AMQUR Command Center. Every query is tenant
@@ -421,27 +423,69 @@ export class OperationsService {
     id: string,
     fromUserId: string,
     toUserId: string,
+    actorRole?: string,
   ) {
-    const target = await this.prisma.user.findFirst({
-      where: { id: toUserId, tenantId: scope.tenantId, isActive: true },
-    });
-    if (!target)
-      throw new BadRequestException('Target user not found in this dealership');
-    const res = await this.prisma.conversation.updateMany({
+    if (fromUserId === toUserId) {
+      throw new BadRequestException('Cannot transfer to yourself');
+    }
+    const c = await this.prisma.conversation.findFirst({
       where: { id, tenantId: scope.tenantId, ...this.loc(scope) },
-      data: { assignedUserId: toUserId, handoffState: 'ASSIGNED' },
     });
-    if (!res.count) throw new NotFoundException('Conversation not found');
-    await this.prisma.auditLog.create({
-      data: {
-        tenantId: scope.tenantId,
-        userId: fromUserId,
-        action: 'conversation.transfer',
-        resource: 'Conversation',
-        resourceId: id,
-        metadata: { toUserId },
+    if (!c) throw new NotFoundException('Conversation not found');
+    if (!c.aiPaused || !c.assignedUserId) {
+      throw new ConflictException(
+        'Take over the conversation before transferring ownership',
+      );
+    }
+    const canReassign =
+      c.assignedUserId === fromUserId ||
+      (actorRole != null && HANDOFF_REASSIGN_ROLES.has(actorRole));
+    if (!canReassign) {
+      throw new ForbiddenException(
+        'Only the current owner can transfer this conversation',
+      );
+    }
+    const target = await this.prisma.user.findFirst({
+      where: {
+        id: toUserId,
+        ...assignableStaffWhere(scope.tenantId, c.locationId ?? scope.locationId),
       },
     });
+    if (!target) {
+      throw new BadRequestException('Target user not found in this dealership');
+    }
+    await this.prisma.$transaction([
+      this.prisma.conversation.update({
+        where: { id },
+        data: {
+          assignedUserId: toUserId,
+          aiPaused: true,
+          handoffState: 'JOINED',
+        },
+      }),
+      this.prisma.message.create({
+        data: {
+          conversationId: id,
+          role: 'SYSTEM',
+          content: 'Conversation ownership was transferred to another team member.',
+          metadata: {
+            event: 'staff_transferred',
+            fromUserId,
+            toUserId,
+          },
+        },
+      }),
+      this.prisma.auditLog.create({
+        data: {
+          tenantId: scope.tenantId,
+          userId: fromUserId,
+          action: 'conversation.transfer',
+          resource: 'Conversation',
+          resourceId: id,
+          metadata: { fromUserId: c.assignedUserId, toUserId },
+        },
+      }),
+    ]);
     return { ok: true };
   }
 

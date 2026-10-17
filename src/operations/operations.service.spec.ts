@@ -1,4 +1,9 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { OperationsService } from './operations.service';
 
 function makeOperationsService(
@@ -242,6 +247,107 @@ describe('OperationsService.takeover', () => {
         resourceId: conversationId,
       },
     });
+  });
+});
+
+describe('OperationsService.transfer', () => {
+  const scope = { tenantId: 'tenant-1', locationId: 'loc-1' };
+  const conversationId = 'conv-1';
+  const ownerId = 'user-owner';
+  const otherStaffId = 'user-other';
+  const managerId = 'user-manager';
+
+  const prisma = {
+    conversation: {
+      findFirst: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    user: { findFirst: jest.fn() },
+    message: { create: jest.fn().mockResolvedValue({}) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+    $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+  };
+
+  let svc: OperationsService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    svc = makeOperationsService(prisma);
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: conversationId,
+      locationId: 'loc-1',
+      aiPaused: true,
+      assignedUserId: ownerId,
+    });
+    prisma.user.findFirst.mockResolvedValue({
+      id: otherStaffId,
+      firstName: 'Jordan',
+      lastName: 'Lee',
+    });
+  });
+
+  it('reassigns ownership when the current owner transfers', async () => {
+    const result = await svc.transfer(
+      scope,
+      conversationId,
+      ownerId,
+      otherStaffId,
+      'STAFF',
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(prisma.conversation.update).toHaveBeenCalledWith({
+      where: { id: conversationId },
+      data: {
+        assignedUserId: otherStaffId,
+        aiPaused: true,
+        handoffState: 'JOINED',
+      },
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'conversation.transfer',
+        metadata: { fromUserId: ownerId, toUserId: otherStaffId },
+      }),
+    });
+  });
+
+  it('allows a manager to reassign without being the current owner', async () => {
+    await svc.transfer(
+      scope,
+      conversationId,
+      managerId,
+      otherStaffId,
+      'MANAGER',
+    );
+
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('forbids a non-owner staff member from transferring', async () => {
+    await expect(
+      svc.transfer(scope, conversationId, otherStaffId, managerId, 'STAFF'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects transfer when the conversation is not taken over', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: conversationId,
+      locationId: 'loc-1',
+      aiPaused: false,
+      assignedUserId: null,
+    });
+
+    await expect(
+      svc.transfer(scope, conversationId, ownerId, otherStaffId, 'STAFF'),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('rejects transfer to self', async () => {
+    await expect(
+      svc.transfer(scope, conversationId, ownerId, ownerId, 'STAFF'),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 

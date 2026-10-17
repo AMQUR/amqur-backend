@@ -420,7 +420,7 @@ export class OperationsController {
     @Param('id') id: string,
     @Body() b: TransferDto,
   ) {
-    return this.ops.transfer(this.scope(u), id, u.sub, b.toUserId);
+    return this.ops.transfer(this.scope(u), id, u.sub, b.toUserId, u.role);
   }
 
   @Roles(...STAFF)
