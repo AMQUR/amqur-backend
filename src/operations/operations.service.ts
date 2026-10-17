@@ -858,6 +858,11 @@ export class OperationsService {
         href: '#/queues',
       },
       {
+        key: 'trades_open',
+        count: overview.attention.tradesOpen,
+        href: '#/queues',
+      },
+      {
         key: 'csi_drafts_open',
         count: csiDraftsOpen,
         href: '#/surveys',
@@ -918,6 +923,7 @@ export class OperationsService {
       openHandoffs,
       partsOpen,
       financeOpen,
+      tradesOpen,
       conflicts,
       outboxStats,
       inventoryRuns,
@@ -952,6 +958,14 @@ export class OperationsService {
       }),
       this.prisma.financeRequest.count({
         where: { ...base, status: { in: ['REQUESTED', 'PENDING_STAFF'] } },
+      }),
+      this.prisma.tradeRequest.count({
+        where: {
+          ...base,
+          status: {
+            in: ['REQUESTED', 'PENDING_STAFF', 'APPRAISAL_PENDING', 'QUOTED'],
+          },
+        },
       }),
       this.prisma.sourceConflict.count({
         where: { tenantId: scope.tenantId, status: 'OPEN' },
@@ -1020,6 +1034,7 @@ export class OperationsService {
         openHandoffs,
         partsOpen,
         financeOpen,
+        tradesOpen,
         sourceConflicts: conflicts,
       },
       technical: {

@@ -15,7 +15,7 @@ type Overview = {
     creditLinksClicked: number;
     note: string;
   };
-  attention: { hotLeads: number; appointmentsAwaitingConfirmation: number; openHandoffs: number; partsOpen: number; financeOpen: number; sourceConflicts: number };
+  attention: { hotLeads: number; appointmentsAwaitingConfirmation: number; openHandoffs: number; partsOpen: number; financeOpen: number; tradesOpen?: number; sourceConflicts: number };
   technical: { outbox: Record<string, number>; inventory: { freshness: Record<string, number>; recentImports: Array<{ id: string; status: string; startedAt: string; records: number | null; rejected: number | null }> }; llm: Array<{ provider: string; configured: boolean; circuitOpen: boolean }> };
   aiQuality: {
     inventoryMisses: number;
@@ -179,6 +179,7 @@ export function Home({ locationId }: { locationId: string }) {
               <a href="#/inbox"><Stat label="Hot leads" value={data.attention.hotLeads} /></a>
               <a href="#/queues"><Stat label="Parts requests" value={data.attention.partsOpen} /></a>
               <a href="#/queues"><Stat label="Finance requests" value={data.attention.financeOpen} /></a>
+              <a href="#/queues"><Stat label="Trade-ins" value={data.attention.tradesOpen ?? 0} /></a>
               <Stat label="Data conflicts" value={data.attention.sourceConflicts} />
             </div>
           </Card>
