@@ -47,6 +47,16 @@ describe('TradeService.getValuation (fail-closed)', () => {
     });
   });
 
+  it('integration status mirrors gate without vehicle input', async () => {
+    await expect(
+      svc.getValuationIntegrationStatus('tenant-1', 'loc-1'),
+    ).resolves.toEqual({
+      status: 'blocked',
+      reason: 'not_connected',
+      verified: false,
+    });
+  });
+
   it('returns not_configured without dollar fields when adapter is not live', async () => {
     prisma.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-1' });
 

@@ -89,6 +89,25 @@ export class TradeService {
     });
   }
 
+  /** Integration gate only — no vehicle input, never returns dollar amounts. */
+  async getValuationIntegrationStatus(
+    tenantId: string,
+    locationId?: string | null,
+  ): Promise<
+    | { status: 'blocked'; reason: 'not_connected' | 'not_configured'; verified: false }
+    | { status: 'ready'; verified: false; providerId: string }
+  > {
+    const gate = await this.resolveValuationGate(tenantId, locationId ?? null);
+    if (!gate.allowed) {
+      return tradeValuationBlocked(gate.reason);
+    }
+    return {
+      status: 'ready',
+      verified: false,
+      providerId: this.valuationProvider.providerId,
+    };
+  }
+
   /** Licensed provider valuation only — never invents dollar amounts. */
   async getValuation(
     ctx: ProviderContext,
