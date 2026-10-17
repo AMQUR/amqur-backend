@@ -459,6 +459,18 @@ export class OperationsService {
       where: { id },
       data: { lastActivityAt: new Date() },
     });
+    await this.prisma.auditLog
+      .create({
+        data: {
+          tenantId: scope.tenantId,
+          userId,
+          action: 'conversation.staff_reply',
+          resource: 'Conversation',
+          resourceId: id,
+          metadata: { messageId: msg.id, chars: text.length },
+        },
+      })
+      .catch(() => undefined);
     return msg;
   }
 
@@ -468,7 +480,7 @@ export class OperationsService {
       select: { id: true },
     });
     if (!c) throw new NotFoundException('Conversation not found');
-    return this.prisma.message.create({
+    const row = await this.prisma.message.create({
       data: {
         conversationId: id,
         role: 'SYSTEM',
@@ -476,6 +488,19 @@ export class OperationsService {
         metadata: { internalNote: true, userId },
       },
     });
+    await this.prisma.auditLog
+      .create({
+        data: {
+          tenantId: scope.tenantId,
+          userId,
+          action: 'conversation.note',
+          resource: 'Conversation',
+          resourceId: id,
+          metadata: { messageId: row.id },
+        },
+      })
+      .catch(() => undefined);
+    return row;
   }
 
   // ───────────── queues / overview
@@ -496,119 +521,119 @@ export class OperationsService {
       overdueLeads,
       missedAppointments,
     ] = await Promise.all([
-        this.prisma.appointment.findMany({
-          where: {
-            ...base,
-            status: { in: ['REQUESTED', 'PENDING_CONFIRMATION'] },
+      this.prisma.appointment.findMany({
+        where: {
+          ...base,
+          status: { in: ['REQUESTED', 'PENDING_CONFIRMATION'] },
+        },
+        orderBy: [{ requestedAt: 'asc' }],
+        take: 100,
+      }),
+      this.prisma.financeRequest.findMany({
+        where: { ...base, status: { in: ['REQUESTED', 'PENDING_STAFF'] } },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.partsInquiry.findMany({
+        where: {
+          ...base,
+          status: {
+            in: ['REQUESTED', 'FITMENT_PENDING', 'PENDING_STAFF', 'QUOTED'],
           },
-          orderBy: [{ requestedAt: 'asc' }],
-          take: 100,
-        }),
-        this.prisma.financeRequest.findMany({
-          where: { ...base, status: { in: ['REQUESTED', 'PENDING_STAFF'] } },
-          orderBy: { createdAt: 'desc' },
-          take: 100,
-        }),
-        this.prisma.partsInquiry.findMany({
-          where: {
-            ...base,
-            status: {
-              in: ['REQUESTED', 'FITMENT_PENDING', 'PENDING_STAFF', 'QUOTED'],
-            },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.tradeRequest.findMany({
+        where: {
+          ...base,
+          status: { in: ['REQUESTED', 'PENDING_STAFF', 'APPRAISAL_PENDING'] },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+      this.prisma.escalation.findMany({
+        where: {
+          ...base,
+          status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: 100,
+      }),
+      this.prisma.priceQuoteRequest.findMany({
+        where: { ...base, status: { in: ['REQUESTED', 'IN_PROGRESS'] } },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+      // Customer last messaged; AI not paused; waiting >2h without staff reply.
+      this.prisma.conversation.findMany({
+        where: {
+          ...base,
+          aiPaused: false,
+          handoffState: { in: ['NONE', 'REQUESTED', 'QUEUED'] },
+          lastActivityAt: { lte: staleBefore },
+          messages: { some: { role: 'USER' } },
+        },
+        orderBy: { lastActivityAt: 'asc' },
+        take: 50,
+        select: {
+          id: true,
+          channel: true,
+          handoffState: true,
+          lastActivityAt: true,
+          locationId: true,
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { role: true, content: true, createdAt: true },
           },
-          orderBy: { createdAt: 'desc' },
-          take: 100,
-        }),
-        this.prisma.tradeRequest.findMany({
-          where: {
-            ...base,
-            status: { in: ['REQUESTED', 'PENDING_STAFF', 'APPRAISAL_PENDING'] },
-          },
-          orderBy: { createdAt: 'desc' },
-          take: 100,
-        }),
-        this.prisma.escalation.findMany({
-          where: {
-            ...base,
-            status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
-          },
-          orderBy: { createdAt: 'asc' },
-          take: 100,
-        }),
-        this.prisma.priceQuoteRequest.findMany({
-          where: { ...base, status: { in: ['REQUESTED', 'IN_PROGRESS'] } },
-          orderBy: { createdAt: 'desc' },
-          take: 100,
-        }),
-        // Customer last messaged; AI not paused; waiting >2h without staff reply.
-        this.prisma.conversation.findMany({
-          where: {
-            ...base,
-            aiPaused: false,
-            handoffState: { in: ['NONE', 'REQUESTED', 'QUEUED'] },
-            lastActivityAt: { lte: staleBefore },
-            messages: { some: { role: 'USER' } },
-          },
-          orderBy: { lastActivityAt: 'asc' },
-          take: 50,
-          select: {
-            id: true,
-            channel: true,
-            handoffState: true,
-            lastActivityAt: true,
-            locationId: true,
-            messages: {
-              orderBy: { createdAt: 'desc' },
-              take: 1,
-              select: { role: true, content: true, createdAt: true },
-            },
-          },
-        }),
-        this.prisma.analyticsEvent.findMany({
-          where: {
-            ...base,
-            eventType: 'ai.reply_feedback',
-            occurredAt: { gte: new Date(Date.now() - 7 * 86_400_000) },
-          },
-          orderBy: { occurredAt: 'desc' },
-          take: 50,
-          select: {
-            id: true,
-            occurredAt: true,
-            properties: true,
-            conversationExternalKey: true,
-            locationId: true,
-          },
-        }),
-        this.prisma.lead.findMany({
-          where: {
-            ...base,
-            status: { in: ['OPEN', 'CONTACTED'] },
-            stage: { in: ['HOT', 'WARM'] },
-            updatedAt: { lte: agedBefore },
-          },
-          orderBy: { updatedAt: 'asc' },
-          take: 50,
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            stage: true,
-            status: true,
-            updatedAt: true,
-            phone: true,
-            conversationId: true,
-          },
-        }),
-        this.prisma.appointment.findMany({
-          where: {
-            ...base,
-            status: 'NO_SHOW',
-          },
-          orderBy: { updatedAt: 'desc' },
-          take: 50,
-        }),
-      ]);
+        },
+      }),
+      this.prisma.analyticsEvent.findMany({
+        where: {
+          ...base,
+          eventType: 'ai.reply_feedback',
+          occurredAt: { gte: new Date(Date.now() - 7 * 86_400_000) },
+        },
+        orderBy: { occurredAt: 'desc' },
+        take: 50,
+        select: {
+          id: true,
+          occurredAt: true,
+          properties: true,
+          conversationExternalKey: true,
+          locationId: true,
+        },
+      }),
+      this.prisma.lead.findMany({
+        where: {
+          ...base,
+          status: { in: ['OPEN', 'CONTACTED'] },
+          stage: { in: ['HOT', 'WARM'] },
+          updatedAt: { lte: agedBefore },
+        },
+        orderBy: { updatedAt: 'asc' },
+        take: 50,
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          stage: true,
+          status: true,
+          updatedAt: true,
+          phone: true,
+          conversationId: true,
+        },
+      }),
+      this.prisma.appointment.findMany({
+        where: {
+          ...base,
+          status: 'NO_SHOW',
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 50,
+      }),
+    ]);
 
     const unanswered = unansweredInbound
       .filter((c) => c.messages[0]?.role === 'USER')
@@ -888,8 +913,7 @@ export class OperationsService {
           wrongFacts: feedbackByLabel.wrong_facts ?? 0,
           wrongQuestion: feedbackByLabel.wrong_question ?? 0,
           neededHuman: feedbackByLabel.needed_human ?? 0,
-          unnecessaryRapport:
-            feedbackByLabel.unnecessary_weather_sports ?? 0,
+          unnecessaryRapport: feedbackByLabel.unnecessary_weather_sports ?? 0,
           goodRate: feedbackTotal
             ? Math.round((good / feedbackTotal) * 100) / 100
             : null,
@@ -901,7 +925,9 @@ export class OperationsService {
   }
 
   private surveyProviderConnected(): boolean {
-    return Prisma.dmmf.datamodel.models.some((m) => m.name === 'CustomerSurvey');
+    return Prisma.dmmf.datamodel.models.some(
+      (m) => m.name === 'CustomerSurvey',
+    );
   }
 
   /**
@@ -974,7 +1000,10 @@ export class OperationsService {
       knowledgeMiss: overview.aiQuality.knowledgeMisses,
       unansweredInbound: prioritized.unansweredInbound,
     };
-    const prioritizedTotal = Object.values(prioritized).reduce((a, b) => a + b, 0);
+    const prioritizedTotal = Object.values(prioritized).reduce(
+      (a, b) => a + b,
+      0,
+    );
     const analyticsMissTotal =
       aiMissSignals.zeroInventoryResults + aiMissSignals.knowledgeMiss;
 
@@ -1345,7 +1374,12 @@ export class OperationsService {
             : {}),
           ...(typeof q.quietEnd === 'string' ? { quietEnd: q.quietEnd } : {}),
           ...(typeof q.maxMarketingPer24h === 'number'
-            ? { maxMarketingPer24h: Math.max(0, Math.min(20, q.maxMarketingPer24h)) }
+            ? {
+                maxMarketingPer24h: Math.max(
+                  0,
+                  Math.min(20, q.maxMarketingPer24h),
+                ),
+              }
             : {}),
         } as Prisma.InputJsonValue;
       }
@@ -1566,7 +1600,159 @@ export class OperationsService {
         },
       }),
     ]);
-    return { ok: true as const, label: input.label };
+
+    // Negative teaching signals → DRAFT Studio coaching playbook (never auto-publish).
+    const coaching = this.coachingFromFeedback(input.label, input.note);
+    let draftPlaybookId: string | null = null;
+    if (coaching && c.locationId) {
+      const locationScope = c.locationId;
+      const key = 'staff-feedback-coaching';
+      const latest = await this.prisma.conversationPlaybook.findFirst({
+        where: { tenantId: scope.tenantId, locationScope, key },
+        orderBy: { version: 'desc' },
+        select: { version: true },
+      });
+      const draft = await this.prisma.conversationPlaybook
+        .create({
+          data: {
+            tenantId: scope.tenantId,
+            locationId: c.locationId,
+            locationScope,
+            key,
+            title: `Staff feedback: ${input.label}`,
+            department: 'GENERAL',
+            status: 'DRAFT',
+            version: (latest?.version ?? 0) + 1,
+            tone: coaching.tone,
+            brevity: coaching.brevity,
+            oneQuestion: true,
+            allowRapport: false,
+            coachingNotes: coaching.notes,
+            examples: coaching.examples as Prisma.InputJsonValue,
+            createdBy: userId,
+          },
+        })
+        .catch(() => null);
+      draftPlaybookId = draft?.id ?? null;
+      if (draftPlaybookId) {
+        await this.prisma.analyticsEvent
+          .create({
+            data: {
+              tenantId: scope.tenantId,
+              locationId: c.locationId,
+              eventType: 'studio.feedback_draft_created',
+              conversationExternalKey: c.externalKey,
+              properties: {
+                playbookId: draftPlaybookId,
+                label: input.label,
+              },
+            },
+          })
+          .catch(() => null);
+      }
+    }
+
+    return {
+      ok: true as const,
+      label: input.label,
+      draftPlaybookId,
+    };
+  }
+
+  /** Map staff feedback labels into draft coaching hints — never published automatically. */
+  private coachingFromFeedback(
+    label: string,
+    note?: string,
+  ): {
+    tone: string;
+    brevity: string;
+    notes: string;
+    examples: Array<{ good: string; bad: string; note?: string }>;
+  } | null {
+    const tip = note?.trim().slice(0, 400);
+    const map: Record<
+      string,
+      {
+        tone: string;
+        brevity: string;
+        notes: string;
+        examples: Array<{ good: string; bad: string; note?: string }>;
+      }
+    > = {
+      too_long: {
+        tone: 'concise',
+        brevity: 'short',
+        notes: `Staff flagged a reply as too long. Keep answers to one or two useful sentences.${tip ? ` Note: ${tip}` : ''}`,
+        examples: [
+          {
+            good: 'We have two that match. Want to see both?',
+            bad: 'Thank you so much for reaching out today! I would be more than happy to walk you through every option we currently have on the lot…',
+            note: 'Prefer short answers',
+          },
+        ],
+      },
+      sounds_robotic: {
+        tone: 'friendly',
+        brevity: 'short',
+        notes: `Staff flagged a robotic tone. Sound like a helpful dealership employee, not a script.${tip ? ` Note: ${tip}` : ''}`,
+        examples: [
+          {
+            good: 'Got it — I can check that for you.',
+            bad: "Absolutely! I'd be more than happy to assist you with that request today!",
+            note: 'Natural phrasing',
+          },
+        ],
+      },
+      wrong_facts: {
+        tone: 'concise',
+        brevity: 'short',
+        notes: `Staff flagged wrong facts. Only state verified inventory/hours/policy; otherwise say you will confirm.${tip ? ` Note: ${tip}` : ''}`,
+        examples: [
+          {
+            good: "I don't want to guess on that — let me confirm with the team.",
+            bad: 'Yes, that model is definitely in stock at that price.',
+            note: 'Never invent dealership facts',
+          },
+        ],
+      },
+      wrong_question: {
+        tone: 'concise',
+        brevity: 'short',
+        notes: `Staff flagged a bad follow-up question. Prefer waiting or asking only what moves the deal forward.${tip ? ` Note: ${tip}` : ''}`,
+        examples: [
+          {
+            good: 'If you want, I can hold a time that works for you.',
+            bad: 'What is your favorite color and do you also need winter tires today?',
+            note: 'No mechanical discovery after every turn',
+          },
+        ],
+      },
+      needed_human: {
+        tone: 'professional',
+        brevity: 'short',
+        notes: `Staff said a human was needed. Escalate sooner; do not keep probing.${tip ? ` Note: ${tip}` : ''}`,
+        examples: [
+          {
+            good: 'I am connecting you with someone on our team who can help right away.',
+            bad: 'Before I get a person, can you answer a few more questions?',
+            note: 'Handoff promptly',
+          },
+        ],
+      },
+      unnecessary_weather_sports: {
+        tone: 'concise',
+        brevity: 'short',
+        notes: `Staff flagged unnecessary weather/sports rapport. Skip small talk unless the customer invites it and data is verified.${tip ? ` Note: ${tip}` : ''}`,
+        examples: [
+          {
+            good: 'We have that trim in stock. Want details?',
+            bad: 'Hope you are enjoying this sunny day and the big game tonight!',
+            note: 'Rapport only when appropriate',
+          },
+        ],
+      },
+    };
+    return map[label] ?? null;
   }
 
   /**

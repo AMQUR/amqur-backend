@@ -6856,6 +6856,21 @@ export class ChatOrchestrator {
       if (o && !skipped(o.key)) q = o;
       else if (o) silentPending = o.key; // still awaiting it — just don't nag
     }
+    // Natural pacing: do not mechanically ask a soft discovery question after every answer.
+    // Critical questions (priority ≤ 2) and empty turns still get a follow-up.
+    const farewell =
+      /\b(thanks?|thank you|bye|goodbye|that'?s all|i'?m (?:all )?good|all set)\b/i.test(
+        t.message,
+      );
+    if (
+      q &&
+      !opts.forcedReply &&
+      ((farewell && t.answers.length > 0) ||
+        (t.answers.length > 0 && q.priority > 5 && q.key === 'none'))
+    ) {
+      silentPending = silentPending ?? (q.key !== 'none' ? q.key : undefined);
+      q = undefined;
+    }
     // Never answer with nothing: if the only thing left to say is the question we asked last
     // turn, ask it again (an empty "How can I help?" is worse than a repeat).
     if (

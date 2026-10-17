@@ -8,7 +8,13 @@ type Day = { open: string; close: string } | null;
 type S = {
   id: string; name: string; timezone: string; storeHours: Record<string, Day> | null; holidayHours: Array<{ date: string; closed?: boolean; open?: string; close?: string; note?: string }> | null;
   storeHoursVerifiedAt: string | null; financialPolicy: Record<string, unknown> | null; creditApplication: Record<string, unknown> | null; serviceAmenities: Record<string, unknown> | null;
-  effective: { hours: { verified: boolean }; financialPolicy: { mode: string; illustrativeApr: number; defaultTermMonths: number }; creditApplication: { available: boolean; reason?: string } };
+  messagingPolicy?: { quietStart?: string; quietEnd?: string; maxMarketingPer24h?: number } | null;
+  effective: {
+    hours: { verified: boolean };
+    financialPolicy: { mode: string; illustrativeApr: number; defaultTermMonths: number };
+    creditApplication: { available: boolean; reason?: string };
+    messaging?: { quietStart: string; quietEnd: string };
+  };
 };
 
 export function Settings({ locationId }: { locationId: string }) {
@@ -18,6 +24,7 @@ export function Settings({ locationId }: { locationId: string }) {
   const [holidays, setHolidays] = useState('');
   const [policy, setPolicy] = useState({ illustrativeApr: '', defaultTermMonths: '', taxRatePercent: '', docFee: '', verified: false });
   const [amen, setAmen] = useState({ shuttle: '', loaner: '' });
+  const [quiet, setQuiet] = useState({ quietStart: '21:00', quietEnd: '08:00' });
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const canEdit = ['SUPER_ADMIN', 'ADMIN'].includes(session.user?.role ?? '');
@@ -32,6 +39,10 @@ export function Settings({ locationId }: { locationId: string }) {
     setPolicy({ illustrativeApr: String(p.illustrativeApr ?? ''), defaultTermMonths: String(p.defaultTermMonths ?? ''), taxRatePercent: String(p.taxRatePercent ?? ''), docFee: String(p.docFee ?? ''), verified: !!p.verifiedAt });
     const a = d.serviceAmenities ?? {};
     setAmen({ shuttle: a.shuttle === true ? 'yes' : a.shuttle === false ? 'no' : '', loaner: a.loaner === true ? 'yes' : a.loaner === false ? 'no' : '' });
+    setQuiet({
+      quietStart: d.effective?.messaging?.quietStart ?? d.messagingPolicy?.quietStart ?? '21:00',
+      quietEnd: d.effective?.messaging?.quietEnd ?? d.messagingPolicy?.quietEnd ?? '08:00',
+    });
   }, [s.data]);
 
   const save = async (label: string, body: Record<string, unknown>) => {
@@ -121,6 +132,30 @@ export function Settings({ locationId }: { locationId: string }) {
                 </label>
               ))}
               {canEdit && <button className="btn" onClick={() => void save('Amenities', { serviceAmenities: Object.fromEntries(Object.entries(amen).filter(([, v]) => v).map(([k, v]) => [k, v === 'yes'])) })}>Save amenities</button>}
+            </div>
+          </Card>
+          <Card title="SMS quiet hours" actions={<Badge tone="neutral">DST-aware · rooftop timezone</Badge>}>
+            <p className="muted small">
+              Automated SMS is deferred outside this window. Enforced again at send time. Defaults 21:00–08:00 local.
+            </p>
+            <div className="row">
+              <label>Quiet start<input type="time" value={quiet.quietStart} onChange={(e) => setQuiet({ ...quiet, quietStart: e.target.value })} disabled={!canEdit} /></label>
+              <label>Quiet end<input type="time" value={quiet.quietEnd} onChange={(e) => setQuiet({ ...quiet, quietEnd: e.target.value })} disabled={!canEdit} /></label>
+              {canEdit && (
+                <button
+                  className="btn"
+                  onClick={() =>
+                    void save('Quiet hours', {
+                      messagingPolicy: {
+                        quietStart: quiet.quietStart,
+                        quietEnd: quiet.quietEnd,
+                      },
+                    })
+                  }
+                >
+                  Save quiet hours
+                </button>
+              )}
             </div>
           </Card>
         </>

@@ -91,18 +91,24 @@ export class PartsInquiryService {
         ? PartsInquiryStatus.PENDING_STAFF
         : PartsInquiryStatus.FITMENT_PENDING;
     if (existing) {
+      const becomingStaff =
+        nextStatus === PartsInquiryStatus.PENDING_STAFF &&
+        existing.status !== PartsInquiryStatus.PENDING_STAFF;
       if (
         existing.status === 'REQUESTED' ||
         existing.status === 'FITMENT_PENDING'
       )
         data.status = nextStatus;
-      return this.prisma.partsInquiry.update({
+      const updated = await this.prisma.partsInquiry.update({
         where: { id: existing.id },
         data,
       });
+      if (becomingStaff)
+        await this.notifyPartsAdvisor(updated).catch(() => undefined);
+      return updated;
     }
     try {
-      return await this.prisma.partsInquiry.create({
+      const created = await this.prisma.partsInquiry.create({
         data: {
           ...(data as Record<string, unknown>),
           tenantId: p.tenantId,
@@ -123,6 +129,9 @@ export class PartsInquiryService {
           },
         },
       });
+      if (nextStatus === PartsInquiryStatus.PENDING_STAFF)
+        await this.notifyPartsAdvisor(created).catch(() => undefined);
+      return created;
     } catch (e: unknown) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -132,6 +141,52 @@ export class PartsInquiryService {
       }
       throw e;
     }
+  }
+
+  /**
+   * Queue a parts advisor escalation when fitment cannot be verified automatically.
+   * Never invents fitment/price — staff must confirm.
+   */
+  private async notifyPartsAdvisor(row: PartsInquiry) {
+    if (!row.conversationId) return;
+    const open = await this.prisma.escalation.findFirst({
+      where: {
+        tenantId: row.tenantId,
+        conversationId: row.conversationId,
+        status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
+        reason: 'PARTS_ADVISOR',
+      },
+    });
+    if (open) return;
+    await this.prisma.escalation.create({
+      data: {
+        tenantId: row.tenantId,
+        locationId: row.locationId,
+        conversationId: row.conversationId,
+        reason: 'PARTS_ADVISOR',
+        urgency: 'NORMAL',
+        summary:
+          `Parts inquiry needs staff: ${row.suspectedPart ?? row.partNumber ?? row.partDescription}`.slice(
+            0,
+            280,
+          ),
+        metadata: {
+          partsInquiryId: row.id,
+          vin: row.vin,
+          fitmentVerified: false,
+        },
+      },
+    });
+    await this.prisma.analyticsEvent
+      .create({
+        data: {
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          eventType: 'parts.advisor_queued',
+          properties: { partsInquiryId: row.id },
+        },
+      })
+      .catch(() => null);
   }
 
   async linkInstallAppointment(

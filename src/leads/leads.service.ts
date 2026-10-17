@@ -79,16 +79,15 @@ export class LeadsService {
     const email = normalizeEmail(params.email);
     const phone = normalizePhone(params.phone);
 
-    let existing =
-      conversationDbId
-        ? await this.prisma.lead.findFirst({
-            where: {
-              tenantId: params.tenantId,
-              conversationId: conversationDbId,
-              status: { in: [LeadStatus.OPEN, LeadStatus.CONTACTED] },
-            },
-          })
-        : null;
+    let existing = conversationDbId
+      ? await this.prisma.lead.findFirst({
+          where: {
+            tenantId: params.tenantId,
+            conversationId: conversationDbId,
+            status: { in: [LeadStatus.OPEN, LeadStatus.CONTACTED] },
+          },
+        })
+      : null;
 
     if (!existing && (email || phone)) {
       const candidates = await this.prisma.lead.findMany({
@@ -143,10 +142,7 @@ export class LeadsService {
       });
     }
 
-    const flags = await this.flags.resolve(
-      params.tenantId,
-      params.locationId,
-    );
+    const flags = await this.flags.resolve(params.tenantId, params.locationId);
     const assignedUserId = await resolveNewLeadAssignee(this.prisma, flags, {
       tenantId: params.tenantId,
       locationId: params.locationId,
@@ -240,6 +236,15 @@ export class LeadsService {
       scoreVersion: p.scoreVersion,
       nextBestAction: set(p.nextBestAction),
     };
+    const status = resolveLeadStatus({
+      score: p.score,
+      stage: p.stage,
+      phone: p.phone,
+      email: p.email,
+      interestedVin: p.interestedVin,
+      financingNeeded: p.financingNeeded,
+      tradeInInterest: p.tradeInInterest,
+    });
     const existing = await this.prisma.lead.findFirst({
       where: {
         tenantId: p.tenantId,
@@ -251,7 +256,15 @@ export class LeadsService {
       orderBy: { createdAt: 'desc' },
     });
     if (existing) {
-      return this.prisma.lead.update({ where: { id: existing.id }, data });
+      // Never demote QUALIFIED → OPEN; only advance.
+      const nextStatus =
+        rankStatus(status) > rankStatus(existing.status)
+          ? status
+          : existing.status;
+      return this.prisma.lead.update({
+        where: { id: existing.id },
+        data: { ...data, status: nextStatus },
+      });
     }
     const flags = await this.flags.resolve(p.tenantId, p.locationId);
     const assignedUserId = await resolveNewLeadAssignee(this.prisma, flags, {
@@ -265,9 +278,38 @@ export class LeadsService {
         locationId: p.locationId ?? null,
         conversationId: p.conversationId,
         source: p.source ?? 'widget',
-        status: LeadStatus.OPEN,
+        status,
         assignedUserId,
       },
     });
   }
+}
+
+/** Promote open leads toward QUALIFIED from real signals — never invent CRM outcomes. */
+export function resolveLeadStatus(p: {
+  score: number;
+  stage: 'cold' | 'warm' | 'hot';
+  phone?: string | null;
+  email?: string | null;
+  interestedVin?: string | null;
+  financingNeeded?: boolean | null;
+  tradeInInterest?: boolean | null;
+}): LeadStatus {
+  const hasContact = !!(p.phone || p.email);
+  if (!hasContact) return LeadStatus.OPEN;
+  const qualified =
+    p.stage === 'hot' ||
+    p.score >= 12 ||
+    (!!p.interestedVin && p.score >= 6) ||
+    (!!p.financingNeeded && hasContact) ||
+    (!!p.tradeInInterest && hasContact && p.score >= 8);
+  if (qualified) return LeadStatus.QUALIFIED;
+  return LeadStatus.CONTACTED;
+}
+
+function rankStatus(s: LeadStatus | string): number {
+  if (s === LeadStatus.QUALIFIED || s === 'QUALIFIED') return 3;
+  if (s === LeadStatus.CONTACTED || s === 'CONTACTED') return 2;
+  if (s === LeadStatus.OPEN || s === 'OPEN') return 1;
+  return 0;
 }

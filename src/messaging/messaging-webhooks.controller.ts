@@ -147,22 +147,73 @@ export class MessagingWebhooksController {
           },
         })
       : null;
-    if (conv) {
+    if (conv && from) {
+      // Preserve campaign attribution when the customer replies to a campaign SMS.
+      const recentCampaign = await this.prisma.outboundMessage.findFirst({
+        where: {
+          tenantId,
+          channel: 'SMS',
+          endpoint: from,
+          NOT: { campaignId: null },
+          status: { in: ['QUEUED', 'SENT', 'DELIVERED'] },
+          createdAt: { gte: new Date(Date.now() - 14 * 86_400_000) },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { campaignId: true, campaignVersion: true, id: true },
+      });
+      const bookingIntent =
+        /\b(yes|yeah|yep|sure|ok|okay|book|schedule|appointment|come in|visit|test drive)\b/i.test(
+          text,
+        );
       await this.prisma.message.create({
         data: {
           conversationId: conv.id,
           role: 'USER',
           content: redactCreditSensitive(text).slice(0, 4000),
-          metadata: { channel: 'SMS', providerMessageId: body.MessageSid },
+          metadata: {
+            channel: 'SMS',
+            providerMessageId: body.MessageSid,
+            ...(recentCampaign?.campaignId
+              ? {
+                  campaignId: recentCampaign.campaignId,
+                  campaignVersion: recentCampaign.campaignVersion,
+                  outboundMessageId: recentCampaign.id,
+                }
+              : {}),
+            ...(bookingIntent ? { bookingIntent: true } : {}),
+          },
         },
       });
       await this.prisma.conversation.update({
         where: { id: conv.id },
         data: {
           lastActivityAt: new Date(),
-          handoffState: conv.aiPaused ? conv.handoffState : 'REQUESTED',
+          // SMS AI remains off — route to staff, especially booking-intent replies.
+          handoffState: conv.aiPaused
+            ? conv.handoffState
+            : bookingIntent
+              ? 'REQUESTED'
+              : conv.handoffState === 'NONE'
+                ? 'REQUESTED'
+                : conv.handoffState,
         },
       });
+      if (recentCampaign?.campaignId) {
+        await this.prisma.analyticsEvent
+          .create({
+            data: {
+              tenantId,
+              locationId: conv.locationId,
+              eventType: 'campaign.customer_reply',
+              conversationExternalKey: conv.externalKey,
+              properties: {
+                campaignId: recentCampaign.campaignId,
+                bookingIntent,
+              },
+            },
+          })
+          .catch(() => null);
+      }
     } else {
       this.metrics.increment('messaging.inbound.unlinked');
     }
