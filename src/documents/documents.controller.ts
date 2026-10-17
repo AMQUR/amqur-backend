@@ -1,4 +1,12 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import {
   IsEmail,
   IsOptional,
@@ -44,6 +52,28 @@ export class DocumentsController {
       signerEmail: body.signerEmail ?? null,
       signerName: body.signerName ?? null,
       idempotencyKey: body.idempotencyKey ?? null,
+    });
+  }
+
+  /** Poll envelope status (manager+); fail-closed without live e-sign provider. */
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('sign/status')
+  envelopeStatus(
+    @CurrentUser() u: AuthUser,
+    @Query('envelopeId') envelopeId?: string,
+    @Query('locationId') locationId?: string,
+  ) {
+    assertStaffRole(u);
+    const id = envelopeId?.trim();
+    if (!id || id.length > 128) {
+      throw new BadRequestException('envelopeId is required (max 128 chars)');
+    }
+    const tenantId = resolveTenantId(u);
+    const scopedLocation = resolveLocationScope(u, locationId);
+    return this.docSigning.getEnvelopeStatus({
+      tenantId,
+      locationId: scopedLocation ?? locationId ?? null,
+      envelopeId: id,
     });
   }
 }

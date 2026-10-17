@@ -19,6 +19,7 @@ import { ActionPages } from './pages/ActionPages';
 import { SoldDeals } from './pages/SoldDeals';
 import { Reviews } from './pages/Reviews';
 import { CallQa } from './pages/CallQa';
+import { DocumentSigning } from './pages/DocumentSigning';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -32,6 +33,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'sold-deals', label: 'Sold deals', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'reviews', label: 'Reviews (GBP)', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'call-qa', label: 'Call QA', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
+  { id: 'document-signing', label: 'Document signing', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'spotlights', label: 'Spotlights' },
   { id: 'integrations', label: 'Integrations', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'settings', label: 'Rooftop settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
@@ -110,6 +112,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'sold-deals' && <SoldDeals locationId={locationId} />}
         {route === 'reviews' && <Reviews locationId={locationId} />}
         {route === 'call-qa' && <CallQa locationId={locationId} />}
+        {route === 'document-signing' && <DocumentSigning locationId={locationId} />}
         {route === 'integrations' && <Integrations />}
         {route === 'settings' && <Settings locationId={locationId} />}
         {route === 'ops' && <Ops />}
