@@ -775,14 +775,19 @@ describe('missed appointment recovery helpers', () => {
   it('detects recovery ack in appointment provenance', () => {
     expect(missedAppointmentRecoveryAcked(null)).toBe(false);
     expect(
-      missedAppointmentRecoveryAcked({ recoveryAcknowledgedAt: '2026-10-01T00:00:00.000Z' }),
+      missedAppointmentRecoveryAcked({
+        recoveryAcknowledgedAt: '2026-10-01T00:00:00.000Z',
+      }),
     ).toBe(true);
   });
 
   it('filters acked rows out of the recovery queue', () => {
     const rows = filterUnackedMissedRecoveries([
       { id: 'a1', provenance: null },
-      { id: 'a2', provenance: { recoveryAcknowledgedAt: '2026-10-01T00:00:00.000Z' } },
+      {
+        id: 'a2',
+        provenance: { recoveryAcknowledgedAt: '2026-10-01T00:00:00.000Z' },
+      },
     ]);
     expect(rows.map((r) => r.id)).toEqual(['a1']);
   });
@@ -790,7 +795,10 @@ describe('missed appointment recovery helpers', () => {
   it('builds prisma where for NO_SHOW and recent CANCELLED', () => {
     const since = new Date('2026-10-10T00:00:00.000Z');
     expect(
-      missedAppointmentRecoveryWhere({ tenantId: 'tenant-1', locationId: 'loc-1' }, since),
+      missedAppointmentRecoveryWhere(
+        { tenantId: 'tenant-1', locationId: 'loc-1' },
+        since,
+      ),
     ).toEqual({
       tenantId: 'tenant-1',
       locationId: 'loc-1',
