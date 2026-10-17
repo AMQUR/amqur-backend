@@ -7,7 +7,7 @@ import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 type Q = {
   appointments: Array<{ id: string; conversationId: string | null; locationId: string | null; type: string; status: string; requestedDate: string | null; requestedTime: string | null; requestedAt: string | null; scheduledAt: string | null; vehicleVin: string | null; serviceType: string | null; transportation: string | null; notes: string | null; availabilityVerified: boolean; provider: string; customerName: string | null; createdAt: string }>;
   finance: Array<{ id: string; conversationId: string | null; locationId: string | null; vehicleVin: string | null; downPayment: number | null; desiredPayment: number | null; creditLinkState: string; aprSource: string; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
-  parts: Array<{ id: string; conversationId: string | null; locationId: string | null; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; notes: string | null; installationRequested: boolean; createdAt: string; customerName: string | null }>;
+  parts: Array<{ id: string; conversationId: string | null; locationId: string | null; suspectedPart: string | null; partNumber: string | null; vin: string | null; vehicleYear: number | null; vehicleModel: string | null; status: string; notes: string | null; installationRequested: boolean; fitmentVerified: boolean; priceVerified: boolean; availabilityVerified: boolean; createdAt: string; customerName: string | null }>;
   trades: Array<{ id: string; conversationId: string | null; locationId: string | null; year: number | null; make: string | null; model: string | null; mileage: number | null; status: string; notes: string | null; createdAt: string; customerName: string | null }>;
   escalations: EscalationRow[];
   quotes?: Array<{ id: string; vehicleLabel: string | null; vehicleVin: string; paymentMethod: string; registrationZip: string | null; status: string; missingInputs: string[]; estimateShown: { total?: number } | null; createdAt: string; customerName: string | null }>;
@@ -104,7 +104,14 @@ export function Queues({ locationId }: { locationId: string }) {
           <Card title={`Service & appointment requests (${data.appointments?.length ?? 0})`}>
             {!data.appointments?.length ? <Empty>None awaiting staff.</Empty> : (
               <ul className="list">
-                {data.appointments.map((a) => (
+                {data.appointments.map((a) => {
+                  const openServiceAdvisor = data.escalations.some(
+                    (e) =>
+                      e.reason === 'SERVICE_ADVISOR' &&
+                      e.status === 'OPEN' &&
+                      e.conversationId === a.conversationId,
+                  );
+                  return (
                   <li key={a.id} className="stack">
                     <span className="row">
                       <span>
@@ -114,11 +121,16 @@ export function Queues({ locationId }: { locationId: string }) {
                       <Badge tone={statusTone(a.status)}>{a.status === 'REQUESTED' ? 'request' : a.status.replace(/_/g, ' ').toLowerCase()}</Badge>
                     </span>
                     <span className="row">
-                      {!a.availabilityVerified && <Badge tone="warn">not confirmed</Badge>}
+                      {!a.availabilityVerified && a.status !== 'CONFIRMED' && <Badge tone="warn">not confirmed</Badge>}
+                      {a.status === 'CONFIRMED' && <Badge tone="ok">confirmed</Badge>}
                       {(a.serviceType || a.vehicleVin) && <Badge tone="info">{a.serviceType ?? a.vehicleVin}</Badge>}
                       {a.transportation && <Badge tone="neutral">{a.transportation}</Badge>}
                       {a.provider !== 'NONE' && <Badge tone="ok">{a.provider}</Badge>}
+                      {openServiceAdvisor && <Badge tone="warn">service advisor handoff</Badge>}
                       <span className="muted small">{ago(a.createdAt)}</span>
+                      {a.conversationId && (
+                        <a className="small" href={`#/inbox?conversation=${a.conversationId}`}>Open inbox</a>
+                      )}
                     </span>
                     <AppointmentRequestActions
                       appointmentId={a.id}
@@ -127,10 +139,12 @@ export function Queues({ locationId }: { locationId: string }) {
                       notes={a.notes}
                       requestedAt={a.requestedAt}
                       locationId={locationId || a.locationId || ''}
+                      openServiceAdvisor={openServiceAdvisor}
                       onUpdated={() => void reload()}
                     />
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             )}
           </Card>
@@ -150,7 +164,16 @@ export function Queues({ locationId }: { locationId: string }) {
                       <span>{p.suspectedPart ?? p.partNumber ?? 'Parts request'} · {[p.vehicleYear, p.vehicleModel].filter(Boolean).join(' ')} {p.customerName ? `· ${p.customerName}` : ''}</span>
                       <Badge tone={statusTone(p.status)}>{p.status.replace(/_/g, ' ').toLowerCase()}</Badge>
                     </span>
-                    <span className="row">{!p.vin && !p.partNumber && <Badge tone="warn">needs VIN</Badge>}{p.installationRequested && <Badge tone="info">install</Badge>}{openPartsAdvisor && <Badge tone="warn">advisor handoff</Badge>}<span className="muted small">{ago(p.createdAt)}</span></span>
+                    <span className="row">
+                      {!p.vin && !p.partNumber && <Badge tone="warn">needs VIN</Badge>}
+                      {!p.fitmentVerified && <Badge tone="warn">fitment unverified</Badge>}
+                      {p.status === 'QUOTED' && !p.priceVerified && <Badge tone="warn">quote not verified</Badge>}
+                      {p.priceVerified && <Badge tone="ok">price verified</Badge>}
+                      {p.availabilityVerified && <Badge tone="ok">stock verified</Badge>}
+                      {p.installationRequested && <Badge tone="info">install</Badge>}
+                      {openPartsAdvisor && <Badge tone="warn">advisor handoff</Badge>}
+                      <span className="muted small">{ago(p.createdAt)}</span>
+                    </span>
                     <PartsActions
                       partsId={p.id}
                       conversationId={p.conversationId}
@@ -276,6 +299,7 @@ function AppointmentRequestActions(props: {
   notes: string | null;
   requestedAt: string | null;
   locationId: string;
+  openServiceAdvisor?: boolean;
   onUpdated: () => void;
 }) {
   const [status, setStatus] = useState(props.status);
@@ -287,7 +311,7 @@ function AppointmentRequestActions(props: {
   const [convNote, setConvNote] = useState('');
   const [msg, setMsg] = useState<string | null>(null);
   const locQ = props.locationId ? `?locationId=${encodeURIComponent(props.locationId)}` : '';
-  const patch = async (body: { status?: string; notes?: string; scheduledAt?: string }) => {
+  const patch = async (body: { status?: string; notes?: string; scheduledAt?: string; acknowledgeEscalation?: boolean }) => {
     setMsg(null);
     try {
       await api(`/ops/appointment-requests/${props.appointmentId}${locQ}`, {
@@ -351,6 +375,9 @@ function AppointmentRequestActions(props: {
         <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Staff-only — not repair-order status" />
       </label>
       <button className="btn btn--ghost" disabled={notes === (props.notes ?? '')} onClick={() => void patch({ notes })}>Save notes</button>
+      {props.openServiceAdvisor && (
+        <button className="btn btn--ghost" onClick={() => void patch({ acknowledgeEscalation: true })}>Acknowledge service advisor handoff</button>
+      )}
       {props.conversationId && (
         <span className="row">
           <input value={convNote} onChange={(e) => setConvNote(e.target.value)} placeholder="Conversation note (inbox)" aria-label="Conversation note" />

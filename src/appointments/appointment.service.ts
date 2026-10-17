@@ -333,6 +333,13 @@ export class AppointmentService {
       return row;
     });
     this.metrics.increment('appointments.requested');
+    if (
+      input.type === 'SERVICE' &&
+      input.conversationId &&
+      appointment.status === AppointmentStatus.REQUESTED
+    ) {
+      await this.notifyServiceAdvisor(appointment).catch(() => undefined);
+    }
 
     // Authoritative scheduler (if one is explicitly enabled) — confirmation only from provider.
     let outcome: 'requested' | 'pending' | 'confirmed' = 'requested';
@@ -681,6 +688,7 @@ export class AppointmentService {
       status?: AppointmentStatus;
       notes?: string | null;
       scheduledAt?: string;
+      acknowledgeEscalation?: boolean;
     },
   ): Promise<Appointment> {
     const row = await this.prisma.appointment.findFirst({
@@ -719,7 +727,32 @@ export class AppointmentService {
       });
     }
 
-    if (notesChanged || (patch.status !== undefined && patch.status !== row.status)) {
+    if (patch.acknowledgeEscalation && row.conversationId) {
+      const open = await this.prisma.escalation.findMany({
+        where: {
+          tenantId,
+          conversationId: row.conversationId,
+          reason: 'SERVICE_ADVISOR',
+          status: 'OPEN',
+        },
+      });
+      const match = open.filter((e) => {
+        const meta = e.metadata as { appointmentId?: string } | null;
+        return !meta?.appointmentId || meta.appointmentId === row.id;
+      });
+      if (match.length) {
+        await this.prisma.escalation.updateMany({
+          where: { id: { in: match.map((e) => e.id) } },
+          data: { status: 'ACKNOWLEDGED' },
+        });
+      }
+    }
+
+    if (
+      notesChanged ||
+      (patch.status !== undefined && patch.status !== row.status) ||
+      patch.acknowledgeEscalation
+    ) {
       await this.prisma.auditLog
         .create({
           data: {
@@ -731,6 +764,7 @@ export class AppointmentService {
             metadata: {
               status: patch.status ?? row.status,
               notesUpdated: notesChanged,
+              escalationAcknowledged: !!patch.acknowledgeEscalation,
               type: row.type,
             },
           },
@@ -739,6 +773,66 @@ export class AppointmentService {
     }
 
     return updated;
+  }
+
+  /**
+   * Queue a service advisor escalation when a service appointment is captured.
+   * Never claims the slot is confirmed — staff must verify with the customer/DMS.
+   */
+  private async notifyServiceAdvisor(
+    row: Pick<
+      Appointment,
+      | 'id'
+      | 'tenantId'
+      | 'locationId'
+      | 'conversationId'
+      | 'type'
+      | 'requestedDate'
+      | 'requestedTime'
+      | 'serviceType'
+      | 'status'
+    >,
+  ) {
+    if (row.type !== 'SERVICE' || !row.conversationId) return;
+    if (row.status === 'CONFIRMED' || row.status === 'CANCELLED') return;
+    const open = await this.prisma.escalation.findFirst({
+      where: {
+        tenantId: row.tenantId,
+        conversationId: row.conversationId,
+        status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
+        reason: 'SERVICE_ADVISOR',
+      },
+    });
+    if (open) return;
+    const when = [row.requestedDate, row.requestedTime].filter(Boolean).join(' ');
+    const need = row.serviceType ? ` · ${row.serviceType}` : '';
+    await this.prisma.escalation.create({
+      data: {
+        tenantId: row.tenantId,
+        locationId: row.locationId,
+        conversationId: row.conversationId,
+        reason: 'SERVICE_ADVISOR',
+        urgency: 'NORMAL',
+        summary: `Service appointment request needs confirmation${need}${when ? ` · ${when}` : ''}`.slice(
+          0,
+          280,
+        ),
+        metadata: {
+          appointmentId: row.id,
+          availabilityVerified: false,
+        },
+      },
+    });
+    await this.prisma.analyticsEvent
+      .create({
+        data: {
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          eventType: 'service.advisor_queued',
+          properties: { appointmentId: row.id },
+        },
+      })
+      .catch(() => null);
   }
 
   async list(

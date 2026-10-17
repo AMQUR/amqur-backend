@@ -136,6 +136,7 @@ class AppointmentRequestPatchDto {
   @IsOptional() @IsString() @MaxLength(4000) notes?: string;
   /** ISO instant when confirming; defaults to requestedAt if omitted. */
   @IsOptional() @IsString() @MaxLength(40) scheduledAt?: string;
+  @IsOptional() @IsBoolean() acknowledgeEscalation?: boolean;
 }
 
 const REPLY_FEEDBACK = [
@@ -255,6 +256,21 @@ export class OperationsController {
     return this.ops.dailyBrief(this.scope(u, t, l));
   }
 
+  /** Keyword explain over verified ops metrics only (manager+). */
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get('executive/explain')
+  executiveExplain(
+    @CurrentUser() u: AuthUser,
+    @Query('q') q?: string,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.executiveExplain(
+      this.scope(u, t, l),
+      (q ?? '').slice(0, 200),
+    );
+  }
+
   /** Assignable STAFF/MANAGER for manual lead ownership (Command Center). */
   @Roles(...STAFF)
   @Get('users')
@@ -337,6 +353,7 @@ export class OperationsController {
         status: b.status,
         notes: b.notes,
         scheduledAt: b.scheduledAt,
+        acknowledgeEscalation: b.acknowledgeEscalation,
       },
     );
   }

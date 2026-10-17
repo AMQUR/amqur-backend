@@ -5,11 +5,144 @@ import {
   STAFF_APPOINTMENT_QUEUE_STATUSES,
 } from './appointment.service';
 
+describe('AppointmentService.notifyServiceAdvisor (via request)', () => {
+  const createdRow = {
+    id: 'appt-svc-1',
+    tenantId: 'tenant-1',
+    locationId: 'loc-1',
+    conversationId: 'conv-1',
+    type: 'SERVICE',
+    status: AppointmentStatus.REQUESTED,
+    requestedDate: '2026-10-20',
+    requestedTime: '09:00',
+    serviceType: 'oil change',
+  };
+
+  it('queues SERVICE_ADVISOR escalation for new service appointment requests', async () => {
+    const prisma = {
+      appointment: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn(),
+        update: jest.fn(),
+      },
+      outboxEvent: { create: jest.fn().mockResolvedValue({}) },
+      escalation: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'esc-1' }),
+      },
+      analyticsEvent: { create: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn(async (fn) =>
+        fn({
+          appointment: {
+            create: jest.fn().mockResolvedValue(createdRow),
+          },
+          outboxEvent: { create: jest.fn().mockResolvedValue({}) },
+        }),
+      ),
+    };
+    const hours = {
+      getProfile: jest.fn().mockResolvedValue({
+        timezone: 'America/Chicago',
+        verified: false,
+      }),
+    };
+    const registry = { resolve: jest.fn().mockResolvedValue(null) };
+    const now = new Date('2026-10-01T12:00:00.000Z');
+    const svc = new AppointmentService(
+      prisma as never,
+      hours as never,
+      registry as never,
+      {} as never,
+      { increment: jest.fn() } as never,
+    );
+
+    const res = await svc.request({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      type: 'SERVICE',
+      when: {
+        date: { year: 2026, month: 10, day: 20 },
+        time: 9 * 60,
+        phrase: 'Friday 9am',
+      },
+      serviceType: 'oil change',
+      source: 'chat',
+      now,
+    });
+
+    expect(res.status).toBe('saved');
+    expect(prisma.escalation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reason: 'SERVICE_ADVISOR',
+        conversationId: 'conv-1',
+        metadata: expect.objectContaining({
+          appointmentId: 'appt-svc-1',
+          availabilityVerified: false,
+        }),
+      }),
+    });
+  });
+
+  it('does not queue SERVICE_ADVISOR for sales appointments', async () => {
+    const salesRow = { ...createdRow, id: 'appt-sales', type: 'SALES' };
+    const prisma = {
+      appointment: { findUnique: jest.fn().mockResolvedValue(null) },
+      outboxEvent: { create: jest.fn().mockResolvedValue({}) },
+      escalation: {
+        findFirst: jest.fn(),
+        create: jest.fn().mockResolvedValue({ id: 'esc-1' }),
+      },
+      analyticsEvent: { create: jest.fn().mockResolvedValue({}) },
+      $transaction: jest.fn(async (fn) =>
+        fn({
+          appointment: { create: jest.fn().mockResolvedValue(salesRow) },
+          outboxEvent: { create: jest.fn().mockResolvedValue({}) },
+        }),
+      ),
+    };
+    const hours = {
+      getProfile: jest.fn().mockResolvedValue({
+        timezone: 'America/Chicago',
+        verified: false,
+      }),
+    };
+    const registry = { resolve: jest.fn().mockResolvedValue(null) };
+    const now = new Date('2026-10-01T12:00:00.000Z');
+    const svc = new AppointmentService(
+      prisma as never,
+      hours as never,
+      registry as never,
+      {} as never,
+      { increment: jest.fn() } as never,
+    );
+
+    await svc.request({
+      tenantId: 'tenant-1',
+      conversationId: 'conv-1',
+      type: 'SALES',
+      when: {
+        date: { year: 2026, month: 10, day: 20 },
+        time: 10 * 60,
+        phrase: 'visit',
+      },
+      source: 'chat',
+      now,
+    });
+
+    expect(prisma.escalation.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('AppointmentService.updateStaff', () => {
   const prisma = {
     appointment: {
       findFirst: jest.fn(),
       update: jest.fn(),
+    },
+    escalation: {
+      findMany: jest.fn().mockResolvedValue([]),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
   };
@@ -28,6 +161,7 @@ describe('AppointmentService.updateStaff', () => {
     prisma.appointment.findFirst.mockResolvedValue({
       id: 'appt-1',
       tenantId: 'tenant-1',
+      conversationId: 'conv-1',
       type: 'SERVICE',
       status: AppointmentStatus.REQUESTED,
       requestedAt: new Date('2026-10-17T15:00:00.000Z'),
@@ -98,6 +232,19 @@ describe('AppointmentService.updateStaff', () => {
         notes: 'x',
       }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('acknowledges matching SERVICE_ADVISOR escalation', async () => {
+    prisma.escalation.findMany.mockResolvedValue([
+      { id: 'esc-1', metadata: { appointmentId: 'appt-1' } },
+    ]);
+    await svc.updateStaff('tenant-1', 'loc-1', 'appt-1', 'user-1', {
+      acknowledgeEscalation: true,
+    });
+    expect(prisma.escalation.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ['esc-1'] } },
+      data: { status: 'ACKNOWLEDGED' },
+    });
   });
 });
 
