@@ -55,5 +55,7 @@ describe('seedDisabledAppointmentReminderCampaign', () => {
     );
     const createArg = upsert.mock.calls[0][0].create;
     expect(createArg.enabled).toBe(false);
+    const updateArg = upsert.mock.calls[0][0].update;
+    expect(updateArg).not.toHaveProperty('enabled');
   });
 });

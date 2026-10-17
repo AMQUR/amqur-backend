@@ -4,7 +4,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import {
+  IntegrationProvider,
+  Prisma,
+  WebhookInboxStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { upgradeState } from '../chat/memory/journey.store';
 import { OutboxService } from '../integrations/core/outbox.service';
@@ -1046,6 +1050,22 @@ export class OperationsService {
       scope.tenantId,
       scope.locationId,
     );
+    const [metaInboxReceived, metaInboxFailed] = await Promise.all([
+      this.prisma.webhookInbox.count({
+        where: {
+          tenantId: scope.tenantId,
+          provider: IntegrationProvider.META,
+          status: WebhookInboxStatus.RECEIVED,
+        },
+      }),
+      this.prisma.webhookInbox.count({
+        where: {
+          tenantId: scope.tenantId,
+          provider: IntegrationProvider.META,
+          status: WebhookInboxStatus.FAILED,
+        },
+      }),
+    ]);
     return {
       tekion: {
         status: tekionHealth.status,
@@ -1091,6 +1111,19 @@ export class OperationsService {
       crmWebhook: {
         configured: !!process.env.CRM_WEBHOOK_URL,
         signed: !!process.env.CRM_WEBHOOK_SIGNING_SECRET,
+      },
+      metaLeadAds: {
+        inbox: {
+          pendingMaterialization: metaInboxReceived,
+          failed: metaInboxFailed,
+        },
+        webhookIntakeConfigured: !!(
+          process.env.META_APP_SECRET?.trim() &&
+          process.env.META_LEAD_WEBHOOK_TENANT_ID?.trim()
+        ),
+        graphAccessTokenConfigured:
+          !!process.env.META_GRAPH_ACCESS_TOKEN?.trim(),
+        note: 'Webhook intake stores signed leadgen events in WebhookInbox only. Materializer is fail-closed (no invented PII); META_GRAPH_ACCESS_TOKEN is required to fetch full field_data from Graph.',
       },
     };
   }

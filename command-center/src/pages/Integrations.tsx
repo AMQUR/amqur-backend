@@ -9,6 +9,12 @@ type Integ = {
   messaging: Record<string, string>;
   errorMonitoring: { sentryConfigured: boolean };
   crmWebhook: { configured: boolean; signed: boolean };
+  metaLeadAds?: {
+    inbox: { pendingMaterialization: number; failed: number };
+    webhookIntakeConfigured: boolean;
+    graphAccessTokenConfigured: boolean;
+    note: string;
+  };
 };
 
 export function Integrations() {
@@ -31,6 +37,39 @@ export function Integrations() {
               <p key={c.id} className="small">Connection {c.config.environment ?? 'unset'} · dealer {c.config.dealerId ?? '—'} · credential {c.credentialConfigured ? 'stored' : 'missing'} · {c.enabled ? 'enabled' : 'disabled'} · {c.liveReady ? 'live-ready' : 'not live-ready'}</p>
             ))}
           </Card>
+          {data.metaLeadAds && (
+            <Card title="Meta Lead Ads">
+              <p>
+                Meta Lead Ads inbox:{' '}
+                <Badge tone={data.metaLeadAds.inbox.pendingMaterialization ? 'warn' : 'ok'}>
+                  {data.metaLeadAds.inbox.pendingMaterialization} pending materialization
+                </Badge>
+                {data.metaLeadAds.inbox.failed > 0 && (
+                  <>
+                    {' · '}
+                    <Badge tone="bad">{data.metaLeadAds.inbox.failed} failed</Badge>
+                  </>
+                )}
+              </p>
+              <ul className="kv">
+                <li>
+                  <span>Webhook intake</span>
+                  <Badge tone={data.metaLeadAds.webhookIntakeConfigured ? 'ok' : 'neutral'}>
+                    {data.metaLeadAds.webhookIntakeConfigured ? 'env configured' : 'not configured'}
+                  </Badge>
+                </li>
+                <li>
+                  <span>Graph access token</span>
+                  <Badge tone={data.metaLeadAds.graphAccessTokenConfigured ? 'ok' : 'warn'}>
+                    {data.metaLeadAds.graphAccessTokenConfigured
+                      ? 'configured'
+                      : 'missing — full PII fetch unavailable'}
+                  </Badge>
+                </li>
+              </ul>
+              <p className="muted small">{data.metaLeadAds.note}</p>
+            </Card>
+          )}
           <div className="grid2">
             <Card title="AI providers">
               <ul className="kv">

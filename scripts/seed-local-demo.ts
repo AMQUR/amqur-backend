@@ -13,10 +13,13 @@
  *  - SIMULATED inventory (source = synthetic_demo): VINs contain the letter "O", which a real
  *    VIN can never contain; no photos (no stock imagery is ever attached to a fixture)
  *  - an ILLUSTRATIVE financial policy (no tax/fee rules → OTD totals are staff-quoted)
+ *  - a **disabled** appointment-reminder SMS campaign (dry-run preview in Command Center;
+ *    does not enable `automatedFollowup` or send live SMS)
  *
  * It never configures a credit-application destination; use `npm run credit:destination`.
  */
 import { PrismaClient, Role } from '@prisma/client';
+import { seedDisabledAppointmentReminderCampaign } from '../src/messaging/seed-appointment-reminder-campaign';
 import * as bcrypt from 'bcryptjs';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -111,6 +114,12 @@ async function main() {
     },
   });
 
+  const appointmentReminderCampaign =
+    await seedDisabledAppointmentReminderCampaign(prisma, {
+      tenantId: tenant.id,
+      locationId: location.id,
+    });
+
   const now = new Date();
   for (const v of VEHICLES) {
     const data = {
@@ -183,6 +192,12 @@ async function main() {
         inventory: 'SIMULATED (source=synthetic_demo)',
         hours: 'synthetic demo hours (labeled to customers)',
         appointments: 'REQUEST records enabled',
+        appointmentReminderCampaign: {
+          id: appointmentReminderCampaign.id,
+          enabled: appointmentReminderCampaign.enabled,
+          trigger: appointmentReminderCampaign.trigger,
+          note: 'disabled bootstrap playbook — use Campaigns preview; no live SMS',
+        },
         creditApplication:
           'not configured by seed — see npm run credit:destination',
         staff,
