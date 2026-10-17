@@ -1,7 +1,22 @@
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-const ASSIGNABLE: Role[] = [Role.STAFF, Role.MANAGER];
+export const LEAD_ASSIGNABLE_ROLES: Role[] = [Role.STAFF, Role.MANAGER];
+
+/** Active STAFF/MANAGER eligible for a lead at this rooftop (or tenant-wide when location is null). */
+export function assignableStaffWhere(
+  tenantId: string,
+  leadLocationId?: string | null,
+) {
+  return {
+    tenantId,
+    isActive: true,
+    role: { in: LEAD_ASSIGNABLE_ROLES },
+    ...(leadLocationId
+      ? { OR: [{ locationId: leadLocationId }, { locationId: null }] }
+      : {}),
+  };
+}
 
 /**
  * Least-open-load round-robin among active staff at the rooftop (or tenant-wide
@@ -16,7 +31,7 @@ export async function pickRoundRobinAssignee(
     where: {
       tenantId,
       isActive: true,
-      role: { in: ASSIGNABLE },
+      role: { in: LEAD_ASSIGNABLE_ROLES },
       OR: locationId
         ? [{ locationId }, { locationId: null }]
         : undefined,

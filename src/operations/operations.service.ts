@@ -58,6 +58,7 @@ import { mergePolicy } from '../finance/financial-assumption-policy';
 import { isValidTimeZone, parseIsoDate } from '../common/time/zoned-time';
 import { redactCreditSensitive } from '../common/security/sensitive-data';
 import { InventoryEngine } from '../chat/engines/inventory.engine';
+import { assignableStaffWhere } from '../leads/round-robin';
 
 type Scope = { tenantId: string; locationId: string | null };
 
@@ -100,6 +101,22 @@ export class OperationsService {
 
   private loc(scope: Scope) {
     return scope.locationId ? { locationId: scope.locationId } : {};
+  }
+
+  /** Active STAFF/MANAGER for lead assignment dropdowns — same scope rules as round-robin. */
+  listAssignableStaff(scope: Scope) {
+    return this.prisma.user.findMany({
+      where: assignableStaffWhere(scope.tenantId, scope.locationId),
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        role: true,
+        locationId: true,
+      },
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+    });
   }
 
   // ───────────── inbox

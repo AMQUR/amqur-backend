@@ -255,6 +255,17 @@ export class OperationsController {
     return this.ops.dailyBrief(this.scope(u, t, l));
   }
 
+  /** Assignable STAFF/MANAGER for manual lead ownership (Command Center). */
+  @Roles(...STAFF)
+  @Get('users')
+  assignableUsers(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.listAssignableStaff(this.scope(u, t, l));
+  }
+
   @Roles(...STAFF)
   @Get('queues')
   queues(

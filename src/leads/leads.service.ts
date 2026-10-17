@@ -1,4 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { LeadStage, LeadStatus, Prisma } from '@prisma/client';
@@ -7,7 +12,10 @@ import {
   normalizePhone,
   pickUniqueMatch,
 } from './contact-identity';
-import { resolveNewLeadAssignee } from './round-robin';
+import {
+  assignableStaffWhere,
+  resolveNewLeadAssignee,
+} from './round-robin';
 
 @Injectable()
 export class LeadsService {
@@ -16,6 +24,102 @@ export class LeadsService {
     private readonly prisma: PrismaService,
     private readonly flags: FeatureFlagsService,
   ) {}
+
+  /** Manual assign / unassign — validated against tenant + lead rooftop; audited. */
+  async assignManual(
+    tenantId: string,
+    locationScope: string | null,
+    leadId: string,
+    actorUserId: string,
+    assignedUserId: string | null,
+  ) {
+    const lead = await this.prisma.lead.findFirst({
+      where: {
+        id: leadId,
+        tenantId,
+        ...(locationScope ? { locationId: locationScope } : {}),
+      },
+      select: {
+        id: true,
+        locationId: true,
+        assignedUserId: true,
+        conversationId: true,
+      },
+    });
+    if (!lead) throw new NotFoundException('Lead not found');
+
+    const next = assignedUserId?.trim() ? assignedUserId.trim() : null;
+    if (next) {
+      const assignee = await this.prisma.user.findFirst({
+        where: {
+          id: next,
+          ...assignableStaffWhere(tenantId, lead.locationId),
+        },
+        select: { id: true },
+      });
+      if (!assignee) {
+        throw new BadRequestException(
+          'Assignee must be an active staff or manager for this rooftop',
+        );
+      }
+    }
+
+    if (lead.assignedUserId === next) {
+      return this.prisma.lead.findUniqueOrThrow({
+        where: { id: lead.id },
+        include: {
+          location: {
+            select: { id: true, name: true, slug: true },
+          },
+          conversation: {
+            select: {
+              id: true,
+              externalKey: true,
+              lastActivityAt: true,
+              channel: true,
+            },
+          },
+        },
+      });
+    }
+
+    const updated = await this.prisma.lead.update({
+      where: { id: lead.id },
+      data: { assignedUserId: next },
+      include: {
+        location: {
+          select: { id: true, name: true, slug: true },
+        },
+        conversation: {
+          select: {
+            id: true,
+            externalKey: true,
+            lastActivityAt: true,
+            channel: true,
+          },
+        },
+      },
+    });
+
+    await this.prisma.auditLog
+      .create({
+        data: {
+          tenantId,
+          userId: actorUserId,
+          action: 'lead.assign',
+          resource: 'Lead',
+          resourceId: lead.id,
+          metadata: {
+            fromUserId: lead.assignedUserId,
+            toUserId: next,
+            locationId: lead.locationId,
+          },
+        },
+      })
+      .catch(() => undefined);
+
+    return updated;
+  }
 
   list(tenantId: string, opts?: { status?: LeadStatus; take?: number }) {
     return this.prisma.lead.findMany({

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { api } from '../api';
 import { ago, fmtDate, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
@@ -30,14 +30,41 @@ type LeadRow = {
   } | null;
 };
 
+type AssignableUser = {
+  id: string;
+  email: string;
+  firstName: string | null;
+  lastName: string | null;
+  role: string;
+  locationId: string | null;
+};
+
 function leadName(l: LeadRow) {
   return [l.firstName, l.lastName].filter(Boolean).join(' ') || 'Lead';
 }
 
+function staffLabel(u: AssignableUser) {
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ');
+  return name ? `${name} (${u.role})` : `${u.email} (${u.role})`;
+}
+
 export function Leads({ locationId }: { locationId: string }) {
   const [status, setStatus] = useState<'' | ActiveStatus>('');
+  const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [assignError, setAssignError] = useState<string | null>(null);
   const qs = status ? `?status=${status}` : '';
   const { data, error, reload } = useAsync(() => api<LeadRow[]>(`/leads${qs}`), [qs]);
+  const staffQs = locationId ? `?locationId=${encodeURIComponent(locationId)}` : '';
+  const staff = useAsync(
+    () => api<AssignableUser[]>(`/ops/users${staffQs}`),
+    [staffQs],
+  );
+
+  const staffById = useMemo(
+    () => new Map((staff.data ?? []).map((u) => [u.id, u])),
+    [staff.data],
+  );
+
   const rows = useMemo(() => {
     const list = data ?? [];
     const active = list.filter((l) =>
@@ -55,11 +82,35 @@ export function Leads({ locationId }: { locationId: string }) {
     ? rows.filter((l) => l.status === status)
     : rows;
 
+  const assignLead = useCallback(
+    async (leadId: string, assignedUserId: string | null) => {
+      setAssignError(null);
+      setAssigningId(leadId);
+      try {
+        const body = JSON.stringify({ assignedUserId });
+        const locQs = locationId
+          ? `?locationId=${encodeURIComponent(locationId)}`
+          : '';
+        await api(`/leads/${leadId}/assign${locQs}`, {
+          method: 'PATCH',
+          body,
+        });
+        await reload();
+      } catch (e) {
+        setAssignError(e instanceof Error ? e.message : 'Assign failed');
+      } finally {
+        setAssigningId(null);
+      }
+    },
+    [locationId, reload],
+  );
+
   return (
     <div className="page">
       <h1>Leads</h1>
       <p className="muted">
-        Open pipeline from <code>GET /leads</code>. CRM sync shows the real backend state only — nothing is marked synced unless the server says so.
+        Open pipeline from <code>GET /leads</code>. Assign owners via{' '}
+        <code>PATCH /leads/:id/assign</code> (audited). CRM sync shows the real backend state only.
       </p>
       <div className="row">
         <select
@@ -78,7 +129,8 @@ export function Leads({ locationId }: { locationId: string }) {
           Refresh
         </button>
       </div>
-      <ErrorNote error={error} />
+      <ErrorNote error={error ?? assignError} />
+      <ErrorNote error={staff.error} />
       <Card title={`${filtered.length} lead${filtered.length === 1 ? '' : 's'}`}>
         {!filtered.length ? (
           <Empty>No active leads for this filter.</Empty>
@@ -129,11 +181,28 @@ export function Leads({ locationId }: { locationId: string }) {
                   </td>
                   <td>{l.location?.name ?? '—'}</td>
                   <td>
-                    {l.assignedUserId ? (
-                      <code className="small">{l.assignedUserId}</code>
-                    ) : (
-                      <span className="muted small">Unassigned</span>
-                    )}
+                    <select
+                      className="small"
+                      value={l.assignedUserId ?? ''}
+                      disabled={assigningId === l.id || staff.loading}
+                      aria-label={`Assign ${leadName(l)}`}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        void assignLead(l.id, v ? v : null);
+                      }}
+                    >
+                      <option value="">Unassigned</option>
+                      {(staff.data ?? []).map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {staffLabel(u)}
+                        </option>
+                      ))}
+                      {l.assignedUserId && !staffById.has(l.assignedUserId) && (
+                        <option value={l.assignedUserId}>
+                          {l.assignedUserId} (not in list)
+                        </option>
+                      )}
+                    </select>
                   </td>
                   <td className="muted small" title={fmtDate(l.updatedAt)}>
                     {ago(l.updatedAt)}
@@ -151,9 +220,6 @@ export function Leads({ locationId }: { locationId: string }) {
           </table>
         )}
       </Card>
-      <p className="muted small">
-        Manual lead reassignment is not exposed by the API yet; assignee reflects round-robin or existing server data only.
-      </p>
     </div>
   );
 }
