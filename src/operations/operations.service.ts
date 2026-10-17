@@ -864,7 +864,7 @@ export class OperationsService {
       {
         key: 'finance_open',
         count: overview.attention.financeOpen,
-        href: '#/queues',
+        href: '#/finance',
       },
       {
         key: 'trades_open',
@@ -1100,6 +1100,159 @@ export class OperationsService {
     };
   }
 
+  /**
+   * Customer lifecycle rollup from Lead, Appointment, AnalyticsEvent, and CustomerSurvey
+   * only — sold attribution requires CONVERTED leads and/or deal.sold_recorded events.
+   */
+  async customerLifecycle(scope: Scope) {
+    const base = { tenantId: scope.tenantId, ...this.loc(scope) };
+    const surveyFollowUpsP =
+      this.surveyProviderConnected() && this.prisma.customerSurvey
+        ? Promise.all([
+            this.prisma.customerSurvey.count({
+              where: {
+                ...base,
+                kind: 'SERVICE',
+                followUpStatus: { in: ['PENDING', 'ACKNOWLEDGED'] },
+              },
+            }),
+            this.prisma.customerSurvey.count({
+              where: {
+                ...base,
+                kind: 'SALES',
+                followUpStatus: { in: ['PENDING', 'ACKNOWLEDGED'] },
+              },
+            }),
+          ])
+        : Promise.resolve([0, 0] as [number, number]);
+
+    const [
+      leadNew,
+      leadQualified,
+      leadConverted,
+      dealSoldRecorded,
+      apptByStatus,
+      serviceApptByStatus,
+      [serviceFollowUpsOpen, salesFollowUpsOpen],
+    ] = await Promise.all([
+      this.prisma.lead.count({
+        where: { ...base, status: { in: ['OPEN', 'CONTACTED'] } },
+      }),
+      this.prisma.lead.count({ where: { ...base, status: 'QUALIFIED' } }),
+      this.prisma.lead.count({ where: { ...base, status: 'CONVERTED' } }),
+      this.prisma.analyticsEvent.count({
+        where: { ...base, eventType: 'deal.sold_recorded' },
+      }),
+      this.prisma.appointment.groupBy({
+        by: ['status'],
+        where: base,
+        _count: { _all: true },
+      }),
+      this.prisma.appointment.groupBy({
+        by: ['status'],
+        where: { ...base, type: 'SERVICE' },
+        _count: { _all: true },
+      }),
+      surveyFollowUpsP,
+    ]);
+
+    const apptCounts = Object.fromEntries(
+      apptByStatus.map((r) => [r.status, r._count._all]),
+    ) as Record<string, number>;
+    const serviceApptCounts = Object.fromEntries(
+      serviceApptByStatus.map((r) => [r.status, r._count._all]),
+    ) as Record<string, number>;
+
+    const apptActive = (counts: Record<string, number>) =>
+      (counts.REQUESTED ?? 0) +
+      (counts.PENDING_CONFIRMATION ?? 0) +
+      (counts.CONFIRMED ?? 0) +
+      (counts.RESCHEDULED ?? 0);
+
+    const serviceActive = apptActive(serviceApptCounts);
+
+    const stages: Array<{ key: string; label: string; count: number; href: string }> =
+      [
+        {
+          key: 'leads_new',
+          label: 'New leads',
+          count: leadNew,
+          href: '#/leads',
+        },
+        {
+          key: 'leads_qualified',
+          label: 'Qualified leads',
+          count: leadQualified,
+          href: '#/leads?status=QUALIFIED',
+        },
+        {
+          key: 'leads_converted',
+          label: 'Converted leads',
+          count: leadConverted,
+          href: '#/leads',
+        },
+        {
+          key: 'sold_deal_recorded',
+          label: 'Sold (deal recorded)',
+          count: dealSoldRecorded,
+          href: '#/sold-deals',
+        },
+        {
+          key: 'appointments_active',
+          label: 'Active appointments',
+          count: apptActive(apptCounts),
+          href: '#/appointments',
+        },
+        {
+          key: 'service_visits_active',
+          label: 'Active service visits',
+          count: serviceActive,
+          href: '#/service',
+        },
+        {
+          key: 'service_csi_followups',
+          label: 'Service CSI follow-ups',
+          count: serviceFollowUpsOpen,
+          href: '#/surveys',
+        },
+        {
+          key: 'sales_csi_followups',
+          label: 'Sales CSI follow-ups',
+          count: salesFollowUpsOpen,
+          href: '#/surveys',
+        },
+      ];
+
+    return {
+      source: 'platform_records' as const,
+      note: 'Counts use persisted Lead, Appointment, AnalyticsEvent (deal.sold_recorded), and CustomerSurvey follow-up rows only. New leads = OPEN + CONTACTED. Sold is never inferred without CONVERTED and/or deal.sold_recorded evidence.',
+      leads: {
+        new: leadNew,
+        qualified: leadQualified,
+        converted: leadConverted,
+      },
+      sold: {
+        convertedLeads: leadConverted,
+        dealSoldRecorded,
+      },
+      appointments: {
+        byStatus: apptCounts,
+        active: apptActive(apptCounts),
+      },
+      service: {
+        appointmentsByStatus: serviceApptCounts,
+        activeVisits: serviceActive,
+        followUpsOpen: serviceFollowUpsOpen,
+      },
+      surveys: {
+        serviceFollowUpsOpen,
+        salesFollowUpsOpen,
+        available: this.surveyProviderConnected(),
+      },
+      stages,
+    };
+  }
+
   async overview(scope: Scope) {
     const base = { tenantId: scope.tenantId, ...this.loc(scope) };
     const since = new Date(Date.now() - 7 * 86_400_000);
@@ -1264,6 +1417,7 @@ export class OperationsService {
         },
       },
       since: dayStart.toISOString(),
+      lifecycle: await this.customerLifecycle(scope),
     };
   }
 

@@ -524,6 +524,55 @@ describe('OperationsService.recordReplyFeedback', () => {
   });
 });
 
+describe('OperationsService.customerLifecycle', () => {
+  it('rollup counts leads, appointments, sold events, and CSI follow-ups from real tables', async () => {
+    const prisma = {
+      lead: {
+        count: jest
+          .fn()
+          .mockResolvedValueOnce(8)
+          .mockResolvedValueOnce(3)
+          .mockResolvedValueOnce(2),
+      },
+      analyticsEvent: { count: jest.fn().mockResolvedValue(4) },
+      appointment: {
+        groupBy: jest
+          .fn()
+          .mockResolvedValueOnce([
+            { status: 'REQUESTED', _count: { _all: 5 } },
+            { status: 'CONFIRMED', _count: { _all: 2 } },
+          ])
+          .mockResolvedValueOnce([
+            { status: 'CONFIRMED', _count: { _all: 1 } },
+          ]),
+      },
+      customerSurvey: {
+        count: jest.fn().mockResolvedValueOnce(2).mockResolvedValueOnce(1),
+      },
+    };
+    const svc = makeOperationsService(prisma);
+    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(true);
+
+    const r = await svc.customerLifecycle({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+    });
+
+    expect(r.leads).toEqual({ new: 8, qualified: 3, converted: 2 });
+    expect(r.sold).toEqual({ convertedLeads: 2, dealSoldRecorded: 4 });
+    expect(r.appointments.active).toBe(7);
+    expect(r.service.activeVisits).toBe(1);
+    expect(r.surveys.serviceFollowUpsOpen).toBe(2);
+    expect(r.stages.find((s) => s.key === 'sold_deal_recorded')?.count).toBe(4);
+    expect(r.note).toMatch(/deal\.sold_recorded/);
+    expect(prisma.analyticsEvent.count).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ eventType: 'deal.sold_recorded' }),
+      }),
+    );
+  });
+});
+
 describe('OperationsService.appointmentOutcomes', () => {
   it('returns show rate from persisted completed and no-show counts', async () => {
     const prisma = {

@@ -247,6 +247,16 @@ export class OperationsController {
   }
 
   @Roles(...STAFF)
+  @Get('customer-lifecycle')
+  customerLifecycle(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.customerLifecycle(this.scope(u, t, l));
+  }
+
+  @Roles(...STAFF)
   @Get('daily-brief')
   dailyBrief(
     @CurrentUser() u: AuthUser,
