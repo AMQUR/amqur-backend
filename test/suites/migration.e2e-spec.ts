@@ -1,5 +1,5 @@
 import { execSync } from 'child_process';
-import { PrismaClient } from '@prisma/client';
+import { IntegrationProvider, PrismaClient } from '@prisma/client';
 import * as path from 'path';
 
 /**
@@ -164,5 +164,128 @@ describe('DB migration & integrity (disposable Postgres)', () => {
     expect(first.id).toBe(second.id);
     expect(second.name).toBe('Idem Two');
     expect(second.configVersion).toBeGreaterThanOrEqual(2);
+  });
+
+  it('ConversationPlaybook unique on (tenantId, locationScope, key, version)', async () => {
+    const t = await prisma.tenant.create({
+      data: { slug: `pb-${Date.now()}`, name: 'Playbook T' },
+    });
+    const base = {
+      tenantId: t.id,
+      locationScope: '_',
+      key: 'sales-first-response',
+      title: 'Sales first touch',
+    };
+    await prisma.conversationPlaybook.create({ data: { ...base, version: 1 } });
+    await expect(
+      prisma.conversationPlaybook.create({ data: { ...base, version: 1 } }),
+    ).rejects.toThrow();
+    await prisma.conversationPlaybook.create({ data: { ...base, version: 2 } });
+    const rows = await prisma.conversationPlaybook.count({
+      where: { tenantId: t.id, key: base.key },
+    });
+    expect(rows).toBe(2);
+  });
+
+  it('FK: ConversationPlaybook requires valid tenant', async () => {
+    await expect(
+      prisma.conversationPlaybook.create({
+        data: {
+          tenantId: 'nonexistent-tenant-id',
+          key: 'orphan',
+          title: 'Orphan',
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('CustomerActionPage tokenHash unique', async () => {
+    const t = await prisma.tenant.create({
+      data: { slug: `cap-${Date.now()}`, name: 'Action Page T' },
+    });
+    const hash = `tok-${Date.now()}`;
+    await prisma.customerActionPage.create({
+      data: {
+        tenantId: t.id,
+        kind: 'SCHEDULE',
+        title: 'Book a visit',
+        tokenHash: hash,
+      },
+    });
+    await expect(
+      prisma.customerActionPage.create({
+        data: {
+          tenantId: t.id,
+          kind: 'SCHEDULE',
+          title: 'Duplicate token',
+          tokenHash: hash,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('Location.messagingPolicy persists JSON quiet-hours config', async () => {
+    const t = await prisma.tenant.create({
+      data: { slug: `msg-pol-${Date.now()}`, name: 'Msg Pol T' },
+    });
+    const policy = {
+      quietStart: '21:00',
+      quietEnd: '08:00',
+      maxMarketingPer24h: 2,
+    };
+    const loc = await prisma.location.create({
+      data: {
+        tenantId: t.id,
+        slug: 'main',
+        name: 'Main',
+        messagingPolicy: policy,
+      },
+    });
+    const loaded = await prisma.location.findUniqueOrThrow({
+      where: { id: loc.id },
+      select: { messagingPolicy: true },
+    });
+    expect(loaded.messagingPolicy).toEqual(policy);
+    const col = await prisma.$queryRaw<Array<{ column_name: string }>>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'Location'
+        AND column_name = 'messagingPolicy'
+    `;
+    expect(col).toHaveLength(1);
+  });
+
+  it('IntegrationProvider enum includes META (Integration + WebhookInbox)', async () => {
+    const enumRows = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
+      SELECT e.enumlabel
+      FROM pg_enum e
+      JOIN pg_type t ON e.enumtypid = t.oid
+      WHERE t.typname = 'IntegrationProvider'
+        AND e.enumlabel = 'META'
+    `;
+    expect(enumRows.map((r) => r.enumlabel)).toContain('META');
+
+    const t = await prisma.tenant.create({
+      data: { slug: `meta-${Date.now()}`, name: 'Meta T' },
+    });
+    const integration = await prisma.integration.create({
+      data: {
+        tenantId: t.id,
+        provider: IntegrationProvider.META,
+        capability: 'messaging',
+      },
+    });
+    expect(integration.provider).toBe(IntegrationProvider.META);
+
+    const inbox = await prisma.webhookInbox.create({
+      data: {
+        tenantId: t.id,
+        provider: IntegrationProvider.META,
+        externalEventId: `leadgen-${Date.now()}`,
+        signatureValid: true,
+        payload: { object: 'page', entry: [] },
+      },
+    });
+    expect(inbox.provider).toBe(IntegrationProvider.META);
   });
 });

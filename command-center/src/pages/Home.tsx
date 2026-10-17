@@ -187,11 +187,20 @@ export function Home({ locationId }: { locationId: string }) {
                 <li>
                   <span>Delivery queue</span>
                   <span>
-                    {Object.entries(data.technical.outbox).map(([k, v]) => (
-                      <Badge key={k} tone={k === 'DEAD' ? 'bad' : k === 'PENDING' ? 'warn' : 'neutral'}>
-                        {k} {v}
-                      </Badge>
-                    ))}
+                    {Object.entries(data.technical.outbox).map(([k, v]) => {
+                      const badge = (
+                        <Badge tone={k === 'DEAD' ? 'bad' : k === 'PENDING' ? 'warn' : 'neutral'}>
+                          {k} {v}
+                        </Badge>
+                      );
+                      return k === 'DEAD' && v > 0 ? (
+                        <a key={k} href="#/ops">
+                          {badge}
+                        </a>
+                      ) : (
+                        <span key={k}>{badge}</span>
+                      );
+                    })}
                   </span>
                 </li>
                 <li>
