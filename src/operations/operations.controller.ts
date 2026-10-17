@@ -39,6 +39,7 @@ import { RooftopReadinessService } from './rooftop-readiness';
 import { AppraisalService } from '../trade/appraisal.service';
 import { IsNumber, Max, Min } from 'class-validator';
 import type { CreditLinkType } from '../finance/credit-destination';
+import { UploadsService } from '../uploads/uploads.service';
 
 class TextDto {
   @IsString() @MinLength(1) @MaxLength(4000) text!: string;
@@ -106,6 +107,10 @@ const REPLY_FEEDBACK = [
   'unnecessary_weather_sports',
 ] as const;
 
+class ConversationAttachmentDto {
+  @IsString() @MinLength(1) @MaxLength(64) fileId!: string;
+}
+
 class ReplyFeedbackDto {
   @IsString() @MinLength(1) @MaxLength(64) conversationId!: string;
   @IsOptional() @IsString() @MaxLength(64) messageId?: string;
@@ -123,6 +128,7 @@ export class OperationsController {
     private readonly creditAdmin: CreditDestinationAdminService,
     private readonly readiness: RooftopReadinessService,
     private readonly appraisals: AppraisalService,
+    private readonly uploads: UploadsService,
   ) {}
 
   // ── trade-in appraisal workflow (staff records; managers issue offers)
@@ -355,6 +361,32 @@ export class OperationsController {
     @Query('email') email?: string,
   ) {
     return this.ops.customerProfile(this.scope(u), { phone, email });
+  }
+
+  /** Attach an existing CLEAN upload to this conversation (tenant-scoped). */
+  @Roles(...STAFF)
+  @Post('conversations/:id/attachments')
+  attachConversationFile(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: ConversationAttachmentDto,
+  ) {
+    const { tenantId } = this.scope(u);
+    return this.uploads.attachToConversation({
+      tenantId,
+      conversationId: id,
+      fileId: b.fileId,
+    });
+  }
+
+  @Roles(...STAFF)
+  @Get('conversations/:id/attachments')
+  listConversationAttachments(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+  ) {
+    const { tenantId } = this.scope(u);
+    return this.uploads.listConversationAttachments(tenantId, id);
   }
 
   /** Staff feedback on an AI reply (Conversation Studio teaching signal). Never auto-publishes. */

@@ -8,9 +8,10 @@ import {
 } from './operations.controller';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { ChatModule } from '../chat/chat.module';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
-  imports: [IntegrationsModule, ChatModule, TradeModule],
+  imports: [IntegrationsModule, ChatModule, TradeModule, UploadsModule],
   controllers: [OperationsController, WidgetLiveController],
   providers: [OperationsService, RooftopReadinessService],
 })

@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import * as path from 'path';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -189,5 +190,111 @@ export class UploadsService {
       throw new ForbiddenException('File quarantined');
     const buf = await readFile(path.join(this.uploadRoot, f.storageKey));
     return { file: f, buf, quarantined: f.scannedStatus !== 'CLEAN' };
+  }
+
+  /** Staff-facing attachment row (no storage keys). */
+  staffAttachmentView(
+    tenantId: string,
+    f: {
+      id: string;
+      originalName: string;
+      mimeType: string;
+      byteSize: number;
+      purpose: FilePurpose;
+      scannedStatus: FileScanStatus;
+      conversationId: string | null;
+      createdAt: Date;
+    },
+  ) {
+    return {
+      id: f.id,
+      originalName: f.originalName,
+      mimeType: f.mimeType,
+      byteSize: f.byteSize,
+      purpose: f.purpose,
+      scannedStatus: f.scannedStatus,
+      conversationId: f.conversationId,
+      createdAt: f.createdAt,
+      downloadPath:
+        f.scannedStatus === FileScanStatus.CLEAN
+          ? this.signedPath(tenantId, f.id)
+          : null,
+    };
+  }
+
+  /**
+   * Link an existing tenant file to a conversation. Only CLEAN files may be attached;
+   * quarantined / pending scans stay unlinkable (fail closed).
+   */
+  async attachToConversation(params: {
+    tenantId: string;
+    conversationId: string;
+    fileId: string;
+  }) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: params.conversationId, tenantId: params.tenantId },
+      select: { id: true, locationId: true },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const file = await this.prisma.fileObject.findFirst({
+      where: {
+        id: params.fileId,
+        tenantId: params.tenantId,
+        deletedAt: null,
+      },
+    });
+    if (!file) throw new NotFoundException('File not found');
+
+    if (file.scannedStatus !== FileScanStatus.CLEAN) {
+      throw new ForbiddenException('file_not_clean');
+    }
+    if (
+      file.conversationId &&
+      file.conversationId !== params.conversationId
+    ) {
+      throw new ConflictException('File already linked to another conversation');
+    }
+    if (file.conversationId === params.conversationId) {
+      return this.staffAttachmentView(params.tenantId, file);
+    }
+
+    const updated = await this.prisma.fileObject.update({
+      where: { id: file.id },
+      data: {
+        conversationId: params.conversationId,
+        locationId: file.locationId ?? conv.locationId ?? null,
+      },
+    });
+    return this.staffAttachmentView(params.tenantId, updated);
+  }
+
+  async listConversationAttachments(
+    tenantId: string,
+    conversationId: string,
+  ) {
+    const conv = await this.prisma.conversation.findFirst({
+      where: { id: conversationId, tenantId },
+      select: { id: true },
+    });
+    if (!conv) throw new NotFoundException('Conversation not found');
+
+    const files = await this.prisma.fileObject.findMany({
+      where: { tenantId, conversationId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+      select: {
+        id: true,
+        originalName: true,
+        mimeType: true,
+        byteSize: true,
+        purpose: true,
+        scannedStatus: true,
+        conversationId: true,
+        createdAt: true,
+      },
+    });
+    return {
+      attachments: files.map((f) => this.staffAttachmentView(tenantId, f)),
+    };
   }
 }
