@@ -154,3 +154,122 @@ describe('vehicleHasFeature', () => {
     expect(vehicleHasFeature([], 'heated seats')).toBeNull();
   });
 });
+
+describe('InventoryEngine.browseForStaff', () => {
+  const findMany = jest.fn();
+  const findFirst = jest.fn();
+  const engine = new InventoryEngine({
+    vehicle: { findMany, findFirst },
+  } as unknown as PrismaService);
+
+  const dbRow = {
+    id: 'v1',
+    vin: '1C4RJFBG0MC100001',
+    stock: 'S1',
+    year: 2025,
+    make: 'Jeep',
+    model: 'Wrangler',
+    trim: null,
+    price: 41890,
+    msrp: null,
+    mileage: 12,
+    color: 'Red',
+    drivetrain: '4WD',
+    bodyType: 'SUV',
+    transmission: null,
+    fuelType: null,
+    photos: [],
+    features: [],
+    condition: 'new',
+    status: 'SOLD',
+    locationId: 'loc1',
+    lastSeenAt: new Date('2026-01-02T12:00:00.000Z'),
+    source: 'feed',
+    freshnessState: 'FRESH',
+    createdAt: new Date(),
+  };
+
+  beforeEach(() => {
+    findMany.mockReset();
+    findFirst.mockReset();
+    findMany.mockResolvedValue([]);
+    findFirst.mockResolvedValue(null);
+  });
+
+  it('looks up a single VIN and does not run a broad search', async () => {
+    findFirst.mockResolvedValue(dbRow);
+    const rows = await engine.browseForStaff({
+      tenantId: 't1',
+      vin: '1c4rjfbg0mc100001',
+    });
+    expect(findMany).not.toHaveBeenCalled();
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 't1',
+          vin: '1C4RJFBG0MC100001',
+        }),
+      }),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('SOLD');
+  });
+
+  it('returns empty when VIN is not in inventory (no placeholder vehicle)', async () => {
+    findFirst.mockResolvedValue(null);
+    const rows = await engine.browseForStaff({ tenantId: 't1', vin: 'MISSING' });
+    expect(rows).toEqual([]);
+  });
+
+  it('looks up stock before listing when stock is provided', async () => {
+    findFirst.mockResolvedValue(dbRow);
+    const rows = await engine.browseForStaff({
+      tenantId: 't1',
+      stock: 's1',
+    });
+    expect(findMany).not.toHaveBeenCalled();
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          stock: { equals: 's1', mode: 'insensitive' },
+        }),
+      }),
+    );
+    expect(rows[0].stock).toBe('S1');
+  });
+
+  it('scopes browse to rooftop plus tenant-wide rows', async () => {
+    findMany.mockResolvedValue([dbRow]);
+    await engine.browseForStaff({
+      tenantId: 't1',
+      locationId: 'loc1',
+      make: 'Jeep',
+    });
+    const { where } = findMany.mock.calls[0][0];
+    expect(where.AND).toEqual(
+      expect.arrayContaining([
+        { tenantId: 't1' },
+        { OR: [{ locationId: 'loc1' }, { locationId: null }] },
+        { make: { contains: 'Jeep', mode: 'insensitive' } },
+      ]),
+    );
+  });
+
+  it('applies free-text q across make, model, trim, vin, and stock', async () => {
+    await engine.browseForStaff({ tenantId: 't1', q: 'wrangler' });
+    const { where } = findMany.mock.calls[0][0];
+    expect(where.AND).toEqual(
+      expect.arrayContaining([
+        {
+          OR: [
+            { make: { contains: 'wrangler', mode: 'insensitive' } },
+            { model: { contains: 'wrangler', mode: 'insensitive' } },
+            { trim: { contains: 'wrangler', mode: 'insensitive' } },
+            { vin: { contains: 'WRANGLER' } },
+            { stock: { contains: 'wrangler', mode: 'insensitive' } },
+          ],
+        },
+      ]),
+    );
+  });
+});

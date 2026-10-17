@@ -3,6 +3,7 @@ import { OperationsService } from './operations.service';
 
 function makeOperationsService(
   prisma: Record<string, unknown>,
+  extras?: { inventory?: { browseForStaff: jest.Mock } },
 ): OperationsService {
   const deps = [
     prisma,
@@ -11,7 +12,7 @@ function makeOperationsService(
     {},
     {},
     {},
-    {},
+    extras?.inventory ?? {},
   ] as unknown as ConstructorParameters<typeof OperationsService>;
   return new OperationsService(...deps);
 }
@@ -320,5 +321,25 @@ describe('OperationsService.appointmentOutcomes', () => {
       locationId: null,
     });
     expect(r.showRate).toBeNull();
+  });
+});
+
+describe('OperationsService.listInventory', () => {
+  it('delegates GET /ops/inventory to browseForStaff with scope and filters', async () => {
+    const browseForStaff = jest.fn().mockResolvedValue([]);
+    const svc = makeOperationsService({}, { inventory: { browseForStaff } });
+    await svc.listInventory(
+      { tenantId: 'tenant-1', locationId: 'loc-1' },
+      { vin: '1C4', stock: 'STK', make: 'Jeep', model: 'Wrangler', q: 'rubicon' },
+    );
+    expect(browseForStaff).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      vin: '1C4',
+      stock: 'STK',
+      make: 'Jeep',
+      model: 'Wrangler',
+      q: 'rubicon',
+    });
   });
 });
