@@ -249,7 +249,7 @@ describe('DB migration & integrity (disposable Postgres)', () => {
     expect(col).toHaveLength(1);
   });
 
-  it('IntegrationProvider enum includes META (Integration + WebhookInbox)', async () => {
+  it('IntegrationProvider enum includes META (IntegrationConnection + WebhookInbox)', async () => {
     const enumRows = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
       SELECT e.enumlabel
       FROM pg_enum e
@@ -262,7 +262,7 @@ describe('DB migration & integrity (disposable Postgres)', () => {
     const t = await prisma.tenant.create({
       data: { slug: `meta-${Date.now()}`, name: 'Meta T' },
     });
-    const integration = await prisma.integration.create({
+    const integration = await prisma.integrationConnection.create({
       data: {
         tenantId: t.id,
         provider: IntegrationProvider.META,
