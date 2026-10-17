@@ -373,6 +373,15 @@ export class OperationsService {
     };
   }
 
+  private syncLeadAssignee(conversationId: string, assignedUserId: string) {
+    return this.prisma.lead
+      .updateMany({
+        where: { conversationId },
+        data: { assignedUserId },
+      })
+      .catch(() => undefined);
+  }
+
   // ───────────── takeover lifecycle
 
   async takeover(scope: Scope, id: string, userId: string) {
@@ -420,6 +429,7 @@ export class OperationsService {
         },
       }),
     ]);
+    await this.syncLeadAssignee(id, userId);
     return { ok: true };
   }
 
@@ -491,6 +501,7 @@ export class OperationsService {
         },
       }),
     ]);
+    await this.syncLeadAssignee(id, toUserId);
     return { ok: true };
   }
 

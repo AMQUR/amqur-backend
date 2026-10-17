@@ -235,6 +235,7 @@ describe('OperationsService.takeover', () => {
     message: { create: jest.fn().mockResolvedValue({}) },
     escalation: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    lead: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
 
@@ -291,6 +292,10 @@ describe('OperationsService.takeover', () => {
         resourceId: conversationId,
       },
     });
+    expect(prisma.lead.updateMany).toHaveBeenCalledWith({
+      where: { conversationId },
+      data: { assignedUserId: ownerId },
+    });
   });
 });
 
@@ -309,6 +314,7 @@ describe('OperationsService.transfer', () => {
     user: { findFirst: jest.fn() },
     message: { create: jest.fn().mockResolvedValue({}) },
     auditLog: { create: jest.fn().mockResolvedValue({}) },
+    lead: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
     $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
   };
 
@@ -353,6 +359,10 @@ describe('OperationsService.transfer', () => {
         action: 'conversation.transfer',
         metadata: { fromUserId: ownerId, toUserId: otherStaffId },
       }),
+    });
+    expect(prisma.lead.updateMany).toHaveBeenCalledWith({
+      where: { conversationId },
+      data: { assignedUserId: otherStaffId },
     });
   });
 
