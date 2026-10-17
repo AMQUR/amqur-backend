@@ -22,15 +22,28 @@ export type VoiceSession = {
   conversationExternalKey?: string | null;
 };
 
+export type VoiceActionSuppressedReason = 'not_configured' | 'disabled';
+
+export type VoiceCallActionResult =
+  | { status: 'SUPPRESSED'; reason: VoiceActionSuppressedReason }
+  | { status: 'OK' };
+
+export function voiceSuppressed(
+  reason: VoiceActionSuppressedReason,
+): VoiceCallActionResult {
+  return { status: 'SUPPRESSED', reason };
+}
+
 export interface VoiceProvider {
   readonly providerId: string;
   isLiveConfigured(): boolean;
-  answer(session: VoiceSession): Promise<{ ok: boolean }>;
+  answer(session: VoiceSession): Promise<VoiceCallActionResult>;
+  placeOutbound(session: VoiceSession): Promise<VoiceCallActionResult>;
   transferToStaff(
     session: VoiceSession,
     reason: string,
-  ): Promise<{ ok: boolean }>;
-  hangup(session: VoiceSession): Promise<{ ok: boolean }>;
+  ): Promise<VoiceCallActionResult>;
+  hangup(session: VoiceSession): Promise<VoiceCallActionResult>;
 }
 
 /** Stub — live voice requires approved provider + consent + retention policy. */
@@ -39,13 +52,19 @@ export class DisabledVoiceProvider implements VoiceProvider {
   isLiveConfigured(): boolean {
     return false;
   }
-  async answer(): Promise<{ ok: boolean }> {
-    return { ok: false };
+  async answer(_session: VoiceSession): Promise<VoiceCallActionResult> {
+    return voiceSuppressed('not_configured');
   }
-  async transferToStaff(): Promise<{ ok: boolean }> {
-    return { ok: false };
+  async placeOutbound(_session: VoiceSession): Promise<VoiceCallActionResult> {
+    return voiceSuppressed('not_configured');
   }
-  async hangup(): Promise<{ ok: boolean }> {
-    return { ok: false };
+  async transferToStaff(
+    _session: VoiceSession,
+    _reason: string,
+  ): Promise<VoiceCallActionResult> {
+    return voiceSuppressed('not_configured');
+  }
+  async hangup(_session: VoiceSession): Promise<VoiceCallActionResult> {
+    return voiceSuppressed('not_configured');
   }
 }
