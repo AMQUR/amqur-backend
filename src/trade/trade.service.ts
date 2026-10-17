@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { TradeRequestStatus } from '@prisma/client';
+import { TradeRequest, TradeRequestStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   ProviderContext,
@@ -65,7 +65,7 @@ export class TradeService {
     notes?: string | null;
     photoFileIds?: string[];
   }) {
-    return this.prisma.tradeRequest.create({
+    const created = await this.prisma.tradeRequest.create({
       data: {
         tenantId: params.tenantId,
         locationId: params.locationId ?? null,
@@ -87,6 +87,54 @@ export class TradeService {
         appraisalValue: null,
       },
     });
+    await this.notifyTradeAdvisor(created).catch(() => undefined);
+    return created;
+  }
+
+  /**
+   * Queue a trade advisor escalation when chat captures a trade request.
+   * Never invents appraisal values — staff must respond.
+   */
+  private async notifyTradeAdvisor(row: TradeRequest) {
+    if (!row.conversationId) return;
+    const open = await this.prisma.escalation.findFirst({
+      where: {
+        tenantId: row.tenantId,
+        conversationId: row.conversationId,
+        status: { in: ['OPEN', 'ACKNOWLEDGED', 'IN_PROGRESS'] },
+        reason: 'TRADE_ADVISOR',
+      },
+    });
+    if (open) return;
+    const vehicle = [row.year, row.make, row.model].filter(Boolean).join(' ');
+    const vin = row.vin ? ` VIN ${row.vin}` : '';
+    await this.prisma.escalation.create({
+      data: {
+        tenantId: row.tenantId,
+        locationId: row.locationId,
+        conversationId: row.conversationId,
+        reason: 'TRADE_ADVISOR',
+        urgency: 'NORMAL',
+        summary: `Trade request needs staff review${vehicle ? `: ${vehicle}` : ''}${vin}`.slice(
+          0,
+          280,
+        ),
+        metadata: {
+          tradeRequestId: row.id,
+          appraisalVerified: row.appraisalVerified,
+        },
+      },
+    });
+    await this.prisma.analyticsEvent
+      .create({
+        data: {
+          tenantId: row.tenantId,
+          locationId: row.locationId,
+          eventType: 'trade.advisor_queued',
+          properties: { tradeRequestId: row.id },
+        },
+      })
+      .catch(() => null);
   }
 
   /** Integration gate only — no vehicle input, never returns dollar amounts. */

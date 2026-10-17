@@ -1,5 +1,116 @@
 import { TRADE_VALUATION_CAPABILITY, TradeService } from './trade.service';
 
+describe('TradeService.notifyTradeAdvisor (via createRequest)', () => {
+  const prisma = {
+    tradeRequest: {
+      create: jest.fn(),
+    },
+    escalation: {
+      findFirst: jest.fn(),
+      create: jest.fn().mockResolvedValue({ id: 'esc-1' }),
+    },
+    analyticsEvent: {
+      create: jest.fn().mockResolvedValue({}),
+    },
+  };
+  const svc = new TradeService(prisma as never);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    prisma.escalation.findFirst.mockResolvedValue(null);
+    prisma.analyticsEvent.create.mockResolvedValue({});
+  });
+
+  it('queues TRADE_ADVISOR escalation on new trade request', async () => {
+    prisma.tradeRequest.create.mockResolvedValue({
+      id: 'tr-new',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      vin: '1HGCM82633A004352',
+      year: 2020,
+      make: 'Honda',
+      model: 'Accord',
+      appraisalVerified: false,
+    });
+
+    await svc.createRequest({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      vin: '1HGCM82633A004352',
+      year: 2020,
+      make: 'Honda',
+      model: 'Accord',
+    });
+
+    expect(prisma.escalation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        tenantId: 'tenant-1',
+        conversationId: 'conv-1',
+        reason: 'TRADE_ADVISOR',
+        metadata: expect.objectContaining({
+          tradeRequestId: 'tr-new',
+          appraisalVerified: false,
+        }),
+      }),
+    });
+    expect(prisma.analyticsEvent.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: 'tenant-1',
+        locationId: 'loc-1',
+        eventType: 'trade.advisor_queued',
+        properties: { tradeRequestId: 'tr-new' },
+      },
+    });
+  });
+
+  it('does not duplicate TRADE_ADVISOR when one is already open', async () => {
+    prisma.escalation.findFirst.mockResolvedValue({ id: 'esc-open' });
+    prisma.tradeRequest.create.mockResolvedValue({
+      id: 'tr-new',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+      vin: null,
+      year: null,
+      make: null,
+      model: null,
+      appraisalVerified: false,
+    });
+
+    await svc.createRequest({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: 'conv-1',
+    });
+
+    expect(prisma.escalation.create).not.toHaveBeenCalled();
+  });
+
+  it('skips escalation when trade request has no conversation', async () => {
+    prisma.tradeRequest.create.mockResolvedValue({
+      id: 'tr-new',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      conversationId: null,
+      vin: null,
+      year: null,
+      make: null,
+      model: null,
+      appraisalVerified: false,
+    });
+
+    await svc.createRequest({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+    });
+
+    expect(prisma.escalation.findFirst).not.toHaveBeenCalled();
+    expect(prisma.escalation.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('TradeService.getValuation (fail-closed)', () => {
   const prisma = {
     integrationConnection: { findFirst: jest.fn() },
