@@ -57,6 +57,7 @@ function maskCreditJson(raw: unknown) {
 import { mergePolicy } from '../finance/financial-assumption-policy';
 import { isValidTimeZone, parseIsoDate } from '../common/time/zoned-time';
 import { redactCreditSensitive } from '../common/security/sensitive-data';
+import { InventoryEngine } from '../chat/engines/inventory.engine';
 
 type Scope = { tenantId: string; locationId: string | null };
 
@@ -76,7 +77,26 @@ export class OperationsService {
     private readonly llm: LlmRouterService,
     private readonly tekion: TekionProvider,
     private readonly credit: CreditApplicationService,
+    private readonly inventory: InventoryEngine,
   ) {}
+
+  /** Vehicle table browse for Command Center — DB price/status only. */
+  listInventory(
+    scope: Scope,
+    filters: {
+      vin?: string;
+      stock?: string;
+      make?: string;
+      model?: string;
+      q?: string;
+    },
+  ) {
+    return this.inventory.browseForStaff({
+      tenantId: scope.tenantId,
+      locationId: scope.locationId,
+      ...filters,
+    });
+  }
 
   private loc(scope: Scope) {
     return scope.locationId ? { locationId: scope.locationId } : {};

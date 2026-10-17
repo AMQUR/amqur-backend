@@ -286,4 +286,65 @@ export class InventoryEngine {
       limit: 6,
     });
   }
+
+  /**
+   * Command Center browse — same Vehicle table as chat, all lifecycle statuses, no
+   * customer-facing availability claims (callers display `status` verbatim).
+   */
+  async browseForStaff(c: {
+    tenantId: string;
+    locationId?: string | null;
+    vin?: string;
+    stock?: string;
+    make?: string;
+    model?: string;
+    q?: string;
+    limit?: number;
+  }) {
+    const vin = c.vin?.trim();
+    if (vin) {
+      const row = await this.getVehicleByVin(c.tenantId, vin);
+      return row ? [row] : [];
+    }
+    const stock = c.stock?.trim();
+    if (stock) {
+      const row = await this.getVehicleByStock(c.tenantId, stock);
+      return row ? [row] : [];
+    }
+
+    const AND: Prisma.VehicleWhereInput[] = [
+      { tenantId: c.tenantId },
+      InventoryEngine.liveOnly(),
+    ];
+    if (c.locationId)
+      AND.push({ OR: [{ locationId: c.locationId }, { locationId: null }] });
+    const make = c.make?.trim();
+    if (make)
+      AND.push({ make: { contains: make, mode: 'insensitive' } });
+    const model = c.model?.trim();
+    if (model)
+      AND.push({
+        model: { contains: model.replace(/s$/i, ''), mode: 'insensitive' },
+      });
+    const q = c.q?.trim();
+    if (q) {
+      const upper = q.toUpperCase();
+      AND.push({
+        OR: [
+          { make: { contains: q, mode: 'insensitive' } },
+          { model: { contains: q, mode: 'insensitive' } },
+          { trim: { contains: q, mode: 'insensitive' } },
+          { vin: { contains: upper } },
+          { stock: { contains: q, mode: 'insensitive' } },
+        ],
+      });
+    }
+
+    const rows = await this.prisma.vehicle.findMany({
+      where: { AND },
+      orderBy: [{ lastSeenAt: 'desc' }, { createdAt: 'desc' }],
+      take: Math.min(c.limit ?? 50, 100),
+    });
+    return rows.map(InventoryEngine.toCard);
+  }
 }

@@ -11,6 +11,7 @@ function makeOperationsService(
     {},
     {},
     {},
+    {},
   ] as unknown as ConstructorParameters<typeof OperationsService>;
   return new OperationsService(...deps);
 }

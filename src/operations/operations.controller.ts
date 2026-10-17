@@ -440,6 +440,27 @@ export class OperationsController {
     );
   }
 
+  /** Inventory browse — same Vehicle rows chat uses; status/price are never inferred. */
+  @Roles(...STAFF)
+  @Get('inventory')
+  inventory(
+    @CurrentUser() u: AuthUser,
+    @Query('locationId') l?: string,
+    @Query('vin') vin?: string,
+    @Query('stock') stock?: string,
+    @Query('make') make?: string,
+    @Query('model') model?: string,
+    @Query('q') q?: string,
+  ) {
+    return this.ops.listInventory(this.scope(u, undefined, l), {
+      vin: vin?.trim().slice(0, 20),
+      stock: stock?.trim().slice(0, 40),
+      make: make?.trim().slice(0, 60),
+      model: model?.trim().slice(0, 60),
+      q: q?.trim().slice(0, 100),
+    });
+  }
+
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
   @Get('integrations')
   integrations(@CurrentUser() u: AuthUser, @Query('locationId') l?: string) {
