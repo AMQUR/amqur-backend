@@ -854,12 +854,12 @@ export class OperationsService {
       {
         key: 'appointments_awaiting',
         count: overview.attention.appointmentsAwaitingConfirmation,
-        href: '#/appointments',
+        href: '#/service',
       },
       {
         key: 'parts_open',
         count: overview.attention.partsOpen,
-        href: '#/queues',
+        href: '#/parts',
       },
       {
         key: 'finance_open',
@@ -980,7 +980,20 @@ export class OperationsService {
           appointmentsOnBookToday: brief.today.appointmentsOnBook,
           confirmedAppointments7d: overview.outcomes.confirmedAppointments,
         },
-        links: ['#/appointments'],
+        links: ['#/service', '#/appointments'],
+        source: 'platform_records' as const,
+        note,
+      };
+    }
+    if (query.includes('service')) {
+      return {
+        answer: `${overview.outcomes.serviceRequests} service appointment request(s) in the last 7 days; ${overview.attention.appointmentsAwaitingConfirmation} appointment(s) await confirmation across all types.`,
+        metrics: {
+          ...baseMetrics,
+          serviceRequests7d: overview.outcomes.serviceRequests,
+          awaitingConfirmation: overview.attention.appointmentsAwaitingConfirmation,
+        },
+        links: ['#/service', '#/appointments'],
         source: 'platform_records' as const,
         note,
       };
@@ -1004,7 +1017,7 @@ export class OperationsService {
           ...baseMetrics,
           partsOpen: overview.attention.partsOpen,
         },
-        links: ['#/queues'],
+        links: ['#/parts', '#/queues'],
         source: 'platform_records' as const,
         note,
       };

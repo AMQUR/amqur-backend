@@ -55,7 +55,7 @@ const MISSED_OP_HREF: Record<string, string> = {
   aiUncertainReplies: '#/queues',
   overdueLeads: '#/queues',
   missedAppointments: '#/appointments',
-  partsOpen: '#/queues',
+  partsOpen: '#/parts',
   financeOpen: '#/queues',
   zeroInventoryResults: '#/inventory',
   knowledgeMiss: '#/knowledge',
@@ -256,9 +256,9 @@ export function Home({ locationId }: { locationId: string }) {
           <Card title="Needs attention">
             <div className="stats">
               <a href="#/inbox"><Stat label="Open handoffs" value={data.attention.openHandoffs} /></a>
-              <a href="#/appointments"><Stat label="Appointments to confirm" value={data.attention.appointmentsAwaitingConfirmation} /></a>
+              <a href="#/service"><Stat label="Appointments to confirm" value={data.attention.appointmentsAwaitingConfirmation} /></a>
               <a href="#/inbox"><Stat label="Hot leads" value={data.attention.hotLeads} /></a>
-              <a href="#/queues"><Stat label="Parts requests" value={data.attention.partsOpen} /></a>
+              <a href="#/parts"><Stat label="Parts requests" value={data.attention.partsOpen} /></a>
               <a href="#/queues"><Stat label="Finance requests" value={data.attention.financeOpen} /></a>
               <a href="#/queues"><Stat label="Trade-ins" value={data.attention.tradesOpen ?? 0} /></a>
               <Stat label="Data conflicts" value={data.attention.sourceConflicts} />
