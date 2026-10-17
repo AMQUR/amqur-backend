@@ -110,7 +110,7 @@ export class SpotlightsService {
     });
     if (!loc) throw new NotFoundException('Location not found');
     const { s, e } = await this.validate(tenantId, locationId, i);
-    return this.prisma.spotlight.create({
+    const row = await this.prisma.spotlight.create({
       data: {
         tenantId,
         locationId,
@@ -127,6 +127,24 @@ export class SpotlightsService {
         createdById: userId,
       },
     });
+    await this.prisma.auditLog
+      .create({
+        data: {
+          tenantId,
+          userId,
+          action: 'spotlight.created',
+          resource: 'Spotlight',
+          resourceId: row.id,
+          metadata: {
+            kind: row.kind,
+            title: row.title,
+            locationId,
+            status: row.status,
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => undefined);
+    return row;
   }
 
   async decide(
@@ -164,12 +182,31 @@ export class SpotlightsService {
     return row;
   }
 
-  async archive(tenantId: string, id: string) {
-    const r = await this.prisma.spotlight.updateMany({
+  async archive(tenantId: string, id: string, userId: string) {
+    const existing = await this.prisma.spotlight.findFirst({
       where: { id, tenantId },
+      select: { id: true, title: true, status: true },
+    });
+    if (!existing) throw new NotFoundException();
+    await this.prisma.spotlight.update({
+      where: { id },
       data: { status: 'ARCHIVED' },
     });
-    if (!r.count) throw new NotFoundException();
+    await this.prisma.auditLog
+      .create({
+        data: {
+          tenantId,
+          userId,
+          action: 'spotlight.archived',
+          resource: 'Spotlight',
+          resourceId: id,
+          metadata: {
+            title: existing.title,
+            fromStatus: existing.status,
+          } as Prisma.InputJsonValue,
+        },
+      })
+      .catch(() => undefined);
     return { archived: true };
   }
 

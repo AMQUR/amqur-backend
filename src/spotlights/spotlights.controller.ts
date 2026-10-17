@@ -99,7 +99,7 @@ export class SpotlightsController {
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
   @Post('ops/spotlights/:id/archive')
   archive(@CurrentUser() u: AuthUser, @Param('id') id: string) {
-    return this.spotlights.archive(this.scope(u).tenantId, id);
+    return this.spotlights.archive(this.scope(u).tenantId, id, u.sub);
   }
 
   /** Public, read-only: approved spotlights for one store (no auth; public content only). */
