@@ -5961,10 +5961,17 @@ export class ChatOrchestrator {
       m.push(
         `out-the-door quote: requested${st.otd.zip ? `, ZIP ${st.otd.zip}` : ', ZIP not given'}`,
       );
-    if (st.appointment)
+    if (st.appointment) {
+      const apptLabel =
+        st.appointment.status === 'CONFIRMED'
+          ? 'confirmed appointment'
+          : st.appointment.status === 'CANCELLED'
+            ? 'canceled appointment request'
+            : 'appointment request (not confirmed)';
       m.push(
-        `${st.appointment.type.toLowerCase()} appointment: ${st.appointment.status} ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''}`.trim(),
+        `${st.appointment.type.toLowerCase()} ${apptLabel}: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''}`.trim(),
       );
+    }
     if (st.service?.need || st.service?.vehicle)
       m.push(
         `service: ${st.service.need ?? 'need not stated'}${st.service.vehicle ? ` for their ${[st.service.vehicle.year, st.service.vehicle.make, st.service.vehicle.model].filter(Boolean).join(' ')}` : ''}`,
@@ -6418,17 +6425,22 @@ export class ChatOrchestrator {
           'su solicitud de precio final está guardada',
         ),
       );
-    if (st.appointment && st.appointment.type !== 'SERVICE')
+    if (st.appointment) {
+      const visitKind =
+        st.appointment.type === 'SERVICE' ? 'service visit' : 'visit';
+      const visitKindEs =
+        st.appointment.type === 'SERVICE' ? 'visita de servicio' : 'visita';
       recap.push(
         tr(
           t.lang,
-          `your visit request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? 'confirmed' : 'still a request'}`.replace(
+          `your ${visitKind} request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? 'confirmed' : 'still a request'}`.replace(
             '  ',
             ' ',
           ),
-          `su solicitud de visita del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? 'confirmada' : 'pendiente'}`,
+          `su solicitud de ${visitKindEs} del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? 'confirmada' : 'pendiente'}`,
         ),
       );
+    }
     t.answers.push(
       tr(
         t.lang,

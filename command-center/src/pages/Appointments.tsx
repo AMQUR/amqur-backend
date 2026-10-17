@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { api } from '../api';
 import { fmtDate, useAsync } from '../hooks';
-import { Badge, Card, Empty, ErrorNote, Stat, statusTone } from '../ui';
+import { appointmentStatusLabel, Badge, Card, Empty, ErrorNote, Stat, statusTone } from '../ui';
 
 type Outcomes = {
   window: string;
@@ -89,7 +89,7 @@ export function Appointments({ locationId }: { locationId: string }) {
                   <td>{a.type}</td>
                   <td>{a.customerName ?? '—'}<div className="muted small">{a.customerPhone ?? a.customerEmail ?? ''}</div></td>
                   <td className="small">{a.vehicleVin ?? a.serviceType ?? '—'}{a.transportation && <div className="muted">{a.transportation}</div>}</td>
-                  <td><Badge tone={statusTone(a.status)}>{a.status === 'REQUESTED' ? 'REQUEST' : a.status}</Badge></td>
+                  <td><Badge tone={statusTone(a.status)}>{appointmentStatusLabel(a.status)}</Badge></td>
                   <td className="small">{a.provider === 'NONE' ? 'AMQUR request' : a.provider}</td>
                   <td className="row">
                     {['REQUESTED', 'PENDING_CONFIRMATION'].includes(a.status) && (

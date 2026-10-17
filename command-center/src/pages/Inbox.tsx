@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, session } from '../api';
 import { ago, fmtDate, useAsync } from '../hooks';
 import { EscalationActions, isOpenEscalation, type EscalationRow } from '../EscalationActions';
-import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
+import { appointmentStatusLabel, Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
 
 function hashConversationId(): string | null {
   const hash = window.location.hash.replace(/^#\/?/, '');
@@ -239,7 +239,7 @@ function Conversation({
               {c.appointments.map((a) => (
                 <div key={a.id} className="row between">
                   <span>{a.type} · {a.requestedDate} {a.requestedTime}</span>
-                  <Badge tone={statusTone(a.status)}>{a.status === 'REQUESTED' ? 'REQUEST' : a.status}</Badge>
+                  <Badge tone={statusTone(a.status)}>{appointmentStatusLabel(a.status)}</Badge>
                 </div>
               ))}
             </Card>

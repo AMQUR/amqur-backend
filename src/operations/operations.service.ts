@@ -229,7 +229,7 @@ export class OperationsService {
           priority: this.priority(
             c.handoffState,
             lead?.stage ?? null,
-            !!c.appointments[0],
+            c.appointments[0]?.status ?? null,
           ),
         };
       }),
@@ -241,16 +241,21 @@ export class OperationsService {
   private priority(
     handoff: string,
     stage: string | null,
-    hasAppt: boolean,
+    appointmentStatus: string | null,
   ): { rank: number; reason: string } {
     if (handoff === 'REQUESTED' || handoff === 'QUEUED')
       return { rank: 1, reason: 'Customer asked for a person' };
-    if (hasAppt)
+    if (
+      appointmentStatus === 'REQUESTED' ||
+      appointmentStatus === 'PENDING_CONFIRMATION'
+    )
       return { rank: 2, reason: 'Appointment request awaiting confirmation' };
     if (stage === 'HOT') return { rank: 3, reason: 'Hot lead' };
     if (handoff === 'ASSIGNED' || handoff === 'JOINED')
       return { rank: 4, reason: 'Staff conversation in progress' };
     if (stage === 'WARM') return { rank: 5, reason: 'Warm lead' };
+    if (appointmentStatus === 'CONFIRMED')
+      return { rank: 6, reason: 'Confirmed appointment on file' };
     return { rank: 9, reason: 'Browsing' };
   }
 

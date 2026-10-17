@@ -37,3 +37,19 @@ export function Stat({ label, value, hint }: { label: string; value: ReactNode; 
 }
 export const statusTone = (s: string): 'ok' | 'warn' | 'bad' | 'info' | 'neutral' =>
   /CONFIRMED|PUBLISHED|SYNCED|HEALTHY|COMPLETED/.test(s) ? 'ok' : /DEAD|FAILED|UNHEALTHY|CANCEL|REJECT|NO_SHOW/.test(s) ? 'bad' : /PENDING|REQUESTED|DRAFT|REVIEW|QUEUED/.test(s) ? 'warn' : 'neutral';
+
+/** Staff-facing appointment status — never show REQUESTED as if confirmed. */
+export function appointmentStatusLabel(status: string): string {
+  switch (status) {
+    case 'REQUESTED':
+      return 'REQUEST';
+    case 'PENDING_CONFIRMATION':
+      return 'PENDING CONFIRM';
+    case 'CONFIRMED':
+      return 'CONFIRMED';
+    case 'NO_SHOW':
+      return 'NO-SHOW';
+    default:
+      return status.replace(/_/g, ' ');
+  }
+}

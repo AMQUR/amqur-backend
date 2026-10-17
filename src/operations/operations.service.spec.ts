@@ -636,3 +636,35 @@ describe('OperationsService.listInventory', () => {
     });
   });
 });
+
+describe('OperationsService inbox appointment priority wording', () => {
+  const priority = (
+    svc: OperationsService,
+    handoff: string,
+    stage: string | null,
+    appointmentStatus: string | null,
+  ) =>
+    (
+      svc as unknown as {
+        priority: (
+          h: string,
+          s: string | null,
+          a: string | null,
+        ) => { rank: number; reason: string };
+      }
+    ).priority(handoff, stage, appointmentStatus);
+
+  it('does not label confirmed appointments as awaiting confirmation', () => {
+    const svc = makeOperationsService({});
+    expect(priority(svc, 'NONE', null, 'REQUESTED').reason).toBe(
+      'Appointment request awaiting confirmation',
+    );
+    expect(priority(svc, 'NONE', null, 'PENDING_CONFIRMATION').reason).toBe(
+      'Appointment request awaiting confirmation',
+    );
+    expect(priority(svc, 'NONE', null, 'CONFIRMED')).toEqual({
+      rank: 6,
+      reason: 'Confirmed appointment on file',
+    });
+  });
+});
