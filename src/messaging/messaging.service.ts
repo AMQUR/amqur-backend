@@ -45,6 +45,27 @@ export class MessagingService implements OnModuleInit {
     );
   }
 
+  /**
+   * Consent-only dry-run check for campaign audience preview.
+   * Does not inspect provider credentials or enqueue anything.
+   */
+  async previewConsent(p: {
+    tenantId: string;
+    channel: 'SMS';
+    to: string;
+    purpose: ConsentPurpose;
+  }): Promise<{ allowed: boolean; reason?: string }> {
+    const c = await this.consent.status(
+      p.tenantId,
+      p.channel,
+      p.to,
+      p.purpose,
+    );
+    return c.allowed
+      ? { allowed: true }
+      : { allowed: false, reason: c.reason };
+  }
+
   /** Per-tenant Twilio credentials from the vault; null unless explicitly enabled + live-ready. */
   async twilioCredentials(
     tenantId: string,

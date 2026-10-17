@@ -24,13 +24,40 @@ type Overview = {
   };
 };
 
+type Brief = {
+  headlines: string[];
+  priorities: Array<{ key: string; count: number; href: string }>;
+  today: { appointmentsOnBook: number };
+  note: string;
+};
+
 export function Home({ locationId }: { locationId: string }) {
   const q = locationId ? `?locationId=${locationId}` : '';
   const { data, error } = useAsync(() => api<Overview>(`/ops/overview${q}`), [q]);
+  const brief = useAsync(() => api<Brief>(`/ops/daily-brief${q}`), [q]);
   return (
     <div className="page">
       <h1>Today</h1>
-      <ErrorNote error={error} />
+      <ErrorNote error={error ?? brief.error} />
+      {brief.data && (
+        <Card title="Manager daily brief">
+          <ul className="bullets">
+            {brief.data.headlines.map((h) => (
+              <li key={h}>{h}</li>
+            ))}
+          </ul>
+          {brief.data.priorities.length > 0 && (
+            <div className="stats">
+              {brief.data.priorities.map((p) => (
+                <a key={p.key} href={p.href}>
+                  <Stat label={p.key.replace(/_/g, ' ')} value={p.count} />
+                </a>
+              ))}
+            </div>
+          )}
+          <p className="muted small">{brief.data.note}</p>
+        </Card>
+      )}
       {data && (
         <>
           <Card title="Needs attention">

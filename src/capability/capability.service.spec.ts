@@ -302,4 +302,18 @@ describe('CapabilityService expanded gate coverage', () => {
     );
     expect(result).toMatchObject({ allowed: false, reason: 'unknown' });
   });
+
+  it('blocks service when serviceAi is off', async () => {
+    flags.resolve.mockResolvedValue({ serviceAi: false, chat: true });
+    const r = await service.check('t1', 'l1', 'service');
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('service_flag_off');
+  });
+
+  it('blocks parts when partsAi is off', async () => {
+    flags.resolve.mockResolvedValue({ partsAi: false, chat: true });
+    const r = await service.check('t1', 'l1', 'parts');
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toBe('parts_flag_off');
+  });
 });

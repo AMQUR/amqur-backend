@@ -3,6 +3,8 @@
  * (repeating a message cannot inflate it). Every signal has a weight — no orphaned events.
  * Score never triggers customer communication on its own; it informs staff prioritization.
  */
+import { journeyNextBestAction } from './next-best-action';
+
 export const LEAD_SCORE_VERSION = 'journey-v3-2026-10';
 
 export type LeadSignal =
@@ -85,19 +87,12 @@ export function scoreJourney(
     reasons.reduce((a, r) => a + r.weight, 0),
   );
   const stage = score >= 18 ? 'hot' : score >= 8 ? 'warm' : 'cold';
-  let nextBestAction = 'Engage: answer questions and show matching inventory';
-  if (ctx.handoffOpen) nextBestAction = 'Respond to open handoff request';
-  else if (ctx.hasAppointment && ctx.hasContact)
-    nextBestAction = 'Confirm requested appointment time with customer';
-  else if (ctx.hasAppointment)
-    nextBestAction = 'Obtain contact details to confirm appointment';
-  else if (set.has('credit_link_clicked'))
-    nextBestAction = 'Follow up on credit application in DMS/CRM';
-  else if (set.has('trade_provided') && ctx.hasContact)
-    nextBestAction = 'Prepare trade appraisal and call customer';
-  else if (ctx.hasVehicle && ctx.hasContact)
-    nextBestAction = 'Verify availability and invite for test drive';
-  else if (ctx.hasVehicle)
-    nextBestAction = 'Offer test drive or payment walkthrough';
+  const nextBestAction = journeyNextBestAction({
+    handoffOpen: ctx.handoffOpen,
+    hasAppointment: ctx.hasAppointment,
+    hasContact: ctx.hasContact,
+    hasVehicle: ctx.hasVehicle,
+    signals: set,
+  });
   return { score, stage, reasons, version: LEAD_SCORE_VERSION, nextBestAction };
 }

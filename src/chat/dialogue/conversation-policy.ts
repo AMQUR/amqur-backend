@@ -125,32 +125,71 @@ export function countQuestions(text: string): number {
   return (withoutUrls.match(/\?/g) ?? []).length;
 }
 
-export function budgetFor(mode: VerbosityMode): LengthBudget {
+export type CustomerChannel = 'WIDGET' | 'SMS' | 'EMAIL' | 'WHATSAPP' | 'VOICE';
+
+export function budgetFor(
+  mode: VerbosityMode,
+  channel?: CustomerChannel | null,
+): LengthBudget {
+  const smsTight =
+    channel === 'SMS'
+      ? {
+          targetWordsMin: 6,
+          targetWordsMax: 40,
+          maxChars: 320,
+          maxSentences: 2,
+        }
+      : null;
   switch (mode) {
     case 'detailed':
     case 'regulatory':
       return {
         targetWordsMin: 20,
         targetWordsMax: 120,
-        maxChars: 900,
-        maxSentences: 6,
+        maxChars: channel === 'SMS' ? 480 : 900,
+        maxSentences: channel === 'SMS' ? 4 : 6,
       };
     case 'verbose':
       return {
         targetWordsMin: 15,
         targetWordsMax: 90,
-        maxChars: 1100,
-        maxSentences: 5,
+        maxChars: channel === 'SMS' ? 480 : 1100,
+        maxSentences: channel === 'SMS' ? 4 : 5,
       };
     case 'concise':
     default:
-      return {
-        targetWordsMin: 8,
-        targetWordsMax: 45,
-        maxChars: 420,
-        maxSentences: 2,
-      };
+      return (
+        smsTight ?? {
+          targetWordsMin: 8,
+          targetWordsMax: 45,
+          maxChars: 420,
+          maxSentences: 2,
+        }
+      );
   }
+}
+
+/**
+ * Explicit turn pacing. Orchestrator handlers still produce content;
+ * policy uses this to drop follow-ups on wait/escalate turns.
+ */
+export type TurnMode = 'answer' | 'ask' | 'wait' | 'escalate' | 'end';
+
+export function decideTurnMode(p: {
+  aiPaused?: boolean;
+  handoffOpen?: boolean;
+  hasAnswers?: boolean;
+  hasQuestion?: boolean;
+  customerFarewell?: boolean;
+  missingCritical?: boolean;
+}): TurnMode {
+  if (p.aiPaused) return 'wait';
+  if (p.handoffOpen) return 'escalate';
+  if (p.customerFarewell && !p.hasAnswers) return 'end';
+  if (p.hasAnswers && p.hasQuestion) return 'ask';
+  if (p.hasAnswers) return 'answer';
+  if (p.missingCritical || p.hasQuestion) return 'ask';
+  return 'answer';
 }
 
 export function resolveVerbosityMode(params: {
@@ -195,9 +234,9 @@ export function inferTurnKind(params: {
 export function evaluateLength(
   text: string,
   mode: VerbosityMode,
-  opts?: { justifiedExtraLength?: boolean },
+  opts?: { justifiedExtraLength?: boolean; channel?: CustomerChannel | null },
 ): LengthEval {
-  const budget = budgetFor(mode);
+  const budget = budgetFor(mode, opts?.channel);
   const words = estimateWords(text);
   const sentences = splitSentences(text).length;
   const questions = countQuestions(text);
@@ -239,6 +278,9 @@ export function planConciseResponse(
     hasCards?: boolean;
     /** Keep more narration for safety / handoff / save failures */
     preserveAll?: boolean;
+    channel?: CustomerChannel | null;
+    aiPaused?: boolean;
+    handoffOpen?: boolean;
   },
 ): PlannedCustomerReply {
   const turnKind =
@@ -251,6 +293,18 @@ export function planConciseResponse(
     customerMessage: params.customerMessage,
     verboseRepliesFlag: params.verboseRepliesFlag,
     turnKind,
+  });
+  const turnMode = decideTurnMode({
+    aiPaused: params.aiPaused,
+    handoffOpen:
+      params.handoffOpen ||
+      turnKind === 'human_handoff' ||
+      turnKind === 'complaint',
+    hasAnswers: (plan.directAnswer?.length ?? 0) > 0,
+    hasQuestion: !!plan.followUpQuestion?.trim(),
+    customerFarewell: /\b(thanks?|thank you|bye|goodbye|that'?s all)\b/i.test(
+      params.customerMessage,
+    ),
   });
 
   if (params.preserveAll || verbosityMode === 'verbose') {
@@ -308,6 +362,15 @@ export function planConciseResponse(
 
   // One question max; drop if complaint / farewell-style small talk with no task.
   let followUp = plan.followUpQuestion?.trim();
+  if (turnMode === 'wait' || turnMode === 'end') followUp = undefined;
+  if (turnMode === 'escalate' && followUp) {
+    if (
+      !/\b(human|person|agent|specialist|call|connect|transfer)\b/i.test(
+        followUp,
+      )
+    )
+      followUp = undefined;
+  }
   if (turnKind === 'complaint' && followUp) {
     // Complaints: no sales-progression question; keep only if it's about human help.
     if (!/\b(human|person|agent|specialist|call|connect|transfer)\b/i.test(followUp))
@@ -337,7 +400,9 @@ export function planConciseResponse(
     verbosityMode,
     turnKind,
     policyVersion: CONVERSATION_POLICY_VERSION,
-    length: evaluateLength(preview, verbosityMode),
+    length: evaluateLength(preview, verbosityMode, {
+      channel: params.channel,
+    }),
     droppedNarration,
     droppedAnswers,
   };
@@ -351,19 +416,21 @@ export function planConciseResponse(
 export function acceptCustomerReply(
   reply: string,
   mode: VerbosityMode,
+  channel?: CustomerChannel | null,
 ): { accept: boolean; length: LengthEval; reason?: string } {
   const length = evaluateLength(reply, mode, {
     justifiedExtraLength: mode !== 'concise',
+    channel,
   });
   if (length.questions > 1)
     return { accept: false, length, reason: 'multiple_questions' };
-  if (length.chars > budgetFor(mode).maxChars)
+  if (length.chars > budgetFor(mode, channel).maxChars)
     return { accept: false, length, reason: 'too_long' };
   if (mode === 'concise' && length.sentences > 2)
     return { accept: false, length, reason: 'too_many_sentences' };
   if (
     mode === 'concise' &&
-    length.words > budgetFor(mode).targetWordsMax + 10
+    length.words > budgetFor(mode, channel).targetWordsMax + 10
   )
     return { accept: false, length, reason: 'too_many_words' };
   // Scripted filler is never acceptable on the customer path.
@@ -379,19 +446,26 @@ export function chooseReplyWithinBudget(params: {
   composed?: string;
   draft: string;
   mode: VerbosityMode;
+  channel?: CustomerChannel | null;
 }): { text: string; source: 'composed' | 'draft'; length: LengthEval } {
   const composed = params.composed?.trim();
   if (composed) {
-    const check = acceptCustomerReply(composed, params.mode);
+    const check = acceptCustomerReply(composed, params.mode, params.channel);
     if (check.accept)
       return { text: composed, source: 'composed', length: check.length };
   }
   // Draft may still be long (handlers); take first 1–2 sentences when concise.
-  const draftTrimmed = trimToSentenceBudget(params.draft, params.mode);
+  const draftTrimmed = trimToSentenceBudget(
+    params.draft,
+    params.mode,
+    params.channel,
+  );
   return {
     text: draftTrimmed,
     source: 'draft',
-    length: evaluateLength(draftTrimmed, params.mode),
+    length: evaluateLength(draftTrimmed, params.mode, {
+      channel: params.channel,
+    }),
   };
 }
 
@@ -403,8 +477,12 @@ export function chooseReplyWithinBudget(params: {
 const CAVEAT =
   /\b(estimate|request|preview|in transit|not confirmed|illustrative|example)\b/i;
 
-export function trimToSentenceBudget(text: string, mode: VerbosityMode): string {
-  const budget = budgetFor(mode);
+export function trimToSentenceBudget(
+  text: string,
+  mode: VerbosityMode,
+  channel?: CustomerChannel | null,
+): string {
+  const budget = budgetFor(mode, channel);
   const sentences = splitSentences(text);
   if (sentences.length === 0) return text.trim();
   if (mode !== 'concise' || sentences.length <= budget.maxSentences) {

@@ -54,6 +54,11 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   copilot: false,
   leadCapture: true,
   handoff: true,
+  /**
+   * Auto-assign new leads to STAFF/MANAGER via least-open-load round-robin.
+   * Default off — enable per rooftop after staffing the queue.
+   */
+  roundRobinAssign: false,
   knowledge: false,
   uploads: false,
   appointments: false,

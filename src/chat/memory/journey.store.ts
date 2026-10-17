@@ -283,6 +283,7 @@ export type TurnSession = {
   externalKey: string;
   tenantId: string;
   locationId: string | null;
+  channel: string;
   state: JourneyState;
   version: number;
   aiPaused: boolean;
@@ -305,6 +306,7 @@ export class JourneyStore {
     tenantId: string,
     locationId: string | null | undefined,
     externalKey: string,
+    channel: 'WIDGET' | 'SMS' | 'EMAIL' | 'WHATSAPP' | 'VOICE' = 'WIDGET',
   ): Promise<TurnSession> {
     let row = await this.prisma.conversation.findUnique({
       where: { tenantId_externalKey: { tenantId, externalKey } },
@@ -317,7 +319,7 @@ export class JourneyStore {
             tenantId,
             locationId: locationId ?? null,
             externalKey,
-            channel: 'WIDGET',
+            channel,
             state: emptyJourney() as unknown as Prisma.InputJsonValue,
           },
         });
@@ -338,6 +340,7 @@ export class JourneyStore {
       externalKey,
       tenantId,
       locationId: row.locationId ?? locationId ?? null,
+      channel: row.channel ?? channel,
       state: upgradeState(row.state),
       version: row.stateVersion,
       aiPaused: row.aiPaused,

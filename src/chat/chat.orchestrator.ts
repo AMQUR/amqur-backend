@@ -4344,6 +4344,7 @@ export class ChatOrchestrator {
   }
 
   private async handleServiceStatus(t: Turn) {
+    if (await this.capBlocked(t, 'service')) return;
     t.evidence.push(
       this.evidenceSvc.unverified(
         t.tenantId,
@@ -6005,6 +6006,11 @@ export class ChatOrchestrator {
       m.push(`customer first name: ${st.contact.firstName}`);
     if (st.contact.phone || st.contact.email)
       m.push('contact details: on file');
+    if (st.pending) m.push(`awaiting answer to: ${st.pending}`);
+    if (st.lastAsked?.key)
+      m.push(`last asked: ${st.lastAsked.key} (turn ${st.lastAsked.turn})`);
+    if (st.lastOffer?.text)
+      m.push(`last offer: ${String(st.lastOffer.text).slice(0, 120)}`);
     return m;
   }
 
@@ -6953,6 +6959,12 @@ export class ChatOrchestrator {
         intents: t.u.intents.map((i) => i.intent),
         hasCards: t.cards.length > 0,
         preserveAll,
+        channel: t.s.channel === 'SMS' ? 'SMS' : 'WIDGET',
+        aiPaused: t.s.aiPaused,
+        handoffOpen:
+          t.s.handoffState === 'ASSIGNED' ||
+          t.s.handoffState === 'JOINED' ||
+          t.s.handoffState === 'REQUESTED',
       },
     );
     const plan = compose(planned.plan);

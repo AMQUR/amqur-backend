@@ -29,7 +29,11 @@ import {
 } from '../common/decorators/current-user.decorator';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
-import { CAMPAIGN_TRIGGERS, renderTemplate } from './campaign.engine';
+import {
+  CAMPAIGN_TRIGGERS,
+  CampaignEngine,
+  renderTemplate,
+} from './campaign.engine';
 
 class CampaignDto {
   @IsString() @MinLength(2) @MaxLength(80) name!: string;
@@ -53,7 +57,10 @@ class PatchDto {
 @Controller('campaigns')
 @UseGuards(RolesGuard)
 export class CampaignsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly engine: CampaignEngine,
+  ) {}
 
   private validateTemplate(t: string) {
     const probe = renderTemplate(t, {
@@ -152,5 +159,40 @@ export class CampaignsController {
       },
     });
     return row;
+  }
+
+  /**
+   * Dry-run audience preview. Never queues or sends messages.
+   * Requires ADMIN+ — managers can list but not preview PII-adjacent samples.
+   */
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Post(':id/preview')
+  async preview(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    assertStaffRole(u);
+    const result = await this.engine.previewAudience(u.tenantId, id);
+    if (!result) throw new NotFoundException();
+    await this.prisma.auditLog.create({
+      data: {
+        tenantId: u.tenantId,
+        userId: u.sub,
+        action: 'campaign.preview',
+        resource: 'FollowUpCampaign',
+        resourceId: id,
+        metadata: {
+          candidates: result.totals.candidates,
+          eligible: result.totals.eligible,
+        },
+      },
+    });
+    return result;
+  }
+
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Get(':id/analytics')
+  async analytics(@CurrentUser() u: AuthUser, @Param('id') id: string) {
+    assertStaffRole(u);
+    const result = await this.engine.stepAnalytics(u.tenantId, id);
+    if (!result) throw new NotFoundException();
+    return result;
   }
 }

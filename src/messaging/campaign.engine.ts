@@ -151,6 +151,211 @@ export class CampaignEngine implements OnModuleInit {
     return { note: `stopped:${reason}` };
   }
 
+  /**
+   * Dry-run audience preview. Never queues or sends. Re-checks consent,
+   * opt-out, closed leads, and appointment status against live records.
+   */
+  async previewAudience(
+    tenantId: string,
+    campaignId: string,
+    opts?: { limit?: number },
+  ) {
+    const c = await this.prisma.followUpCampaign.findFirst({
+      where: { id: campaignId, tenantId },
+    });
+    if (!c) return null;
+    const limit = Math.min(Math.max(opts?.limit ?? 25, 1), 100);
+    const meta = CAMPAIGN_TRIGGERS[c.trigger as CampaignTrigger];
+    const automationEnabled = await this.automationOn(tenantId, c.locationId);
+    const sample: Array<{
+      subjectId: string;
+      eligible: boolean;
+      reason: string | null;
+      maskedEndpoint: string | null;
+    }> = [];
+    let eligible = 0;
+    let ineligible = 0;
+    const reasons: Record<string, number> = {};
+
+    if (!meta) {
+      return {
+        campaignId: c.id,
+        trigger: c.trigger,
+        channel: c.channel,
+        enabled: c.enabled,
+        automationEnabled,
+        dryRun: true as const,
+        wouldSend: false,
+        totals: { candidates: 0, eligible: 0, ineligible: 0 },
+        reasons: { invalid_trigger: 1 },
+        sample: [],
+        note: 'Preview only — no messages queued or sent.',
+      };
+    }
+
+    const subjects = await this.candidateSubjects(c, 200);
+    for (const id of subjects) {
+      const ctx = await this.subject(c, id);
+      let reason: string | null = null;
+      let phone: string | null = null;
+      if ('stop' in ctx) {
+        reason = ctx.stop;
+      } else {
+        phone = ctx.phone;
+        if (!phone) reason = 'no_endpoint';
+        else if (ctx.conversationId) {
+          const conv = await this.prisma.conversation.findUnique({
+            where: { id: ctx.conversationId },
+            select: { aiPaused: true, handoffState: true },
+          });
+          const policy = (c.policy ?? {}) as CampaignPolicy;
+          if (
+            policy.pauseOnHumanTakeover !== false &&
+            conv &&
+            (conv.aiPaused ||
+              conv.handoffState === 'ASSIGNED' ||
+              conv.handoffState === 'JOINED')
+          )
+            reason = 'human_owns_conversation';
+        }
+        if (!reason) {
+          const consent = await this.messaging.previewConsent({
+            tenantId,
+            channel: 'SMS',
+            to: phone!,
+            purpose: meta.purpose as ConsentPurpose,
+          });
+          if (!consent.allowed) reason = consent.reason ?? 'consent_denied';
+        }
+      }
+      if (!automationEnabled) reason = reason ?? 'automation_disabled';
+      if (!c.enabled) reason = reason ?? 'campaign_disabled';
+
+      const ok = !reason;
+      if (ok) eligible++;
+      else {
+        ineligible++;
+        reasons[reason!] = (reasons[reason!] ?? 0) + 1;
+      }
+      if (sample.length < limit) {
+        sample.push({
+          subjectId: id,
+          eligible: ok,
+          reason,
+          maskedEndpoint: phone ? maskEndpoint(phone) : null,
+        });
+      }
+    }
+
+    return {
+      campaignId: c.id,
+      name: c.name,
+      trigger: c.trigger,
+      channel: c.channel,
+      enabled: c.enabled,
+      version: c.version,
+      automationEnabled,
+      dryRun: true as const,
+      wouldSend: false,
+      totals: {
+        candidates: subjects.length,
+        eligible,
+        ineligible,
+      },
+      reasons,
+      sample,
+      note: 'Preview only — no messages queued or sent. Live send still requires enabled campaign, automatedFollowup flag, consent, and quiet-hours checks at delivery.',
+    };
+  }
+
+  async stepAnalytics(tenantId: string, campaignId: string, days = 7) {
+    const c = await this.prisma.followUpCampaign.findFirst({
+      where: { id: campaignId, tenantId },
+      select: { id: true, name: true, trigger: true },
+    });
+    if (!c) return null;
+    const since = new Date(Date.now() - days * 86_400_000);
+    const events = await this.prisma.analyticsEvent.findMany({
+      where: {
+        tenantId,
+        eventType: {
+          in: ['campaign.step_queued', 'campaign.step_suppressed'],
+        },
+        occurredAt: { gte: since },
+      },
+      select: { eventType: true, properties: true },
+      take: 2000,
+    });
+    let queued = 0;
+    let suppressed = 0;
+    const suppressReasons: Record<string, number> = {};
+    for (const e of events) {
+      const props = (e.properties ?? {}) as {
+        campaignId?: string;
+        reason?: string | null;
+      };
+      if (props.campaignId !== campaignId) continue;
+      if (e.eventType === 'campaign.step_queued') queued++;
+      else {
+        suppressed++;
+        const r = props.reason ?? 'unknown';
+        suppressReasons[r] = (suppressReasons[r] ?? 0) + 1;
+      }
+    }
+    return {
+      campaignId: c.id,
+      name: c.name,
+      trigger: c.trigger,
+      windowDays: days,
+      queued,
+      suppressed,
+      suppressReasons,
+    };
+  }
+
+  private async candidateSubjects(
+    c: FollowUpCampaign,
+    take: number,
+  ): Promise<string[]> {
+    const loc =
+      c.locationId != null ? { locationId: c.locationId } : {};
+    if (c.trigger.startsWith('appointment.')) {
+      const status =
+        c.trigger === 'appointment.confirmed.reminder'
+          ? 'CONFIRMED'
+          : c.trigger === 'appointment.no_show'
+            ? 'NO_SHOW'
+            : undefined;
+      const rows = await this.prisma.appointment.findMany({
+        where: {
+          tenantId: c.tenantId,
+          ...loc,
+          ...(status ? { status } : {}),
+          scheduledAt:
+            c.trigger === 'appointment.confirmed.reminder'
+              ? { gt: new Date() }
+              : undefined,
+        },
+        select: { id: true },
+        orderBy: { updatedAt: 'desc' },
+        take,
+      });
+      return rows.map((r) => r.id);
+    }
+    const rows = await this.prisma.lead.findMany({
+      where: {
+        tenantId: c.tenantId,
+        ...loc,
+        status: { in: ['OPEN', 'CONTACTED', 'QUALIFIED'] },
+        phone: { not: null },
+      },
+      select: { id: true },
+      orderBy: { updatedAt: 'desc' },
+      take,
+    });
+    return rows.map((r) => r.id);
+  }
+
   async execute(p: StepPayload) {
     const c = await this.prisma.followUpCampaign.findUnique({
       where: { id: p.campaignId },
@@ -302,6 +507,12 @@ export class CampaignEngine implements OnModuleInit {
       },
     };
   }
+}
+
+function maskEndpoint(phone: string): string {
+  const d = phone.replace(/\D/g, '');
+  if (d.length < 4) return '***';
+  return `***${d.slice(-4)}`;
 }
 
 type StepPayload = {

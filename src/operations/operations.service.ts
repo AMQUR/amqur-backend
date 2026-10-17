@@ -656,6 +656,91 @@ export class OperationsService {
     };
   }
 
+  /**
+   * Manager Daily Brief — narrative summary from real records only.
+   * Never invents sold/show outcomes without DMS attribution.
+   */
+  async dailyBrief(scope: Scope) {
+    const overview = await this.overview(scope);
+    const queues = await this.queues(scope);
+    const p = queues.prioritized;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const apptsToday = await this.prisma.appointment.count({
+      where: {
+        tenantId: scope.tenantId,
+        ...this.loc(scope),
+        scheduledAt: {
+          gte: todayStart,
+          lt: new Date(todayStart.getTime() + 86_400_000),
+        },
+        status: { in: ['CONFIRMED', 'REQUESTED', 'PENDING_CONFIRMATION'] },
+      },
+    });
+    const priorities: Array<{ key: string; count: number; href: string }> = [
+      {
+        key: 'unanswered_inbound',
+        count: p.unansweredInbound?.length ?? 0,
+        href: '#/inbox',
+      },
+      {
+        key: 'ai_uncertain',
+        count: p.aiUncertain?.length ?? 0,
+        href: '#/inbox',
+      },
+      {
+        key: 'overdue_leads',
+        count: p.overdueLeads?.length ?? 0,
+        href: '#/queues',
+      },
+      {
+        key: 'missed_appointments',
+        count: p.missedAppointments?.length ?? 0,
+        href: '#/appointments',
+      },
+      {
+        key: 'open_handoffs',
+        count: overview.attention.openHandoffs,
+        href: '#/inbox',
+      },
+      {
+        key: 'appointments_awaiting',
+        count: overview.attention.appointmentsAwaitingConfirmation,
+        href: '#/appointments',
+      },
+    ].filter((x) => x.count > 0);
+
+    const headlines: string[] = [];
+    if (priorities.length === 0)
+      headlines.push('No urgent staff queues right now.');
+    else
+      headlines.push(
+        `${priorities.reduce((a, b) => a + b.count, 0)} items need attention across ${priorities.length} queues.`,
+      );
+    headlines.push(
+      `${overview.outcomes.leadsCaptured} leads and ${overview.outcomes.confirmedAppointments} confirmed appointments in the last 7 days.`,
+    );
+    if (overview.aiQuality.replyFeedback?.total)
+      headlines.push(
+        `Staff rated ${overview.aiQuality.replyFeedback.good}/${overview.aiQuality.replyFeedback.total} AI replies as good (${overview.aiQuality.replyFeedback.tooLong} too long).`,
+      );
+    headlines.push(
+      `${apptsToday} appointment(s) on the book for today (confirmed or pending).`,
+    );
+
+    return {
+      generatedAt: new Date().toISOString(),
+      window: overview.window,
+      headlines,
+      priorities,
+      today: { appointmentsOnBook: apptsToday },
+      attention: overview.attention,
+      aiQuality: overview.aiQuality.replyFeedback,
+      outcomes: overview.outcomes,
+      note: 'Brief uses only persisted platform records. Sold/show attribution appears only when DMS/CRM outcome sync is connected.',
+    };
+  }
+
   async overview(scope: Scope) {
     const base = { tenantId: scope.tenantId, ...this.loc(scope) };
     const since = new Date(Date.now() - 7 * 86_400_000);

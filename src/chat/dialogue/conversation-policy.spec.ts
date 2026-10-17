@@ -1,7 +1,9 @@
 import {
   acceptCustomerReply,
+  budgetFor,
   chooseReplyWithinBudget,
   countQuestions,
+  decideTurnMode,
   estimateWords,
   evaluateLength,
   planConciseResponse,
@@ -142,6 +144,37 @@ describe('evaluateLength gates', () => {
     const e = evaluateLength(wall, 'concise');
     expect(e.withinBudget).toBe(false);
     expect(e.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+describe('decideTurnMode / SMS budgets', () => {
+  it('waits when staff owns the thread', () => {
+    expect(decideTurnMode({ aiPaused: true, hasAnswers: true })).toBe('wait');
+  });
+
+  it('escalates on open handoff', () => {
+    expect(decideTurnMode({ handoffOpen: true, hasQuestion: true })).toBe(
+      'escalate',
+    );
+  });
+
+  it('drops follow-ups on wait mode in planConciseResponse', () => {
+    const planned = planConciseResponse(
+      {
+        directAnswer: ['A teammate is helping you now.'],
+        followUpQuestion: 'What is your budget?',
+      },
+      {
+        customerMessage: 'ok',
+        aiPaused: true,
+      },
+    );
+    expect(planned.plan.followUpQuestion).toBeUndefined();
+  });
+
+  it('uses a tighter SMS character budget', () => {
+    expect(budgetFor('concise', 'SMS').maxChars).toBe(320);
+    expect(budgetFor('concise', 'WIDGET').maxChars).toBe(420);
   });
 });
 

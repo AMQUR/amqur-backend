@@ -1,16 +1,21 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { LeadStage, LeadStatus, Prisma } from '@prisma/client';
 import {
   normalizeEmail,
   normalizePhone,
   pickUniqueMatch,
 } from './contact-identity';
+import { resolveNewLeadAssignee } from './round-robin';
 
 @Injectable()
 export class LeadsService {
   private readonly logger = new Logger(LeadsService.name);
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly flags: FeatureFlagsService,
+  ) {}
 
   list(tenantId: string, opts?: { status?: LeadStatus; take?: number }) {
     return this.prisma.lead.findMany({
@@ -138,6 +143,15 @@ export class LeadsService {
       });
     }
 
+    const flags = await this.flags.resolve(
+      params.tenantId,
+      params.locationId,
+    );
+    const assignedUserId = await resolveNewLeadAssignee(this.prisma, flags, {
+      tenantId: params.tenantId,
+      locationId: params.locationId,
+    });
+
     return this.prisma.lead.create({
       data: {
         tenantId: params.tenantId,
@@ -154,6 +168,7 @@ export class LeadsService {
         preferredContact: params.preferredContact,
         source: 'widget',
         status: LeadStatus.OPEN,
+        assignedUserId,
       },
     });
   }
@@ -238,6 +253,11 @@ export class LeadsService {
     if (existing) {
       return this.prisma.lead.update({ where: { id: existing.id }, data });
     }
+    const flags = await this.flags.resolve(p.tenantId, p.locationId);
+    const assignedUserId = await resolveNewLeadAssignee(this.prisma, flags, {
+      tenantId: p.tenantId,
+      locationId: p.locationId,
+    });
     return this.prisma.lead.create({
       data: {
         ...data,
@@ -246,6 +266,7 @@ export class LeadsService {
         conversationId: p.conversationId,
         source: p.source ?? 'widget',
         status: LeadStatus.OPEN,
+        assignedUserId,
       },
     });
   }
