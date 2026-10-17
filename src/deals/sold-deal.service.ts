@@ -76,6 +76,7 @@ export class SoldDealService {
     }
 
     let leadId: string | undefined;
+    let conversationId: string | null = null;
     if (input.leadId?.trim()) {
       const lead = await this.prisma.lead.findFirst({
         where: {
@@ -83,7 +84,12 @@ export class SoldDealService {
           tenantId,
           locationId,
         },
-        select: { id: true, status: true, notes: true },
+        select: {
+          id: true,
+          status: true,
+          notes: true,
+          conversationId: true,
+        },
       });
       if (!lead) {
         return { accepted: false, reason: 'lead_not_found' };
@@ -100,12 +106,19 @@ export class SoldDealService {
         data: { status: LeadStatus.CONVERTED, notes },
       });
       leadId = lead.id;
+      conversationId = lead.conversationId;
     }
 
     const soldAt =
       input.soldAt && !Number.isNaN(Date.parse(input.soldAt))
         ? new Date(input.soldAt).toISOString()
         : undefined;
+
+    // Attribute only when a campaignId was already persisted on an inbound message
+    // (e.g. campaign SMS reply). Never invent campaign→sale links.
+    const campaignId = conversationId
+      ? await this.lastPersistedCampaignId(conversationId)
+      : null;
 
     await this.analytics.trackEvent(
       tenantId,
@@ -120,6 +133,7 @@ export class SoldDealService {
         soldAt,
         recordedByStaffId: input.source === 'staff' ? actor.id : undefined,
         staffRole: input.source === 'staff' ? actor.role : undefined,
+        ...(campaignId ? { campaignId } : {}),
       },
     );
 
@@ -142,6 +156,28 @@ export class SoldDealService {
     });
 
     return { accepted: true, dmsDealId, leadId };
+  }
+
+  /**
+   * Latest campaignId already stored on a USER message for this conversation.
+   * Returns null when none — never guesses from timing alone.
+   */
+  private async lastPersistedCampaignId(
+    conversationId: string,
+  ): Promise<string | null> {
+    const rows = await this.prisma.message.findMany({
+      where: { conversationId, role: 'USER' },
+      orderBy: { createdAt: 'desc' },
+      take: 40,
+      select: { metadata: true },
+    });
+    for (const row of rows) {
+      const meta = row.metadata;
+      if (!meta || typeof meta !== 'object' || Array.isArray(meta)) continue;
+      const id = (meta as { campaignId?: unknown }).campaignId;
+      if (typeof id === 'string' && id.trim()) return id.trim();
+    }
+    return null;
   }
 
   /** Live DMS connection required before any sold attribution is persisted. */

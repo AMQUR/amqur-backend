@@ -34,6 +34,7 @@ type Analytics = {
   suppressed: number;
   customerReplies: number;
   bookingIntentReplies: number;
+  soldAttributed?: number;
   suppressReasons: Record<string, number>;
   windowDays: number;
   note?: string;
@@ -167,6 +168,9 @@ export function Campaigns({ locationId }: { locationId: string }) {
             </span>
             <span>
               Booking intent <strong>{analytics.bookingIntentReplies ?? 0}</strong>
+            </span>
+            <span>
+              Sold (attributed) <strong>{analytics.soldAttributed ?? 0}</strong>
             </span>
           </div>
           {analytics.note && <p className="muted small">{analytics.note}</p>}

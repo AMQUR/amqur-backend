@@ -28,6 +28,10 @@ describe('CampaignEngine.stepAnalytics', () => {
             eventType: 'campaign.customer_reply',
             properties: { campaignId: 'other', bookingIntent: true },
           },
+          {
+            eventType: 'deal.sold_recorded',
+            properties: { campaignId: 'camp-1', dmsDealId: 'D1' },
+          },
         ]),
       },
     };
@@ -43,6 +47,7 @@ describe('CampaignEngine.stepAnalytics', () => {
       suppressed: 1,
       customerReplies: 1,
       bookingIntentReplies: 1,
+      soldAttributed: 1,
       suppressReasons: { quiet_hours: 1 },
     });
     expect(r?.note).toMatch(/persisted analytics/i);

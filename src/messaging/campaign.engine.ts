@@ -283,6 +283,7 @@ export class CampaignEngine implements OnModuleInit {
             'campaign.step_queued',
             'campaign.step_suppressed',
             'campaign.customer_reply',
+            'deal.sold_recorded',
           ],
         },
         occurredAt: { gte: since },
@@ -294,6 +295,7 @@ export class CampaignEngine implements OnModuleInit {
     let suppressed = 0;
     let customerReplies = 0;
     let bookingIntentReplies = 0;
+    let soldAttributed = 0;
     const suppressReasons: Record<string, number> = {};
     for (const e of events) {
       const props = (e.properties ?? {}) as {
@@ -306,6 +308,8 @@ export class CampaignEngine implements OnModuleInit {
       else if (e.eventType === 'campaign.customer_reply') {
         customerReplies++;
         if (props.bookingIntent === true) bookingIntentReplies++;
+      } else if (e.eventType === 'deal.sold_recorded') {
+        soldAttributed++;
       } else {
         suppressed++;
         const r = props.reason ?? 'unknown';
@@ -321,8 +325,9 @@ export class CampaignEngine implements OnModuleInit {
       suppressed,
       customerReplies,
       bookingIntentReplies,
+      soldAttributed,
       suppressReasons,
-      note: 'Counts only persisted analytics events. Sold/show outcomes require separate DMS reconciliation — never inferred here.',
+      note: 'Counts only persisted analytics events. soldAttributed requires DMS sold reconciliation that already carried campaignId from a prior inbound message — never inferred from timing alone.',
     };
   }
 

@@ -4,6 +4,7 @@ describe('SoldDealService', () => {
   const prisma = {
     integrationConnection: { findFirst: jest.fn() },
     lead: { findFirst: jest.fn(), update: jest.fn() },
+    message: { findMany: jest.fn() },
     auditLog: { create: jest.fn() },
   };
   const analytics = { trackEvent: jest.fn().mockResolvedValue(null) };
@@ -41,5 +42,61 @@ describe('SoldDealService', () => {
     expect(prisma.lead.update).not.toHaveBeenCalled();
     expect(analytics.trackEvent).not.toHaveBeenCalled();
     expect(prisma.auditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('includes campaignId on sold analytics only when persisted on a prior USER message', async () => {
+    prisma.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-1' });
+    prisma.lead.findFirst.mockResolvedValue({
+      id: 'lead-1',
+      status: 'QUALIFIED',
+      notes: null,
+      conversationId: 'conv-1',
+    });
+    prisma.lead.update.mockResolvedValue({});
+    prisma.message.findMany.mockResolvedValue([
+      { metadata: { campaignId: 'camp-9', channel: 'SMS' } },
+    ]);
+    prisma.auditLog.create.mockResolvedValue({});
+
+    const result = await svc.recordSoldDeal('tenant-1', actor, {
+      ...baseInput,
+      leadId: 'lead-1',
+    });
+
+    expect(result).toEqual({
+      accepted: true,
+      dmsDealId: 'DMS-DEAL-99',
+      leadId: 'lead-1',
+    });
+    expect(analytics.trackEvent).toHaveBeenCalledWith(
+      'tenant-1',
+      'loc-1',
+      'deal.sold_recorded',
+      expect.objectContaining({ campaignId: 'camp-9', leadId: 'lead-1' }),
+    );
+  });
+
+  it('omits campaignId when conversation has no campaign metadata', async () => {
+    prisma.integrationConnection.findFirst.mockResolvedValue({ id: 'conn-1' });
+    prisma.lead.findFirst.mockResolvedValue({
+      id: 'lead-1',
+      status: 'CONTACTED',
+      notes: null,
+      conversationId: 'conv-1',
+    });
+    prisma.lead.update.mockResolvedValue({});
+    prisma.message.findMany.mockResolvedValue([{ metadata: { channel: 'SMS' } }]);
+    prisma.auditLog.create.mockResolvedValue({});
+
+    await svc.recordSoldDeal('tenant-1', actor, {
+      ...baseInput,
+      leadId: 'lead-1',
+    });
+
+    const props = analytics.trackEvent.mock.calls[0][3] as Record<
+      string,
+      unknown
+    >;
+    expect(props.campaignId).toBeUndefined();
   });
 });
