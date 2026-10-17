@@ -379,8 +379,10 @@ export class AppointmentService {
           scheduler.provider,
           res,
         );
-        if (res.kind === 'confirmed') outcome = 'confirmed';
-        else if (res.kind === 'pending') outcome = 'pending';
+        if (res.kind === 'confirmed') {
+          outcome = 'confirmed';
+          await this.enrollAppointmentReminder(input.tenantId, final);
+        } else if (res.kind === 'pending') outcome = 'pending';
         else if (res.kind === 'failed') providerFailure = res.errorCode;
         else if (res.kind === 'unavailable') {
           return {
@@ -559,6 +561,21 @@ export class AppointmentService {
     return updated;
   }
 
+  /** Schedules appointment reminder campaign when a slot is confirmed with a time. */
+  private async enrollAppointmentReminder(
+    tenantId: string,
+    appt: Pick<Appointment, 'id' | 'locationId' | 'scheduledAt'>,
+  ) {
+    if (!appt.scheduledAt) return;
+    await this.campaigns?.onEvent({
+      tenantId,
+      locationId: appt.locationId,
+      trigger: 'appointment.confirmed.reminder',
+      subjectId: appt.id,
+      scheduledAt: appt.scheduledAt,
+    });
+  }
+
   /** Staff confirmation (human verified the slot by phone/DMS) — recorded with actor. */
   async staffTransition(params: {
     tenantId: string;
@@ -605,14 +622,8 @@ export class AppointmentService {
       where: { id: appt.id },
       data,
     });
-    if (params.to === 'CONFIRMED' && updated.scheduledAt) {
-      await this.campaigns?.onEvent({
-        tenantId: params.tenantId,
-        locationId: updated.locationId,
-        trigger: 'appointment.confirmed.reminder',
-        subjectId: updated.id,
-        scheduledAt: updated.scheduledAt,
-      });
+    if (params.to === 'CONFIRMED') {
+      await this.enrollAppointmentReminder(params.tenantId, updated);
     }
     if (params.to === 'NO_SHOW') {
       await this.campaigns?.onEvent({

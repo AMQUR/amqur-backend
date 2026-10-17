@@ -100,3 +100,60 @@ describe('AppointmentService.updateStaff', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('AppointmentService.staffTransition', () => {
+  const prisma = {
+    appointment: {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    analyticsEvent: { create: jest.fn().mockResolvedValue({}) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+  };
+  const campaigns = { onEvent: jest.fn().mockResolvedValue(undefined) };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('enrolls appointment reminder campaign on CONFIRMED', async () => {
+    const scheduledAt = new Date('2026-10-17T15:00:00.000Z');
+    prisma.appointment.findFirst.mockResolvedValue({
+      id: 'appt-1',
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      status: AppointmentStatus.REQUESTED,
+      requestedAt: scheduledAt,
+      provenance: {},
+    });
+    prisma.appointment.update.mockResolvedValue({
+      id: 'appt-1',
+      locationId: 'loc-1',
+      scheduledAt,
+    });
+    const svc = new AppointmentService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      campaigns as never,
+    );
+
+    await svc.staffTransition({
+      tenantId: 'tenant-1',
+      appointmentId: 'appt-1',
+      to: AppointmentStatus.CONFIRMED,
+      actorId: 'user-1',
+      scheduledAt: scheduledAt.toISOString(),
+    });
+
+    expect(campaigns.onEvent).toHaveBeenCalledWith({
+      tenantId: 'tenant-1',
+      locationId: 'loc-1',
+      trigger: 'appointment.confirmed.reminder',
+      subjectId: 'appt-1',
+      scheduledAt,
+    });
+  });
+});
