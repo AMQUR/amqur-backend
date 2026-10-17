@@ -255,6 +255,38 @@ describe('InventoryEngine.browseForStaff', () => {
     );
   });
 
+  it('list browse uses only the requested tenantId (wrong tenant → empty)', async () => {
+    findMany.mockResolvedValue([]);
+    const rows = await engine.browseForStaff({
+      tenantId: 'tenant-b',
+      make: 'Jeep',
+    });
+    expect(rows).toEqual([]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    const { where } = findMany.mock.calls[0][0];
+    expect(where.AND).toEqual(
+      expect.arrayContaining([{ tenantId: 'tenant-b' }]),
+    );
+  });
+
+  it('VIN lookup is tenant-scoped (other tenant’s VIN → empty)', async () => {
+    findFirst.mockResolvedValue(null);
+    const rows = await engine.browseForStaff({
+      tenantId: 'tenant-b',
+      vin: '1C4RJFBG0MC100001',
+    });
+    expect(rows).toEqual([]);
+    expect(findMany).not.toHaveBeenCalled();
+    expect(findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 'tenant-b',
+          vin: '1C4RJFBG0MC100001',
+        }),
+      }),
+    );
+  });
+
   it('applies free-text q across make, model, trim, vin, and stock', async () => {
     await engine.browseForStaff({ tenantId: 't1', q: 'wrangler' });
     const { where } = findMany.mock.calls[0][0];
