@@ -70,10 +70,26 @@ export function Inbox({ locationId }: { locationId: string }) {
   );
 }
 
+type Attachment = {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  scannedStatus: string;
+  downloadPath?: string | null;
+};
+
 function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) {
   const d = useAsync(() => api<Detail>(`/ops/conversations/${id}`), [id]);
+  const attachments = useAsync(
+    () =>
+      api<{ attachments: Attachment[] }>(`/ops/conversations/${id}/attachments`).then(
+        (r) => r.attachments ?? [],
+      ),
+    [id],
+  );
   const [text, setText] = useState('');
   const [note, setNote] = useState('');
+  const [fileId, setFileId] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const me = session.user?.id;
   useEffect(() => {
@@ -177,6 +193,54 @@ function Conversation({ id, onChanged }: { id: string; onChanged: () => void }) 
               {p.suspectedPart ?? 'Request'} · <Badge tone={statusTone(p.status)}>{p.status}</Badge> {p.vin ? '· VIN on file' : '· needs VIN'}
             </Card>
           ))}
+          <Card title="Attachments">
+            <p className="muted small">Only scanned-clean files can be linked. Upload via the uploads API first.</p>
+            <ul className="kv">
+              {(attachments.data ?? []).map((a) => (
+                <li key={a.id}>
+                  <span>{a.originalName}</span>
+                  <span>
+                    <Badge tone={a.scannedStatus === 'CLEAN' ? 'ok' : 'warn'}>{a.scannedStatus}</Badge>
+                    {a.downloadPath ? (
+                      <a className="small" href={a.downloadPath} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {(attachments.data ?? []).length === 0 && (
+              <p className="muted small">No attachments yet.</p>
+            )}
+            <form
+              className="row"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!fileId.trim()) return;
+                setErr(null);
+                void api(`/ops/conversations/${id}/attachments`, {
+                  method: 'POST',
+                  body: JSON.stringify({ fileId: fileId.trim() }),
+                })
+                  .then(() => {
+                    setFileId('');
+                    void attachments.reload();
+                  })
+                  .catch((ex) => setErr(ex instanceof Error ? ex.message : 'Attach failed'));
+              }}
+            >
+              <input
+                placeholder="File id (CLEAN)"
+                value={fileId}
+                onChange={(e) => setFileId(e.target.value)}
+                aria-label="File id to attach"
+              />
+              <button className="btn" type="submit" disabled={!fileId.trim()}>
+                Link file
+              </button>
+            </form>
+          </Card>
         </aside>
       </div>
       <form
