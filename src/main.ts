@@ -13,6 +13,8 @@ import { RequestIdInterceptor } from './common/interceptors/request-id.intercept
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: ['error', 'warn', 'log'],
+    // Preserve raw bytes for provider webhook HMAC (e.g. Meta X-Hub-Signature-256).
+    rawBody: true,
   });
   const logger = new Logger('Bootstrap');
 
