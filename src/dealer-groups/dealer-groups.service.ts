@@ -298,7 +298,13 @@ export class DealerGroupsService {
       select: { id: true, slug: true, name: true },
       orderBy: { name: 'asc' },
     });
-    const rooftops = [];
+    const rooftops: Array<{
+      tenant: { id: string; slug: string; name: string };
+      leads7d: number;
+      confirmedAppts7d: number;
+      openHandoffs: number;
+      replyFeedbackGoodRate: number | null;
+    }> = [];
     for (const t of tenants) {
       const [leads7d, confirmedAppts7d, openHandoffs, replyFeedbackEvents] =
         await Promise.all([
