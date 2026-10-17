@@ -324,6 +324,45 @@ describe('OperationsService.appointmentOutcomes', () => {
   });
 });
 
+describe('OperationsService.missedOpportunities', () => {
+  it('aggregates queue lengths and analytics miss counts without synthetic scores', async () => {
+    const svc = makeOperationsService({});
+    jest.spyOn(svc, 'overview').mockResolvedValue({
+      window: '7d',
+      since: '2026-10-01T00:00:00.000Z',
+      aiQuality: { inventoryMisses: 2, knowledgeMisses: 1, replyFeedback: {} },
+    } as Awaited<ReturnType<OperationsService['overview']>>);
+    jest.spyOn(svc, 'queues').mockResolvedValue({
+      prioritized: {
+        unansweredInbound: [{ id: 'c1' }],
+        aiUncertain: [{ id: 'c2' }, { id: 'c3' }],
+        overdueLeads: [],
+        missedAppointments: [{ id: 'a1' }],
+      },
+    } as Awaited<ReturnType<OperationsService['queues']>>);
+
+    const r = await svc.missedOpportunities({ tenantId: 'tenant-1', locationId: null });
+
+    expect(r.prioritized).toEqual({
+      unansweredInbound: 1,
+      aiUncertainReplies: 2,
+      overdueLeads: 0,
+      missedAppointments: 1,
+    });
+    expect(r.aiMissSignals).toEqual({
+      zeroInventoryResults: 2,
+      knowledgeMiss: 1,
+      unansweredInbound: 1,
+    });
+    expect(r.totals).toEqual({
+      prioritizedQueueItems: 4,
+      analyticsMissEvents: 3,
+      combinedAttention: 7,
+    });
+    expect(r.note).toMatch(/persisted queues and analytics/);
+  });
+});
+
 describe('OperationsService.listInventory', () => {
   it('delegates GET /ops/inventory to browseForStaff with scope and filters', async () => {
     const browseForStaff = jest.fn().mockResolvedValue([]);

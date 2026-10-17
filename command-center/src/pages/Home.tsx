@@ -48,6 +48,28 @@ type Missed = {
   note: string;
 };
 
+/** Deep links for persisted queue + analytics miss counts (no synthetic routing). */
+const MISSED_OP_HREF: Record<string, string> = {
+  unansweredInbound: '#/inbox',
+  aiUncertainReplies: '#/queues',
+  overdueLeads: '#/queues',
+  missedAppointments: '#/appointments',
+  zeroInventoryResults: '#/inventory',
+  knowledgeMiss: '#/knowledge',
+};
+
+function missedOpRows(missed: Missed): Array<{ key: string; count: number; href: string }> {
+  const rows: Array<{ key: string; count: number; href: string }> = [];
+  for (const [key, count] of Object.entries(missed.prioritized)) {
+    if (count > 0 && MISSED_OP_HREF[key]) rows.push({ key, count, href: MISSED_OP_HREF[key] });
+  }
+  for (const [key, count] of Object.entries(missed.aiMissSignals)) {
+    if (key === 'unansweredInbound') continue;
+    if (count > 0 && MISSED_OP_HREF[key]) rows.push({ key, count, href: MISSED_OP_HREF[key] });
+  }
+  return rows;
+}
+
 type Satisfaction = {
   available: boolean;
   reason?: string;
@@ -87,16 +109,28 @@ export function Home({ locationId }: { locationId: string }) {
           <p className="muted small">{brief.data.note}</p>
         </Card>
       )}
-      {missed.data && (
+      {missed.data && (() => {
+        const missedRows = missedOpRows(missed.data);
+        return (
         <Card title="Missed opportunities · 7 days">
           <div className="stats">
             <Stat label="Queue items" value={missed.data.totals.prioritizedQueueItems} />
             <Stat label="AI miss signals" value={missed.data.totals.analyticsMissEvents} />
             <Stat label="Combined attention" value={missed.data.totals.combinedAttention} />
           </div>
+          {missedRows.length > 0 && (
+            <div className="stats">
+              {missedRows.map((row) => (
+                <a key={row.key} href={row.href}>
+                  <Stat label={row.key.replace(/([A-Z])/g, ' $1').replace(/_/g, ' ').trim()} value={row.count} />
+                </a>
+              ))}
+            </div>
+          )}
           <p className="muted small">{missed.data.note}</p>
         </Card>
-      )}
+        );
+      })()}
       {sat.data && (
         <Card title="Customer satisfaction">
           {!sat.data.available ? (
