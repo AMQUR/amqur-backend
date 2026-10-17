@@ -3700,6 +3700,14 @@ export class ChatOrchestrator {
   ) {
     if (res.status === 'incomplete') return;
     if (res.status === 'rejected') {
+      const hours = await this.getHours(t);
+      const demoPrefix = hours?.synthetic
+        ? tr(
+            t.lang,
+            'These are simulated demo hours, not the store’s real hours — ',
+            'Estos son horarios simulados de demostración, no los reales — ',
+          )
+        : '';
       const alts = res.alternatives
         .slice(0, 3)
         .map(
@@ -3707,21 +3715,19 @@ export class ChatOrchestrator {
             `${dateLabel(a.date, t.lang)} (${formatClock(a.open, t.lang)}–${formatClock(a.close, t.lang)})`,
         );
       if (res.code === 'closed_day') {
-        t.answers.push(
-          tr(
-            t.lang,
-            `The dealership is closed ${dateLabel(res.day?.date, t.lang)}${res.day?.note ? ` (${res.day.note})` : ''}.`,
-            `La agencia está cerrada el ${dateLabel(res.day?.date, t.lang)}.`,
-          ),
+        const closed = tr(
+          t.lang,
+          `The dealership is closed ${dateLabel(res.day?.date, t.lang)}${res.day?.note ? ` (${res.day.note})` : ''}.`,
+          `La agencia está cerrada el ${dateLabel(res.day?.date, t.lang)}.`,
         );
-        if (alts.length)
-          t.narration.push(
-            tr(
+        const next = alts.length
+          ? tr(
               t.lang,
-              `The next open days are ${alts.join(', ')}.`,
-              `Los próximos días abiertos son ${alts.join(', ')}.`,
-            ),
-          );
+              ` The next open days are ${alts.join(', ')}.`,
+              ` Los próximos días abiertos son ${alts.join(', ')}.`,
+            )
+          : '';
+        t.answers.push(`${demoPrefix}${closed}${next}`.trim());
         this.ask(
           t,
           'appointment_date',
@@ -3731,11 +3737,11 @@ export class ChatOrchestrator {
       } else if (res.code === 'outside_hours') {
         const d = res.day;
         t.answers.push(
-          tr(
+          `${demoPrefix}${tr(
             t.lang,
             `That's outside ${dateLabel(d?.date, t.lang)} hours${d?.open != null && d?.close != null ? ` (${formatClock(d.open)}–${formatClock(d.close)})` : ''}.`,
             `Eso está fuera del horario del ${dateLabel(d?.date, t.lang)}${d?.open != null && d?.close != null ? ` (${formatClock(d.open, 'es')}–${formatClock(d.close, 'es')})` : ''}.`,
-          ),
+          )}`.trim(),
         );
         this.ask(
           t,
