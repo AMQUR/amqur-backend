@@ -73,6 +73,21 @@ export class UploadsService {
     }
   }
 
+  /**
+   * Production requires CLEAN. Local/demo may attach SKIPPED when no malware
+   * scanner is configured (SkippedMalwareScanner) — never in production.
+   */
+  isAttachableScanStatus(status: FileScanStatus): boolean {
+    if (status === FileScanStatus.CLEAN) return true;
+    if (
+      status === FileScanStatus.SKIPPED &&
+      process.env.NODE_ENV !== 'production'
+    ) {
+      return true;
+    }
+    return false;
+  }
+
   private safeStorageKey(tenantId: string, mime: string): string {
     // Extension derives from the verified content type, never the client filename.
     const ext = EXT_FOR[mime] ?? '';
@@ -246,7 +261,7 @@ export class UploadsService {
     });
     if (!file) throw new NotFoundException('File not found');
 
-    if (file.scannedStatus !== FileScanStatus.CLEAN) {
+    if (!this.isAttachableScanStatus(file.scannedStatus)) {
       throw new ForbiddenException('file_not_clean');
     }
     if (

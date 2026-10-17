@@ -48,10 +48,11 @@ export function clearSession() {
 }
 
 async function raw(path: string, init: RequestInit = {}, auth = true): Promise<Response> {
+  const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData;
   return fetch(`/api${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isForm ? {} : { 'Content-Type': 'application/json' }),
       ...(auth && access ? { Authorization: `Bearer ${access}` } : {}),
       ...(init.headers ?? {}),
     },
@@ -102,6 +103,11 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 401 && (await tryRestore())) res = await raw(path, init);
   if (res.status === 401) clearSession();
   return parse<T>(res);
+}
+
+/** Multipart upload helper — does not force JSON Content-Type. */
+export async function apiUpload<T>(path: string, form: FormData): Promise<T> {
+  return api<T>(path, { method: 'POST', body: form });
 }
 
 export type LoginResult = { kind: 'ok'; mfaEnrollmentRequired: boolean } | { kind: 'mfa'; mfaToken: string };

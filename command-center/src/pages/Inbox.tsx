@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, session } from '../api';
+import { api, apiUpload, session } from '../api';
 import { ago, fmtDate, useAsync } from '../hooks';
 import { EscalationActions, isOpenEscalation, type EscalationRow } from '../EscalationActions';
 import { appointmentStatusLabel, Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
@@ -308,7 +308,10 @@ function Conversation({
             </Card>
           ))}
           <Card title="Attachments">
-            <p className="muted small">Only scanned-clean files can be linked. Upload via the uploads API first.</p>
+            <p className="muted small">
+              Upload JPEG/PNG/WebP/PDF (max 10 MB). Production requires a CLEAN malware scan;
+              local demo may attach SKIPPED scans when no scanner is configured.
+            </p>
             <ul className="kv">
               {(attachments.data ?? []).map((a) => (
                 <li key={a.id}>
@@ -327,6 +330,35 @@ function Conversation({
             {(attachments.data ?? []).length === 0 && (
               <p className="muted small">No attachments yet.</p>
             )}
+            <label className="small">
+              Upload &amp; attach
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                aria-label="Upload file to attach"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  setErr(null);
+                  const form = new FormData();
+                  form.append('file', file);
+                  form.append('purpose', 'DOCUMENT');
+                  form.append('conversationId', id);
+                  void apiUpload<{ id: string }>('/uploads/file', form)
+                    .then((row) =>
+                      api(`/ops/conversations/${id}/attachments`, {
+                        method: 'POST',
+                        body: JSON.stringify({ fileId: row.id }),
+                      }),
+                    )
+                    .then(() => void attachments.reload())
+                    .catch((ex) =>
+                      setErr(ex instanceof Error ? ex.message : 'Upload/attach failed'),
+                    );
+                }}
+              />
+            </label>
             <form
               className="row"
               onSubmit={(e) => {
@@ -345,7 +377,7 @@ function Conversation({
               }}
             >
               <input
-                placeholder="File id (CLEAN)"
+                placeholder="Or paste file id"
                 value={fileId}
                 onChange={(e) => setFileId(e.target.value)}
                 aria-label="File id to attach"

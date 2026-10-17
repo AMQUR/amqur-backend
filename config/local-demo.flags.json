@@ -27,6 +27,7 @@
     "leadScoring": true,
     "copilot": true,
     "knowledge": false,
+    "uploads": true,
     "sms": false,
     "tekionIntegration": false,
     "automatedFollowup": false,
@@ -37,6 +38,7 @@
   },
   "notes": [
     "appointments=true permits appointment REQUEST records only; confirmation still requires staff or a verified scheduler.",
+    "uploads=true enables local Inbox file attach; SKIPPED scans are attachable only when NODE_ENV!==production (no malware scanner).",
     "Hours are synthetic (storeHoursVerifiedBy=synthetic-demo) and are labeled 'demo hours' to the customer; production treats them as unverified.",
     "Inventory rows use source=synthetic_demo, VINs that contain the letter O (impossible in a real VIN), no photos; production reads exclude them.",
     "Financial policy stays ILLUSTRATIVE: no tax/fee rules, so out-the-door totals route to staff instead of being guessed."

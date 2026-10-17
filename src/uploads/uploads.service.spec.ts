@@ -67,6 +67,31 @@ describe('UploadsService conversation attachments', () => {
     expect(prisma.fileObject.update).not.toHaveBeenCalled();
   });
 
+  it('attachToConversation allows SKIPPED outside production', async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'test';
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1', locationId: null });
+    prisma.fileObject.findFirst.mockResolvedValue({
+      ...cleanFile,
+      scannedStatus: FileScanStatus.SKIPPED,
+      conversationId: null,
+    });
+    prisma.fileObject.update.mockResolvedValue({
+      ...cleanFile,
+      scannedStatus: FileScanStatus.SKIPPED,
+      conversationId: 'conv-1',
+    });
+
+    await expect(
+      svc.attachToConversation({
+        tenantId: 'tenant-a',
+        conversationId: 'conv-1',
+        fileId: 'file-1',
+      }),
+    ).resolves.toMatchObject({ id: 'file-1' });
+    process.env.NODE_ENV = prev;
+  });
+
   it('listConversationAttachments scopes by tenant', async () => {
     prisma.conversation.findFirst.mockResolvedValue(null);
 

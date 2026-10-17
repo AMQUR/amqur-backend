@@ -50,9 +50,28 @@ const RATE_ROWS: Array<[keyof StoreRates, string]> = [
   ['replyFeedbackGoodRate', 'AI reply feedback (% good)'],
 ];
 
+type ReadinessCell = 'PASS' | 'FAIL' | 'BLOCKED' | 'NOT_TESTED';
+type ReadinessScorecard = {
+  generatedAt: string;
+  rows: Record<string, string>;
+  stores: Array<{
+    key: string;
+    displayName: string;
+    verdict: 'GO' | 'NO-GO';
+    cells: Record<string, ReadinessCell>;
+  }>;
+};
+
+const readinessTone = (c: ReadinessCell): 'ok' | 'warn' | 'bad' | 'neutral' =>
+  c === 'PASS' ? 'ok' : c === 'FAIL' ? 'bad' : c === 'BLOCKED' ? 'warn' : 'neutral';
+
 /** Group executives: all-store comparison from persisted records only (membership-checked). */
 export function Group() {
   const groups = useAsync(() => api<GroupSummary[]>('/dealer-groups'), []);
+  const readiness = useAsync(
+    () => api<ReadinessScorecard>('/ops/group/readiness').catch(() => null),
+    [],
+  );
   const [groupId, setGroupId] = useState<string | null>(null);
   const [days, setDays] = useState(7);
 
@@ -73,6 +92,44 @@ export function Group() {
     <div className="page">
       <h1>Group comparison</h1>
       <ErrorNote error={groups.error ?? cmp.error} />
+      {readiness.data && readiness.data.stores?.length > 0 && (
+        <Card title="Five-rooftop readiness">
+          <p className="muted small">
+            Live scorecard from registry + database evidence (SUPER_ADMIN). Generated{' '}
+            {new Date(readiness.data.generatedAt).toLocaleString()}.
+          </p>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Check</th>
+                  {readiness.data.stores.map((r) => (
+                    <th scope="col" key={r.key}>
+                      {r.displayName}{' '}
+                      <Badge tone={r.verdict === 'GO' ? 'ok' : 'warn'}>{r.verdict}</Badge>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(readiness.data.rows).map(([row, label]) => (
+                  <tr key={row}>
+                    <th scope="row">{label}</th>
+                    {readiness.data!.stores.map((r) => {
+                      const cell = r.cells[row] ?? 'NOT_TESTED';
+                      return (
+                        <td key={r.key}>
+                          <Badge tone={readinessTone(cell)}>{cell}</Badge>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
       {loading && <p className="muted">Loading…</p>}
       {!loading && !gid && groups.data && <Empty>You are not a member of a dealer group.</Empty>}
       {!loading && gid && groups.data && groups.data.length > 1 && (
