@@ -900,6 +900,98 @@ export class OperationsService {
     };
   }
 
+  private surveyProviderConnected(): boolean {
+    return Prisma.dmmf.datamodel.models.some((m) => m.name === 'CustomerSurvey');
+  }
+
+  /**
+   * CSAT / satisfaction read surface. Never invents survey scores — only persisted
+   * proxy signals until a CustomerSurvey model + provider is connected.
+   */
+  async satisfaction(scope: Scope) {
+    const base = { tenantId: scope.tenantId, ...this.loc(scope) };
+    const since = new Date(Date.now() - 7 * 86_400_000);
+    const [overview, handoffRequested7d] = await Promise.all([
+      this.overview(scope),
+      this.prisma.analyticsEvent.count({
+        where: {
+          ...base,
+          eventType: 'handoff_requested',
+          occurredAt: { gte: since },
+        },
+      }),
+    ]);
+
+    const note = this.surveyProviderConnected()
+      ? 'CustomerSurvey model present but no authoritative CSAT feed is connected.'
+      : 'Proxy signals from staff reply feedback and handoff analytics only. Connect a survey provider for CSAT scores.';
+
+    return {
+      available: false as const,
+      reason: 'survey_provider_not_connected' as const,
+      window: overview.window,
+      signals: this.satisfactionProxySignals(overview, handoffRequested7d),
+      note,
+    };
+  }
+
+  private satisfactionProxySignals(
+    overview: Awaited<ReturnType<OperationsService['overview']>>,
+    handoffRequested7d: number,
+  ) {
+    const rf = overview.aiQuality.replyFeedback;
+    return {
+      replyFeedback: {
+        total: rf.total,
+        good: rf.good,
+        goodRate: rf.goodRate,
+        neededHuman: rf.neededHuman,
+      },
+      handoffs: {
+        openEscalations: overview.attention.openHandoffs,
+        handoffRequested7d,
+      },
+    };
+  }
+
+  /**
+   * AI missed-opportunity rollup from real queue + analytics counts (no synthetic scores).
+   */
+  async missedOpportunities(scope: Scope) {
+    const [overview, queues] = await Promise.all([
+      this.overview(scope),
+      this.queues(scope),
+    ]);
+    const p = queues.prioritized;
+    const prioritized = {
+      unansweredInbound: p.unansweredInbound.length,
+      aiUncertainReplies: p.aiUncertain.length,
+      overdueLeads: p.overdueLeads.length,
+      missedAppointments: p.missedAppointments.length,
+    };
+    const aiMissSignals = {
+      zeroInventoryResults: overview.aiQuality.inventoryMisses,
+      knowledgeMiss: overview.aiQuality.knowledgeMisses,
+      unansweredInbound: prioritized.unansweredInbound,
+    };
+    const prioritizedTotal = Object.values(prioritized).reduce((a, b) => a + b, 0);
+    const analyticsMissTotal =
+      aiMissSignals.zeroInventoryResults + aiMissSignals.knowledgeMiss;
+
+    return {
+      window: overview.window,
+      since: overview.since,
+      prioritized,
+      aiMissSignals,
+      totals: {
+        prioritizedQueueItems: prioritizedTotal,
+        analyticsMissEvents: analyticsMissTotal,
+        combinedAttention: prioritizedTotal + analyticsMissTotal,
+      },
+      note: 'Counts from persisted queues and analytics events only.',
+    };
+  }
+
   async integrations(scope: Scope) {
     const conns = await this.prisma.integrationConnection.findMany({
       where: { tenantId: scope.tenantId },

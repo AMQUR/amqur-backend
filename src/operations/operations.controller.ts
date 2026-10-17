@@ -216,6 +216,26 @@ export class OperationsController {
   }
 
   @Roles(...STAFF)
+  @Get('satisfaction')
+  satisfaction(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.satisfaction(this.scope(u, t, l));
+  }
+
+  @Roles(...STAFF)
+  @Get('missed-opportunities')
+  missedOpportunities(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.ops.missedOpportunities(this.scope(u, t, l));
+  }
+
+  @Roles(...STAFF)
   @Get('inbox')
   inbox(
     @CurrentUser() u: AuthUser,
