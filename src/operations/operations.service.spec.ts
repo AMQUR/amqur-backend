@@ -589,6 +589,48 @@ describe('OperationsService.missedOpportunities', () => {
   });
 });
 
+describe('OperationsService.dailyBrief', () => {
+  it('surfaces AI miss analytics as brief priorities with deep links', async () => {
+    const prisma = {
+      appointment: { count: jest.fn().mockResolvedValue(0) },
+    };
+    const svc = makeOperationsService(prisma);
+    jest.spyOn(svc, 'overview').mockResolvedValue({
+      window: '7d',
+      outcomes: { leadsCaptured: 0, confirmedAppointments: 0 },
+      attention: {
+        openHandoffs: 0,
+        appointmentsAwaitingConfirmation: 0,
+        partsOpen: 0,
+        financeOpen: 0,
+      },
+      aiQuality: {
+        inventoryMisses: 4,
+        knowledgeMisses: 2,
+        replyFeedback: { total: 0 },
+      },
+    } as Awaited<ReturnType<OperationsService['overview']>>);
+    jest.spyOn(svc, 'queues').mockResolvedValue({
+      prioritized: {
+        unansweredInbound: [],
+        aiUncertain: [],
+        overdueLeads: [],
+        missedAppointments: [],
+      },
+    } as Awaited<ReturnType<OperationsService['queues']>>);
+    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(false);
+
+    const r = await svc.dailyBrief({ tenantId: 'tenant-1', locationId: null });
+
+    expect(r.priorities).toEqual(
+      expect.arrayContaining([
+        { key: 'knowledge_misses', count: 2, href: '#/knowledge' },
+        { key: 'inventory_misses', count: 4, href: '#/inventory' },
+      ]),
+    );
+  });
+});
+
 describe('OperationsService.recentKnowledgeMisses', () => {
   it('returns persisted knowledge_miss rows without conversation identifiers', async () => {
     const occurredAt = new Date('2026-10-10T12:00:00.000Z');

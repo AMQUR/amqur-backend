@@ -849,6 +849,16 @@ export class OperationsService {
         count: csiDraftsOpen,
         href: '#/surveys',
       },
+      {
+        key: 'knowledge_misses',
+        count: overview.aiQuality.knowledgeMisses,
+        href: '#/knowledge',
+      },
+      {
+        key: 'inventory_misses',
+        count: overview.aiQuality.inventoryMisses,
+        href: '#/inventory',
+      },
     ].filter((x) => x.count > 0);
 
     const headlines: string[] = [];
