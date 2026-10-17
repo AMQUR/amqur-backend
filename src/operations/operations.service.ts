@@ -674,6 +674,7 @@ export class OperationsService {
       inventoryRuns,
       vehicleCounts,
       events,
+      replyFeedback,
     ] = await Promise.all([
       this.prisma.conversation.count({
         where: { ...base, createdAt: { gte: since } },
@@ -722,10 +723,30 @@ export class OperationsService {
         where: { ...base, occurredAt: { gte: since } },
         _count: { _all: true },
       }),
+      this.prisma.analyticsEvent.findMany({
+        where: {
+          ...base,
+          eventType: 'ai.reply_feedback',
+          occurredAt: { gte: since },
+        },
+        select: { properties: true },
+        take: 500,
+      }),
     ]);
     const ev = Object.fromEntries(
       events.map((e) => [e.eventType, e._count._all]),
     );
+    const feedbackByLabel: Record<string, number> = {};
+    for (const row of replyFeedback) {
+      const label =
+        (row.properties as { label?: string } | null)?.label ?? 'unknown';
+      feedbackByLabel[label] = (feedbackByLabel[label] ?? 0) + 1;
+    }
+    const feedbackTotal = Object.values(feedbackByLabel).reduce(
+      (a, b) => a + b,
+      0,
+    );
+    const good = feedbackByLabel.good_reply ?? 0;
     return {
       window: '7d',
       engagement: {
@@ -771,6 +792,21 @@ export class OperationsService {
       aiQuality: {
         inventoryMisses: ev.zero_inventory_results ?? ev.inventory_result ?? 0,
         knowledgeMisses: ev.knowledge_miss ?? 0,
+        replyFeedback: {
+          total: feedbackTotal,
+          good,
+          tooLong: feedbackByLabel.too_long ?? 0,
+          robotic: feedbackByLabel.sounds_robotic ?? 0,
+          wrongFacts: feedbackByLabel.wrong_facts ?? 0,
+          wrongQuestion: feedbackByLabel.wrong_question ?? 0,
+          neededHuman: feedbackByLabel.needed_human ?? 0,
+          unnecessaryRapport:
+            feedbackByLabel.unnecessary_weather_sports ?? 0,
+          goodRate: feedbackTotal
+            ? Math.round((good / feedbackTotal) * 100) / 100
+            : null,
+          byLabel: feedbackByLabel,
+        },
       },
       since: dayStart.toISOString(),
     };

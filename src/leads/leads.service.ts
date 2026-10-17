@@ -1,9 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadStage, LeadStatus, Prisma } from '@prisma/client';
+import {
+  normalizeEmail,
+  normalizePhone,
+  pickUniqueMatch,
+} from './contact-identity';
 
 @Injectable()
 export class LeadsService {
+  private readonly logger = new Logger(LeadsService.name);
   constructor(private readonly prisma: PrismaService) {}
 
   list(tenantId: string, opts?: { status?: LeadStatus; take?: number }) {
@@ -65,29 +71,56 @@ export class LeadsService {
       conversationDbId = conv?.id ?? null;
     }
 
-    const existing = conversationDbId
-      ? await this.prisma.lead.findFirst({
-          where: {
-            tenantId: params.tenantId,
-            conversationId: conversationDbId,
-            status: { in: [LeadStatus.OPEN, LeadStatus.CONTACTED] },
-          },
-        })
-      : params.email
+    const email = normalizeEmail(params.email);
+    const phone = normalizePhone(params.phone);
+
+    let existing =
+      conversationDbId
         ? await this.prisma.lead.findFirst({
             where: {
               tenantId: params.tenantId,
-              email: params.email.toLowerCase(),
+              conversationId: conversationDbId,
               status: { in: [LeadStatus.OPEN, LeadStatus.CONTACTED] },
             },
           })
         : null;
 
+    if (!existing && (email || phone)) {
+      const candidates = await this.prisma.lead.findMany({
+        where: {
+          tenantId: params.tenantId,
+          status: { in: [LeadStatus.OPEN, LeadStatus.CONTACTED] },
+          OR: [
+            ...(email ? [{ email }] : []),
+            ...(phone
+              ? [
+                  { phone },
+                  // legacy unnormalized rows that end with the same 10 digits
+                  ...(phone.length >= 12
+                    ? [{ phone: { endsWith: phone.slice(-10) } }]
+                    : []),
+                ]
+              : []),
+          ],
+        },
+        take: 5,
+      });
+      const pick = pickUniqueMatch(candidates);
+      if (pick.status === 'MATCHED') existing = pick.lead;
+      if (pick.status === 'AMBIGUOUS') {
+        this.logger.warn(
+          `ambiguous lead match tenant=${params.tenantId} ids=${pick.ids.join(',')}`,
+        );
+        // Do not merge — create a new open lead for human review.
+        existing = null;
+      }
+    }
+
     const data: Prisma.LeadUpdateInput = {
       firstName: params.firstName,
       lastName: params.lastName,
-      phone: params.phone,
-      email: params.email?.toLowerCase(),
+      phone: phone ?? params.phone,
+      email: email ?? undefined,
       interestedVin: params.interestedVin,
       score: params.score ?? 0,
       stage: stageMap[params.stage ?? 'cold'] ?? LeadStage.COLD,
@@ -112,8 +145,8 @@ export class LeadsService {
         conversationId: conversationDbId,
         firstName: params.firstName,
         lastName: params.lastName,
-        phone: params.phone,
-        email: params.email?.toLowerCase(),
+        phone: phone ?? params.phone,
+        email: email,
         interestedVin: params.interestedVin,
         score: params.score ?? 0,
         stage: stageMap[params.stage ?? 'cold'] ?? LeadStage.COLD,

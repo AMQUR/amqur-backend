@@ -7,7 +7,21 @@ type Overview = {
   outcomes: { leadsCaptured: number; appointmentRequests: number; serviceRequests: number; confirmedAppointments: number; creditLinksOffered: number; creditLinksClicked: number; note: string };
   attention: { hotLeads: number; appointmentsAwaitingConfirmation: number; openHandoffs: number; partsOpen: number; financeOpen: number; sourceConflicts: number };
   technical: { outbox: Record<string, number>; inventory: { freshness: Record<string, number>; recentImports: Array<{ id: string; status: string; startedAt: string; records: number | null; rejected: number | null }> }; llm: Array<{ provider: string; configured: boolean; circuitOpen: boolean }> };
-  aiQuality: { inventoryMisses: number; knowledgeMisses: number };
+  aiQuality: {
+    inventoryMisses: number;
+    knowledgeMisses: number;
+    replyFeedback?: {
+      total: number;
+      good: number;
+      tooLong: number;
+      robotic: number;
+      wrongFacts: number;
+      wrongQuestion: number;
+      neededHuman: number;
+      unnecessaryRapport: number;
+      goodRate: number | null;
+    };
+  };
 };
 
 export function Home({ locationId }: { locationId: string }) {
@@ -81,7 +95,26 @@ export function Home({ locationId }: { locationId: string }) {
               <div className="stats">
                 <Stat label="Inventory misses" value={data.aiQuality.inventoryMisses} />
                 <Stat label="Knowledge misses" value={data.aiQuality.knowledgeMisses} />
+                <Stat
+                  label="Staff: good replies"
+                  value={
+                    data.aiQuality.replyFeedback
+                      ? `${data.aiQuality.replyFeedback.good}/${data.aiQuality.replyFeedback.total}`
+                      : '—'
+                  }
+                  hint={
+                    data.aiQuality.replyFeedback?.goodRate != null
+                      ? `${Math.round(data.aiQuality.replyFeedback.goodRate * 100)}% good`
+                      : 'rate AI replies in Inbox'
+                  }
+                />
+                <Stat label="Too long" value={data.aiQuality.replyFeedback?.tooLong ?? 0} />
+                <Stat label="Wrong facts" value={data.aiQuality.replyFeedback?.wrongFacts ?? 0} />
+                <Stat label="Needed human" value={data.aiQuality.replyFeedback?.neededHuman ?? 0} />
               </div>
+              <p className="muted small">
+                Feedback never auto-publishes playbooks. Review in Conversation Studio before changing tone.
+              </p>
             </Card>
           </div>
         </>
