@@ -11,7 +11,7 @@ describe('OperationsService.satisfaction', () => {
     {},
     {},
     {},
-  ] as ConstructorParameters<typeof OperationsService>;
+  ] as unknown as ConstructorParameters<typeof OperationsService>;
 
   let svc: OperationsService;
 

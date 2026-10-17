@@ -41,14 +41,33 @@ type Brief = {
   note: string;
 };
 
+type Missed = {
+  totals: { prioritizedQueueItems: number; analyticsMissEvents: number; combinedAttention: number };
+  prioritized: Record<string, number>;
+  aiMissSignals: Record<string, number>;
+  note: string;
+};
+
+type Satisfaction = {
+  available: boolean;
+  reason?: string;
+  signals?: {
+    replyFeedback?: { total: number; good: number; goodRate: number | null; neededHuman: number };
+    handoffs?: { openEscalations: number; handoffRequested7d: number };
+  };
+  note?: string;
+};
+
 export function Home({ locationId }: { locationId: string }) {
   const q = locationId ? `?locationId=${locationId}` : '';
   const { data, error } = useAsync(() => api<Overview>(`/ops/overview${q}`), [q]);
   const brief = useAsync(() => api<Brief>(`/ops/daily-brief${q}`), [q]);
+  const missed = useAsync(() => api<Missed>(`/ops/missed-opportunities${q}`), [q]);
+  const sat = useAsync(() => api<Satisfaction>(`/ops/satisfaction${q}`), [q]);
   return (
     <div className="page">
       <h1>Today</h1>
-      <ErrorNote error={error ?? brief.error} />
+      <ErrorNote error={error ?? brief.error ?? missed.error ?? sat.error} />
       {brief.data && (
         <Card title="Manager daily brief">
           <ul className="bullets">
@@ -66,6 +85,36 @@ export function Home({ locationId }: { locationId: string }) {
             </div>
           )}
           <p className="muted small">{brief.data.note}</p>
+        </Card>
+      )}
+      {missed.data && (
+        <Card title="Missed opportunities · 7 days">
+          <div className="stats">
+            <Stat label="Queue items" value={missed.data.totals.prioritizedQueueItems} />
+            <Stat label="AI miss signals" value={missed.data.totals.analyticsMissEvents} />
+            <Stat label="Combined attention" value={missed.data.totals.combinedAttention} />
+          </div>
+          <p className="muted small">{missed.data.note}</p>
+        </Card>
+      )}
+      {sat.data && (
+        <Card title="Customer satisfaction">
+          {!sat.data.available ? (
+            <p className="muted small">
+              Survey provider not connected ({sat.data.reason}). Proxy signals only — not a CSAT score.
+            </p>
+          ) : null}
+          {sat.data.signals?.replyFeedback && (
+            <div className="stats">
+              <Stat
+                label="Staff good replies"
+                value={`${sat.data.signals.replyFeedback.good}/${sat.data.signals.replyFeedback.total}`}
+              />
+              <Stat label="Needed human" value={sat.data.signals.replyFeedback.neededHuman} />
+              <Stat label="Open handoffs" value={sat.data.signals.handoffs?.openEscalations ?? 0} />
+            </div>
+          )}
+          {sat.data.note && <p className="muted small">{sat.data.note}</p>}
         </Card>
       )}
       {data && (
