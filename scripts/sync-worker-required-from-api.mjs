@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-'use strict';
 
 /**
  * Copy boot-required variables from Railway api → worker for one environment.
@@ -7,12 +6,12 @@
  *
  * Usage:
  *   RAILWAY_API_TOKEN=… RAILWAY_PROJECT_ID=… \
- *     node scripts/sync-worker-required-from-api.js <staging|production>
+ *     node scripts/sync-worker-required-from-api.mjs <staging|production>
  *
  * For production, source service is prod-api and target is prod-worker.
  */
 
-const { execFileSync } = require('node:child_process');
+import { execFileSync } from 'node:child_process';
 
 const environment = process.argv[2];
 if (!['staging', 'production'].includes(environment)) {
