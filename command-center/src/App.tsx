@@ -26,6 +26,7 @@ import { Inventory } from './pages/Inventory';
 import { Surveys } from './pages/Surveys';
 import { Service } from './pages/Service';
 import { Parts } from './pages/Parts';
+import { Finance } from './pages/Finance';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -33,6 +34,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'appointments', label: 'Appointments' },
   { id: 'service', label: 'Service' },
   { id: 'parts', label: 'Parts' },
+  { id: 'finance', label: 'Finance' },
   { id: 'leads', label: 'Leads' },
   { id: 'inventory', label: 'Inventory' },
   { id: 'queues', label: 'All work queues' },
@@ -119,6 +121,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'appointments' && <Appointments locationId={locationId} />}
         {route === 'service' && <Service locationId={locationId} />}
         {route === 'parts' && <Parts locationId={locationId} />}
+        {route === 'finance' && <Finance locationId={locationId} />}
         {route === 'leads' && <Leads locationId={locationId} />}
         {route === 'inventory' && <Inventory locationId={locationId} />}
         {route === 'queues' && <Queues locationId={locationId} />}
