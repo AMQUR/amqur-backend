@@ -17,6 +17,8 @@ import { ConversationStudio } from './pages/ConversationStudio';
 import { Campaigns } from './pages/Campaigns';
 import { ActionPages } from './pages/ActionPages';
 import { SoldDeals } from './pages/SoldDeals';
+import { Reviews } from './pages/Reviews';
+import { CallQa } from './pages/CallQa';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -28,6 +30,8 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'campaigns', label: 'Campaigns', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'action-pages', label: 'Action pages', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'sold-deals', label: 'Sold deals', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
+  { id: 'reviews', label: 'Reviews (GBP)', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
+  { id: 'call-qa', label: 'Call QA', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'spotlights', label: 'Spotlights' },
   { id: 'integrations', label: 'Integrations', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'settings', label: 'Rooftop settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
@@ -104,6 +108,8 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'campaigns' && <Campaigns locationId={locationId} />}
         {route === 'action-pages' && <ActionPages locationId={locationId} />}
         {route === 'sold-deals' && <SoldDeals locationId={locationId} />}
+        {route === 'reviews' && <Reviews locationId={locationId} />}
+        {route === 'call-qa' && <CallQa locationId={locationId} />}
         {route === 'integrations' && <Integrations />}
         {route === 'settings' && <Settings locationId={locationId} />}
         {route === 'ops' && <Ops />}
