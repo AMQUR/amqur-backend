@@ -200,6 +200,122 @@ describe('MessagingService.queue idempotency', () => {
   });
 });
 
+describe('MessagingService.queue location messagingPolicy quiet hours', () => {
+  const queuedRow = { id: 'msg-quiet-1', status: 'QUEUED' as const };
+  const tx = {
+    outboundMessage: {
+      create: jest.fn().mockResolvedValue(queuedRow),
+    },
+  };
+  const prisma = {
+    outboundMessage: {
+      findUnique: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+      create: jest.fn(),
+    },
+    integrationConnection: { findFirst: jest.fn() },
+    location: { findFirst: jest.fn() },
+    $transaction: jest.fn(async (fn: (client: typeof tx) => unknown) =>
+      fn(tx),
+    ),
+  };
+  const vault = { isReady: jest.fn().mockReturnValue(true), decrypt: jest.fn() };
+  const outbox = { enqueue: jest.fn().mockResolvedValue({ id: 'ob-quiet-1' }) };
+  const processor = { registerHandler: jest.fn() };
+  const flags = { resolve: jest.fn().mockResolvedValue({ sms: true }) };
+  const consent = {
+    status: jest.fn().mockResolvedValue({ allowed: true }),
+  };
+  const metrics = { increment: jest.fn() };
+
+  const svc = new MessagingService(
+    prisma as never,
+    vault as never,
+    outbox as never,
+    processor as never,
+    flags as never,
+    consent as never,
+    metrics as never,
+  );
+
+  const locationId = 'loc-policy-1';
+  const tenantId = 'tenant-1';
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    prisma.outboundMessage.findUnique.mockResolvedValue(null);
+    prisma.outboundMessage.count.mockResolvedValue(0);
+    prisma.integrationConnection.findFirst.mockResolvedValue({
+      secrets: [
+        { keyName: 'accountSid', ciphertext: 'x' },
+        { keyName: 'authToken', ciphertext: 'x' },
+        { keyName: 'messagingServiceSid', ciphertext: 'x' },
+      ],
+    });
+    prisma.location.findFirst.mockResolvedValue({
+      timezone: 'America/Chicago',
+      messagingPolicy: { quietStart: '12:00', quietEnd: '13:00' },
+    });
+    vault.isReady.mockReturnValue(true);
+    vault.decrypt.mockReturnValue('secret');
+    flags.resolve.mockResolvedValue({ sms: true });
+    consent.status.mockResolvedValue({ allowed: true });
+    tx.outboundMessage.create.mockResolvedValue(queuedRow);
+    prisma.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) =>
+      fn(tx),
+    );
+  });
+
+  it('defers outbox availability using location quietStart/quietEnd (not defaults)', async () => {
+    const now = localInstant('America/Chicago', {
+      year: 2026,
+      month: 10,
+      day: 13,
+      hour: 12,
+      minute: 30,
+    });
+
+    const result = await svc.queue({
+      tenantId,
+      locationId,
+      channel: 'SMS',
+      to: '+15551234567',
+      body: 'Hello',
+      purpose: 'CONVERSATIONAL',
+      idempotencyKey: 'quiet-policy-contract',
+      now,
+    });
+
+    expect(prisma.location.findFirst).toHaveBeenCalledWith({
+      where: { id: locationId, tenantId },
+      select: { timezone: true, messagingPolicy: true },
+    });
+    expect(result).toEqual({
+      status: 'QUEUED',
+      id: 'msg-quiet-1',
+      deferredUntil: '2026-10-13T18:00:00.000Z',
+    });
+    const enqueueArg = outbox.enqueue.mock.calls[0][0] as {
+      availableAt?: Date;
+    };
+    expect(enqueueArg.availableAt?.toISOString()).toBe(
+      '2026-10-13T18:00:00.000Z',
+    );
+    const deferredLocal = toZoned(
+      new Date(result.deferredUntil!),
+      'America/Chicago',
+    );
+    expect(deferredLocal).toMatchObject({
+      year: 2026,
+      month: 10,
+      day: 13,
+      hour: 13,
+      minute: 0,
+    });
+    expect(MessagingService.nextAllowed(now, defaultQuiet)).toBeNull();
+  });
+});
+
 describe('MessagingService.previewConsent', () => {
   const consent = {
     status: jest.fn(),

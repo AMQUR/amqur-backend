@@ -172,6 +172,79 @@ describe('OperationsService.staffReply and note', () => {
   });
 });
 
+describe('OperationsService.takeover', () => {
+  const scope = { tenantId: 'tenant-1', locationId: 'loc-1' };
+  const conversationId = 'conv-1';
+  const ownerId = 'user-owner';
+  const otherStaffId = 'user-other';
+
+  const prisma = {
+    conversation: {
+      findFirst: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
+    },
+    message: { create: jest.fn().mockResolvedValue({}) },
+    escalation: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    auditLog: { create: jest.fn().mockResolvedValue({}) },
+    $transaction: jest.fn((ops: Promise<unknown>[]) => Promise.all(ops)),
+  };
+
+  let svc: OperationsService;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    svc = makeOperationsService(prisma);
+  });
+
+  it('throws ConflictException when another staff member already owns an active takeover', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: conversationId,
+      aiPaused: true,
+      assignedUserId: ownerId,
+    });
+
+    await expect(
+      svc.takeover(scope, conversationId, otherStaffId),
+    ).rejects.toMatchObject({
+      response: {
+        message: 'Another team member owns this conversation — transfer it first',
+        statusCode: 409,
+      },
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('assigns ownership and writes conversation.takeover audit when unclaimed', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({
+      id: conversationId,
+      aiPaused: false,
+      assignedUserId: null,
+    });
+
+    const result = await svc.takeover(scope, conversationId, ownerId);
+
+    expect(result).toEqual({ ok: true });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.conversation.update).toHaveBeenCalledWith({
+      where: { id: conversationId },
+      data: {
+        aiPaused: true,
+        handoffState: 'JOINED',
+        assignedUserId: ownerId,
+      },
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith({
+      data: {
+        tenantId: scope.tenantId,
+        userId: ownerId,
+        action: 'conversation.takeover',
+        resource: 'Conversation',
+        resourceId: conversationId,
+      },
+    });
+  });
+});
+
 describe('OperationsService.recordReplyFeedback', () => {
   const scope = { tenantId: 'tenant-1', locationId: 'loc-1' };
   const userId = 'user-staff';
