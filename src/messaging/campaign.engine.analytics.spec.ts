@@ -38,6 +38,8 @@ describe('CampaignEngine.stepAnalytics', () => {
     const engine = new CampaignEngine(
       prisma as never,
       {} as never,
+      {} as never,
+      {} as never,
       { resolve: async () => ({ automatedFollowup: false }) } as never,
     );
     const r = await engine.stepAnalytics('t1', 'camp-1', 7);

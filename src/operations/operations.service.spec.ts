@@ -6,6 +6,18 @@ import {
 } from '@nestjs/common';
 import { OperationsService } from './operations.service';
 
+function spySurveyProviderConnected(
+  svc: OperationsService,
+  connected: boolean,
+): jest.SpyInstance<boolean, []> {
+  return jest
+    .spyOn(
+      svc as unknown as { surveyProviderConnected: () => boolean },
+      'surveyProviderConnected',
+    )
+    .mockReturnValue(connected);
+}
+
 function makeOperationsService(
   prisma: Record<string, unknown>,
   extras?: { inventory?: { browseForStaff: jest.Mock } },
@@ -55,7 +67,7 @@ describe('OperationsService.satisfaction', () => {
   });
 
   it('returns available:false with proxy signals (no CSAT score)', async () => {
-    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(false);
+    spySurveyProviderConnected(svc, false);
     const r = await svc.satisfaction({ tenantId: 'tenant-1', locationId: null });
     expect(r.available).toBe(false);
     expect(
@@ -79,7 +91,7 @@ describe('OperationsService.satisfaction', () => {
   });
 
   it('surfaces internal CSAT when CustomerSurvey responses exist', async () => {
-    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(true);
+    spySurveyProviderConnected(svc, true);
     const prismaWithSurvey = {
       ...prisma,
       customerSurvey: {
@@ -111,7 +123,7 @@ describe('OperationsService.satisfaction', () => {
         knowledgeMisses: 0,
       },
     } as Awaited<ReturnType<OperationsService['overview']>>);
-    jest.spyOn(svc2 as never, 'surveyProviderConnected').mockReturnValue(true);
+    spySurveyProviderConnected(svc2, true);
 
     const r = await svc2.satisfaction({ tenantId: 'tenant-1', locationId: null });
     expect(r.available).toBe(true);
@@ -551,7 +563,7 @@ describe('OperationsService.customerLifecycle', () => {
       },
     };
     const svc = makeOperationsService(prisma);
-    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(true);
+    spySurveyProviderConnected(svc, true);
 
     const r = await svc.customerLifecycle({
       tenantId: 'tenant-1',
@@ -632,7 +644,7 @@ describe('OperationsService.missedOpportunities', () => {
         overdueLeads: [],
         missedAppointments: [{ id: 'a1' }],
       },
-    } as Awaited<ReturnType<OperationsService['queues']>>);
+    } as unknown as Awaited<ReturnType<OperationsService['queues']>>);
 
     const r = await svc.missedOpportunities({ tenantId: 'tenant-1', locationId: null });
 
@@ -671,11 +683,11 @@ describe('OperationsService.executiveExplain', () => {
         replyFeedback: { total: 0, good: 0 },
       },
       technical: { inventory: { freshness: { FRESH: 10 } } },
-    } as Awaited<ReturnType<OperationsService['overview']>>);
+    } as unknown as Awaited<ReturnType<OperationsService['overview']>>);
     jest.spyOn(svc, 'dailyBrief').mockResolvedValue({
       today: { appointmentsOnBook: 0 },
       priorities: [],
-    } as Awaited<ReturnType<OperationsService['dailyBrief']>>);
+    } as unknown as Awaited<ReturnType<OperationsService['dailyBrief']>>);
 
     const r = await svc.executiveExplain(
       { tenantId: 'tenant-1', locationId: null },
@@ -705,18 +717,18 @@ describe('OperationsService.executiveExplain', () => {
         replyFeedback: { total: 0, good: 0 },
       },
       technical: { inventory: { freshness: {} } },
-    } as Awaited<ReturnType<OperationsService['overview']>>);
+    } as unknown as Awaited<ReturnType<OperationsService['overview']>>);
     jest.spyOn(svc, 'dailyBrief').mockResolvedValue({
       today: { appointmentsOnBook: 0 },
       priorities: [],
-    } as Awaited<ReturnType<OperationsService['dailyBrief']>>);
+    } as unknown as Awaited<ReturnType<OperationsService['dailyBrief']>>);
 
     const r = await svc.executiveExplain(
       { tenantId: 'tenant-1', locationId: 'loc-1' },
       'knowledge gaps',
     );
 
-    expect(r.metrics.knowledgeMisses7d).toBe(5);
+    expect((r.metrics as Record<string, number>).knowledgeMisses7d).toBe(5);
     expect(r.answer).toContain('5');
     expect(r.links).toEqual(['#/knowledge']);
   });
@@ -750,8 +762,8 @@ describe('OperationsService.dailyBrief', () => {
         overdueLeads: [],
         missedAppointments: [],
       },
-    } as Awaited<ReturnType<OperationsService['queues']>>);
-    jest.spyOn(svc as never, 'surveyProviderConnected').mockReturnValue(false);
+    } as unknown as Awaited<ReturnType<OperationsService['queues']>>);
+    spySurveyProviderConnected(svc, false);
 
     const r = await svc.dailyBrief({ tenantId: 'tenant-1', locationId: null });
 

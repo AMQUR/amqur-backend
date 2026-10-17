@@ -343,6 +343,9 @@ describe('MessagingService.queue location messagingPolicy quiet hours', () => {
     expect(enqueueArg.availableAt?.toISOString()).toBe(
       '2026-10-13T18:00:00.000Z',
     );
+    if (result.status !== 'QUEUED') {
+      throw new Error(`expected QUEUED, got ${result.status}`);
+    }
     const deferredLocal = toZoned(
       new Date(result.deferredUntil!),
       'America/Chicago',

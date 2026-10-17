@@ -73,7 +73,7 @@ describe('EscalationsService handoff queue', () => {
       urgency: string;
     }> = [];
     let seq = 0;
-    let chain = Promise.resolve();
+    let chain: Promise<unknown> = Promise.resolve();
 
     prisma.conversation.findUnique.mockResolvedValue({ id: 'conv1' });
     prisma.$transaction.mockImplementation((fn: (tx: typeof prisma) => unknown) => {
