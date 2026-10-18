@@ -149,11 +149,22 @@ export class ConversationComposerService {
           promptVersion: COMPOSE_PROMPT_VERSION,
           tenantId: input.tenantId,
         })
-        .catch(() => null);
+        .catch((err: unknown) => {
+          // Never leak provider payloads/keys; name/code only for ops diagnosis.
+          const name = err instanceof Error ? err.name : 'unknown';
+          const code =
+            err && typeof err === 'object' && 'code' in err
+              ? String((err as { code?: unknown }).code ?? '')
+              : '';
+          this.logger.warn(
+            `compose route threw name=${name}${code ? ` code=${code}` : ''}`,
+          );
+          return null;
+        });
       if (!r?.ok)
         return {
           status: 'fallback',
-          reasons: [r ? `model_${r.reason}` : 'model_error'],
+          reasons: [r ? `model_${r.reason}` : 'model_exception'],
           attempts: attempt,
         };
       // Plain-text widget: strip Markdown emphasis/headings the model may still emit.
