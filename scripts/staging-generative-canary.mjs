@@ -20,11 +20,12 @@ const API = (process.argv[2] || 'https://staging-api.dialusnow.com').replace(
   /\/$/,
   '',
 );
-const ORIGIN = (process.argv[3] || 'https://staging-widget.dialusnow.com').replace(
-  /\/$/,
-  '',
-);
-const EXPECTED_SHA = (process.env.EXPECTED_COMMIT_SHA || '').trim().toLowerCase();
+const ORIGIN = (
+  process.argv[3] || 'https://staging-widget.dialusnow.com'
+).replace(/\/$/, '');
+const EXPECTED_SHA = (process.env.EXPECTED_COMMIT_SHA || '')
+  .trim()
+  .toLowerCase();
 const TENANTS = [
   'jeep-of-chicago',
   'dial-nissan-of-chicago',
@@ -76,7 +77,10 @@ function isAcceptedModelReply(p) {
   const lm = p?.languageModel;
   if (!ACCEPTED_LM.has(lm)) return false;
   // discarded retained as composed must never happen; belt-and-suspenders.
-  if (p?.fallbackReason && /discard|model_exception|model_error/i.test(p.fallbackReason)) {
+  if (
+    p?.fallbackReason &&
+    /discard|model_exception|model_error/i.test(p.fallbackReason)
+  ) {
     return false;
   }
   return true;
@@ -88,10 +92,13 @@ function classifyProviderFailure(fallbackReason) {
   if (/circuit/i.test(r)) return 'circuit_breaker';
   if (/timeout|abort/i.test(r)) return 'provider_timeout';
   if (/rate|429/i.test(r)) return 'rate_limit';
-  if (/auth|401|403|credential|api[_-]?key/i.test(r)) return 'invalid_credentials';
-  if (/model|unsupported|404/i.test(r)) return 'unsupported_or_unavailable_model';
+  if (/auth|401|403|credential|api[_-]?key/i.test(r))
+    return 'invalid_credentials';
+  if (/model|unsupported|404/i.test(r))
+    return 'unsupported_or_unavailable_model';
   if (/ground|validat/i.test(r)) return 'grounding_or_validation_rejection';
-  if (/model_exception|model_error|model_provider/i.test(r)) return 'provider_or_model_exception';
+  if (/model_exception|model_error|model_provider/i.test(r))
+    return 'provider_or_model_exception';
   if (!r) return 'unknown';
   return 'other_fallback';
 }
@@ -114,7 +121,9 @@ async function main() {
     process.exit(1);
   }
   if (!EXPECTED_SHA || EXPECTED_SHA.length < 7) {
-    ko('EXPECTED_COMMIT_SHA required (full or ≥7-char SHA of the deployed candidate)');
+    ko(
+      'EXPECTED_COMMIT_SHA required (full or ≥7-char SHA of the deployed candidate)',
+    );
     process.exit(1);
   }
 
@@ -125,8 +134,13 @@ async function main() {
   console.log(
     `INFO  version before sha=${shaBefore || 'n/a'} expected=${EXPECTED_SHA}`,
   );
-  if (!shaBefore.startsWith(EXPECTED_SHA) && !EXPECTED_SHA.startsWith(shaBefore)) {
-    ko(`sha-before mismatch got=${shaBefore || 'missing'} expected=${EXPECTED_SHA}`);
+  if (
+    !shaBefore.startsWith(EXPECTED_SHA) &&
+    !EXPECTED_SHA.startsWith(shaBefore)
+  ) {
+    ko(
+      `sha-before mismatch got=${shaBefore || 'missing'} expected=${EXPECTED_SHA}`,
+    );
   } else {
     ok(`sha-before ${shaBefore.slice(0, 12)}`);
   }
@@ -275,9 +289,16 @@ async function main() {
   }
 
   const versionAfter = await json(`${API}/api/version`);
-  const shaAfter = String(versionAfter.body?.data?.commitSha || '').toLowerCase();
-  if (!shaAfter.startsWith(EXPECTED_SHA) && !EXPECTED_SHA.startsWith(shaAfter)) {
-    ko(`sha-after mismatch got=${shaAfter || 'missing'} expected=${EXPECTED_SHA}`);
+  const shaAfter = String(
+    versionAfter.body?.data?.commitSha || '',
+  ).toLowerCase();
+  if (
+    !shaAfter.startsWith(EXPECTED_SHA) &&
+    !EXPECTED_SHA.startsWith(shaAfter)
+  ) {
+    ko(
+      `sha-after mismatch got=${shaAfter || 'missing'} expected=${EXPECTED_SHA}`,
+    );
   } else if (shaAfter !== shaBefore) {
     ko(`sha changed during canary before=${shaBefore} after=${shaAfter}`);
   } else {
