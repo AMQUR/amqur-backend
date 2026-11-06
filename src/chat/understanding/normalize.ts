@@ -12,6 +12,9 @@
  */
 const SLANG: Array<[RegExp, string]> = [
   [/\bu\b/g, 'you'],
+  // Common "you" typos ("how are yu today") — whole-token only.
+  [/\byu\b/g, 'you'],
+  [/\byuo\b/g, 'you'],
   [/\bur\b/g, 'your'],
   [/\br\b(?=\s+(?:you|u|they|we|there|these|those)\b)/g, 'are'],
   [/\b(?:pls|plz|plez)\b/g, 'please'],
@@ -33,6 +36,10 @@ const SLANG: Array<[RegExp, string]> = [
   [/\bwhip\b/g, 'car'],
   [/\bdoorpayment\b/g, 'door payment'],
   [/\bdoorprice\b/g, 'door price'],
+  // Acknowledgment typos ("oAY", "OKy") — exact short tokens only; never fuzzy consent.
+  [/\boky\b/g, 'okay'],
+  [/\bokey\b/g, 'okay'],
+  [/\boay\b/g, 'ok'],
 ];
 
 const VOICE: Array<[RegExp, string]> = [
