@@ -13,7 +13,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
+    const request = ctx.getRequest<Request & { requestId?: string }>();
 
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message: string | string[] = 'Internal server error';
@@ -35,6 +35,29 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       captureError(exception, { source: 'global-exception-filter' });
     } else if (status >= 500) {
       captureError(exception, { source: 'http-5xx' });
+    }
+
+    // Response already completed (manual @Res, redirect, stream, disconnect).
+    // Capture the original error above; never send a second JSON body.
+    if (response.headersSent || response.writableEnded) {
+      console.error(
+        'EXCEPTION_AFTER_HEADERS_SENT',
+        JSON.stringify({
+          path: request.url,
+          requestId: request.requestId ?? null,
+          statusAttempted: status,
+        }),
+      );
+      return;
+    }
+
+    const requestId = request.requestId;
+    if (requestId && !response.headersSent) {
+      try {
+        response.setHeader('X-Request-Id', requestId);
+      } catch {
+        /* ignore */
+      }
     }
 
     response.status(status).json({
