@@ -65,6 +65,7 @@ import {
   publicEvidence,
   verifiedFactsFrom,
 } from '../source-authority/claim-evidence';
+import { SpotlightsService } from '../spotlights/spotlights.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { MetricsService } from '../observability/metrics.service';
 import { OutboxService } from '../integrations/core/outbox.service';
@@ -515,6 +516,7 @@ export class ChatOrchestrator {
     private readonly appraisals: AppraisalService,
     private readonly experiments: ExperimentsService,
     private readonly playbooks: PlaybookService,
+    private readonly spotlights: SpotlightsService,
   ) {}
 
   /** First greeting copy, optionally from a RUNNING greeting experiment (tone only). */
@@ -1004,6 +1006,8 @@ export class ChatOrchestrator {
         return this.handleCompare(t);
       case 'KNOWLEDGE_QUESTION':
         return this.handleKnowledge(t);
+      case 'CURRENT_OFFERS':
+        return this.handleCurrentOffers(t);
       case 'TEXT_CONTINUATION':
         return this.handleTextContinuation(t);
       case 'PROVIDE_CONTACT':
@@ -5189,6 +5193,117 @@ export class ChatOrchestrator {
         '¿Algo en particular que quiera comparar — precio, millas, equipamiento?',
       ),
       9,
+    );
+  }
+
+  /**
+   * Current specials / offers / incentives: only approved in-window spotlights and
+   * published knowledge. Never invent rebates, APR specials, or cash-back amounts.
+   */
+  private async handleCurrentOffers(t: Turn) {
+    const lines: string[] = [];
+    const active = t.locationId
+      ? await this.spotlights.activeForStore(t.tenantId, t.locationId)
+      : [];
+    const offers = active.filter(
+      (s) => s.kind === 'OFFER' || s.kind === 'ANNOUNCEMENT',
+    );
+    for (const o of offers) {
+      const title = String(o.title ?? '').trim();
+      const body = String(o.body ?? '').trim();
+      const disclaimer = o.disclaimer
+        ? ` (${String(o.disclaimer).trim()})`
+        : '';
+      if (title || body) {
+        lines.push(`${title}${title && body ? ': ' : ''}${body}${disclaimer}`);
+        t.evidence.push(
+          this.evidenceSvc.verifiedConfig(
+            t.tenantId,
+            t.locationId,
+            'promotion',
+            title || body.slice(0, 80),
+            'spotlight',
+            typeof o.endsAt === 'string' ? o.endsAt : new Date().toISOString(),
+          ),
+        );
+      }
+    }
+    const kc = await this.cap(t, 'knowledge');
+    if (kc.allowed) {
+      const hits = await this.knowledge.search({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        query: 'specials offers incentives promotions rebates deals',
+        forWidget: true,
+        limit: 5,
+      });
+      const relevant = hits.filter((h) =>
+        /\b(special|offer|incentive|rebate|promotion|deal)\b/i.test(
+          `${h.title} ${h.content}`,
+        ),
+      );
+      for (const h of relevant.slice(0, 3)) {
+        lines.push(`${h.title}: ${h.content.slice(0, 280)}`);
+        t.evidence.push(
+          this.evidenceSvc.verifiedConfig(
+            t.tenantId,
+            t.locationId,
+            'incentives',
+            h.title,
+            'knowledge_base',
+            new Date().toISOString(),
+          ),
+        );
+      }
+      if (relevant.length) t.sources.add('knowledge_base');
+    }
+    t.toolCount += 1;
+    if (offers.length) t.sources.add('spotlights');
+    if (lines.length) {
+      t.facts.push(...lines.map((l) => l.slice(0, 300)));
+      t.answers.push(
+        tr(
+          t.lang,
+          `Here’s what I can verify on current offers: ${lines.join(' · ').slice(0, 700)}`,
+          `Esto es lo que puedo verificar sobre ofertas actuales: ${lines.join(' · ').slice(0, 700)}`,
+        ),
+      );
+      this.ask(
+        t,
+        'none',
+        tr(
+          t.lang,
+          'Want details on one of these, or should I search inventory instead?',
+          '¿Quiere detalles de alguna, o busco inventario?',
+        ),
+        8,
+      );
+      return;
+    }
+    t.evidence.push(
+      this.evidenceSvc.unverified(
+        t.tenantId,
+        t.locationId,
+        'incentives',
+        'No verified current offers on file for this location.',
+      ),
+    );
+    t.answers.push(
+      tr(
+        t.lang,
+        "I don’t have any verified current specials or offers on file for this store right now, so I won’t invent any. I can search inventory, run a payment estimate, or have the team confirm what’s available.",
+        'No tengo especiales u ofertas actuales verificadas para esta agencia ahora, así que no voy a inventar ninguna. Puedo buscar inventario, estimar un pago o pedir que el equipo confirme lo disponible.',
+      ),
+    );
+    this.ask(
+      t,
+      'none',
+      tr(
+        t.lang,
+        'Want me to look at vehicles, or have someone from the team follow up on offers?',
+        '¿Busco vehículos, o prefiere que alguien del equipo le confirme las ofertas?',
+      ),
+      8,
     );
   }
 

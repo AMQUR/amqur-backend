@@ -17,6 +17,7 @@ describe('conversational layer (real failed transcript)', () => {
     'How are you',
     'How are you?',
     'how r u',
+    'how are yu today',
     "how's your day going?",
     'Pretty good, you?',
     "I'm doing well.",
@@ -28,6 +29,35 @@ describe('conversational layer (real failed transcript)', () => {
     expect(r.primary).toBe('SMALL_TALK');
     expect(r.intents.map((i) => i.intent)).not.toContain('KNOWLEDGE_QUESTION');
   });
+
+  it('"how are yu today" is wellbeing small talk, not knowledge fallback', () => {
+    expect(classifySocial('how are yu today').acts).toContain('how_are_you');
+    expect(u('how are yu today').primary).toBe('SMALL_TALK');
+    expect(u('how are yu today').intents.map((i) => i.intent)).not.toContain(
+      'KNOWLEDGE_QUESTION',
+    );
+  });
+
+  it.each(['what are the specials', 'any specials?', 'current offers', 'do you have any deals'])(
+    '"%s" → CURRENT_OFFERS (not open knowledge fallback)',
+    (m) => {
+      expect(u(m).primary).toBe('CURRENT_OFFERS');
+      expect(u(m).intents.map((i) => i.intent)).not.toContain(
+        'KNOWLEDGE_QUESTION',
+      );
+    },
+  );
+
+  it('"what makes this special" is not a specials/offers ask', () => {
+    expect(u('what makes this special').primary).not.toBe('CURRENT_OFFERS');
+  });
+
+  it.each(['oAY', 'OKy', 'oky', 'oay', 'ok', 'okay'])(
+    '"%s" is an acknowledgment (AFFIRM), never UNKNOWN',
+    (m) => {
+      expect(u(m).primary).toBe('AFFIRM');
+    },
+  );
 
   it('classifies the social act precisely', () => {
     expect(classifySocial('How are you?').acts).toContain('how_are_you');

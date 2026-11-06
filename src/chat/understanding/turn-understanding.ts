@@ -44,6 +44,7 @@ export type TurnIntent =
   | 'COMPLAINT'
   | 'HOLD_REQUEST'
   | 'KNOWLEDGE_QUESTION'
+  | 'CURRENT_OFFERS'
   | 'PROVIDE_CONTACT'
   | 'AFFIRM'
   | 'DECLINE'
@@ -1789,6 +1790,24 @@ export function understandTurn(
   )
     add('INVENTORY_SEARCH', 0.75, 'vehicle question');
 
+  // ── current offers / specials (verified spotlights + knowledge only)
+  // Not "what makes this special" product-value questions.
+  const specialsCue =
+    !/\bwhat makes\b.{0,24}\bspecial\b/.test(t) &&
+    (/\b(?:specials|promotions?|incentives?|rebates?)\b/.test(t) ||
+      /\b(?:current|any|today'?s?|this (?:week|month)'?s?)\s+offers?\b/.test(
+        t,
+      ) ||
+      /\b(?:any|good)\s+deals?\b/.test(t) ||
+      /\bwhat(?:'s| is| are) (?:the )?(?:specials|offers|promotions|deals|incentives)\b/.test(
+        t,
+      ) ||
+      /\b(?:on special|on sale)\b/.test(t) ||
+      /\bdo you (?:have|got) (?:any )?(?:specials|offers|deals|promotions|incentives)\b/.test(
+        t,
+      ));
+  if (specialsCue) add('CURRENT_OFFERS', 0.92, 'current offers / specials');
+
   // ── knowledge / general automotive question
   if (!intents.length && isQuestion)
     add('KNOWLEDGE_QUESTION', 0.6, 'open question');
@@ -1796,7 +1815,9 @@ export function understandTurn(
     /\b(warranty|return policy|policy|do you (?:accept|take|offer)|documentation fee|doc fee|financing for|do you ship|delivery|out of state)\b/.test(
       t,
     ) &&
-    !intents.some((i) => i.intent === 'KNOWLEDGE_QUESTION')
+    !intents.some((i) =>
+      ['KNOWLEDGE_QUESTION', 'CURRENT_OFFERS'].includes(i.intent),
+    )
   ) {
     add('KNOWLEDGE_QUESTION', 0.7, 'policy question');
   }
@@ -1837,6 +1858,7 @@ export function understandTurn(
     'HOURS_LOCATION',
     'TEXT_CONTINUATION',
     'PROVIDE_CONTACT',
+    'CURRENT_OFFERS',
     'KNOWLEDGE_QUESTION',
     'LANGUAGE_SWITCH',
     'AFFIRM',

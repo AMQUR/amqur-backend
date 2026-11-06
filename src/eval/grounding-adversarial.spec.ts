@@ -157,6 +157,26 @@ describe('grounding adversarial red team', () => {
     expect(strippedClaimTypes).toContain(ClaimType.INCENTIVES);
   });
 
+  it('14b. invented specials / 0% APR special stripped without verified incentives', () => {
+    const { strippedClaimTypes, reply } = guard.sanitizeCustomerReply({
+      reply:
+        'We have specials this week including a special offer and 0% APR special on Wranglers.',
+      verifiedFacts: [],
+    });
+    expect(strippedClaimTypes).toContain(ClaimType.INCENTIVES);
+    expect(reply.toLowerCase()).toMatch(/incentive|confirm current offers|team can confirm/);
+  });
+
+  it('14c. verified incentives may keep rebate wording', () => {
+    const { sanitized, reply } = guard.sanitizeCustomerReply({
+      reply: 'There is a $500 rebate this month when financed through the store.',
+      verifiedFacts: [{ claimType: ClaimType.INCENTIVES, verified: true }],
+      allowedClaimTypes: [ClaimType.INCENTIVES, ClaimType.PRICE],
+    });
+    expect(sanitized).toBe(false);
+    expect(reply).toMatch(/\$500 rebate/i);
+  });
+
   it('15. unsupported trade value — canned safe wording', () => {
     const reply =
       'I’ve saved your trade-in request for the dealership team to evaluate. ' +
