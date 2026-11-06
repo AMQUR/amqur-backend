@@ -8,7 +8,9 @@ Supersedes stale October 18 runtime claims. Public dealership activation was **n
 |---|---|
 | Backend PR | https://github.com/AMQUR/amqur-backend/pull/33 |
 | Backend branch | `cursor/phase1-integrated-release-4b87` |
-| Staging deployed API SHA (verified) | `72e57795d37330a5d5106190507e9abe02245f4c` |
+| Tip SHA | `3b29c5ceb9a579141fdea5bf04bd7184c108c6fe` |
+| Staging generative canary (verified) | `54168cb0a6b1bcef155991a5926a6f443f04eab4` — 150/0, 26 model turns, all 5 tenants |
+| Staging tip pin | `3b29c5c` (request-id 404 fallback; Railway staging-only) |
 | Staging widget SHA (verified) | `abfb1e2db94b18879d1dc4fc422f7e22027ddb67` |
 | Production API SHA (verified) | `1ff54206573eced6d9cdfb85ca8884010e29b004` |
 | Production widget SHA (verified) | `2b3a4b47b36cd308777ba150bb6773ec16731d82` |
