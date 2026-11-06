@@ -164,12 +164,15 @@ describe('grounding adversarial red team', () => {
       verifiedFacts: [],
     });
     expect(strippedClaimTypes).toContain(ClaimType.INCENTIVES);
-    expect(reply.toLowerCase()).toMatch(/incentive|confirm current offers|team can confirm/);
+    expect(reply.toLowerCase()).toMatch(
+      /incentive|confirm current offers|team can confirm/,
+    );
   });
 
   it('14c. verified incentives may keep rebate wording', () => {
     const { sanitized, reply } = guard.sanitizeCustomerReply({
-      reply: 'There is a $500 rebate this month when financed through the store.',
+      reply:
+        'There is a $500 rebate this month when financed through the store.',
       verifiedFacts: [{ claimType: ClaimType.INCENTIVES, verified: true }],
       allowedClaimTypes: [ClaimType.INCENTIVES, ClaimType.PRICE],
     });
