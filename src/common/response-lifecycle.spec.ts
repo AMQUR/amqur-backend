@@ -121,6 +121,14 @@ describe('response lifecycle — request id + exception filter', () => {
     expect(headers['x-request-id']).toBe('rid-42');
   });
 
+  it('falls back to inbound X-Request-Id when interceptor did not run', () => {
+    const { ctx, res, headers } = mockHttp({ inboundId: 'from-client-404' });
+    const filter = new GlobalExceptionFilter();
+    filter.catch(new HttpException('missing', 404), ctx as any);
+    expect(headers['x-request-id']).toBe('from-client-404');
+    expect(res.status).toHaveBeenCalledWith(404);
+  });
+
   it('interceptor error path also refuses post-send header writes', (done) => {
     const { ctx, res } = mockHttp();
     const interceptor = new RequestIdInterceptor();

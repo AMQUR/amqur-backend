@@ -51,7 +51,12 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       return;
     }
 
-    const requestId = request.requestId;
+    // Unmatched routes may never enter RequestIdInterceptor — fall back to inbound header.
+    const inbound =
+      typeof request.headers['x-request-id'] === 'string'
+        ? request.headers['x-request-id']
+        : undefined;
+    const requestId = request.requestId || inbound;
     if (requestId && !response.headersSent) {
       try {
         response.setHeader('X-Request-Id', requestId);
