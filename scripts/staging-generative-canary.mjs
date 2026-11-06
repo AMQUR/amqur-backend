@@ -49,6 +49,12 @@ async function json(url, init) {
   return { status: res.status, body };
 }
 
+/** True when provenance shows the model actually shaped the reply (not discarded/none). */
+function isModelGenerated(p) {
+  const lm = p?.languageModel;
+  return lm === 'polished' || lm === 'answered';
+}
+
 async function main() {
   const health = await json(`${API}/api/health`);
   const llm = health.body?.data?.checks?.llm;
@@ -56,6 +62,7 @@ async function main() {
   if (llm !== 'configured') {
     console.log('INFO  generative path may be deterministic-only');
   }
+  let modelGeneratedTurns = 0;
 
   for (const tenant of TENANTS) {
     console.log(`==== ${tenant} ====`);
@@ -93,7 +100,9 @@ async function main() {
         body: JSON.stringify(payload),
       });
       const data = chat.body?.data || chat.body || {};
-      const reply = String(data.reply || data.message || chat.body?.message || '');
+      const reply = String(
+        data.reply || data.message || chat.body?.message || '',
+      );
       conversationId = data.conversationId || conversationId;
       const p = data.provenance || {};
       console.log(`  Q: ${message}`);
@@ -102,7 +111,10 @@ async function main() {
         `  model: lm=${p.languageModel ?? 'n/a'} interpreted=${Boolean(p.modelInterpreted)} fallback=${p.fallbackReason ?? 'n/a'} http=${chat.status}`,
       );
 
-      if (chat.status === 429 || /ThrottlerException|Too Many Requests/i.test(reply)) {
+      if (
+        chat.status === 429 ||
+        /ThrottlerException|Too Many Requests/i.test(reply)
+      ) {
         ko(`${tenant} throttled`);
         continue;
       }
@@ -116,10 +128,19 @@ async function main() {
       if (!reply) ko(`${tenant} empty-reply`);
       else if (BAD.test(reply)) ko(`${tenant} invented-claim`);
       else ok(`${tenant} no-invent`);
-      if (reply.length > 0 && reply.length <= 520) ok(`${tenant} brevity(${reply.length})`);
+      if (reply.length > 0 && reply.length <= 520)
+        ok(`${tenant} brevity(${reply.length})`);
       else ko(`${tenant} brevity(${reply.length})`);
-      // Fail-closed is OK; silent model exceptions are an ops signal (non-fatal for truth).
-      if (p.fallbackReason && /model_error|model_exception|model_provider_error|model_spend_cap_unpriced|model_all_circuits_open/.test(p.fallbackReason)) {
+      if (isModelGenerated(p)) {
+        modelGeneratedTurns += 1;
+        ok(`${tenant} model-generated(${p.languageModel})`);
+      } else if (
+        p.fallbackReason &&
+        /model_error|model_exception|model_provider_error|model_spend_cap_unpriced|model_all_circuits_open/.test(
+          p.fallbackReason,
+        )
+      ) {
+        // Counted toward generative gate failure below when llm=configured.
         console.log(`INFO  ${tenant} model-fallback=${p.fallbackReason}`);
       }
     }
@@ -131,7 +152,17 @@ async function main() {
     else ko(`ops/${path} ${res.status}`);
   }
 
-  console.log(`SUMMARY pass=${pass} fail=${fail}`);
+  if (llm === 'configured' && modelGeneratedTurns === 0) {
+    ko(
+      'generative-gate: llm=configured but zero turns with languageModel=polished|answered (model_exception/discarded is a FAIL)',
+    );
+  } else if (llm === 'configured') {
+    ok(`generative-gate: model-generated turns=${modelGeneratedTurns}`);
+  }
+
+  console.log(
+    `SUMMARY pass=${pass} fail=${fail} modelGeneratedTurns=${modelGeneratedTurns}`,
+  );
   process.exit(fail === 0 ? 0 : 1);
 }
 

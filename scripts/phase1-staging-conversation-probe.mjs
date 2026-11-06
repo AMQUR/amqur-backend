@@ -97,12 +97,18 @@ async function main() {
     ['inventory-context', 'do you have any Wranglers?'],
     ['memory-ref', 'tell me more about that one'],
     ['auto-edu', "What's the difference between 4WD and AWD?"],
-    ['missing-hours-detail', 'what time does the detail shop close on Sundays?'],
-    ['lead-soft', 'can someone from the team email me about financing options?'],
+    [
+      'missing-hours-detail',
+      'what time does the detail shop close on Sundays?',
+    ],
+    [
+      'lead-soft',
+      'can someone from the team email me about financing options?',
+    ],
     ['ending', 'thanks that helps for now'],
   ];
 
-  let sawModel = false;
+  let modelGeneratedTurns = 0;
   let lastReply = '';
   for (const [label, message] of turns) {
     const t = await chat(token, message, cid);
@@ -112,12 +118,16 @@ async function main() {
     check(t.status < 400 && !!t.reply, `${label} got reply`);
     check(!BAD.test(t.reply), `${label} no invented money/approval claims`);
     const lm = t.provenance?.languageModel;
-    if (lm && lm !== 'none' && lm !== false) sawModel = true;
+    // Only polished/answered count — discarded/none are not generative success.
+    if (lm === 'polished' || lm === 'answered') modelGeneratedTurns += 1;
     if (label === 'specials') {
       check(
         /don'?t have any verified|won'?t invent|no verified|cannot verify|not on file|team confirm/i.test(
           t.reply,
-        ) || /disclaimer|location-specific|see dealer|verified on current offers/i.test(t.reply),
+        ) ||
+          /disclaimer|location-specific|see dealer|verified on current offers/i.test(
+            t.reply,
+          ),
         `${label} honest/verified framing`,
       );
     }
@@ -140,19 +150,18 @@ async function main() {
   check(!!cid, 'conversation continuity id present');
   check(lastReply.length > 0, 'final turn non-empty');
   if (health.body?.data?.checks?.llm === 'configured') {
-    if (!sawModel) {
-      console.log(
-        'WARN  llm=configured but no turn reported languageModel polish/answer — may be deterministic-only path; do not claim generative GO',
-      );
-    } else {
-      check(true, 'at least one turn reported languageModel provenance');
-    }
+    check(
+      modelGeneratedTurns > 0,
+      `generative-gate: llm=configured requires ≥1 languageModel=polished|answered (got ${modelGeneratedTurns}; discarded/model_exception is FAIL)`,
+    );
   } else {
     console.log('WARN  llm not configured — generative gate cannot pass');
     fails += 1;
   }
 
-  console.log(`SUMMARY fails=${fails} conversationId=${cid ? 'set' : 'missing'}`);
+  console.log(
+    `SUMMARY fails=${fails} modelGeneratedTurns=${modelGeneratedTurns} conversationId=${cid ? 'set' : 'missing'}`,
+  );
   process.exit(fails === 0 ? 0 : 1);
 }
 

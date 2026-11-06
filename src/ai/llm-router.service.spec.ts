@@ -357,7 +357,15 @@ describe('LlmRouterService', () => {
     process.env.REDIS_URL = 'redis://example:6379';
     try {
       const a = withUsage('anthropic', 10, 10);
-      const cache = { ...memCache(), isRedisHealthy: () => false };
+      // Real instance method (uses `this`) — unbound extraction would throw TypeError.
+      class UnhealthySpendCache {
+        redis = { ok: true };
+        redisEnabled = false;
+        isRedisHealthy(): boolean {
+          return Boolean(this.redis && this.redisEnabled);
+        }
+      }
+      const cache = Object.assign(new UnhealthySpendCache(), memCache());
       const r = new LlmRouterService(
         a as never,
         provider('openai', async () => ({ text: 'x' }), false) as never,
@@ -373,6 +381,41 @@ describe('LlmRouterService', () => {
         reason: 'spend_store_unavailable',
       });
       expect(a.generate).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = prev.env;
+      if (prev.redis === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = prev.redis;
+    }
+  });
+
+  it('keeps the isRedisHealthy receiver in production so healthy Redis allows routing', async () => {
+    const prev = { env: process.env.NODE_ENV, redis: process.env.REDIS_URL };
+    process.env.NODE_ENV = 'production';
+    process.env.REDIS_URL = 'redis://example:6379';
+    try {
+      const a = withUsage('anthropic', 10, 10);
+      // Prototype method relying on `this` — mirrors ConfigCacheService.isRedisHealthy.
+      // Calling the extracted function unbound throws; the router must call with receiver.
+      class HealthySpendCache {
+        redis = { ok: true };
+        redisEnabled = true;
+        isRedisHealthy(): boolean {
+          return Boolean(this.redis && this.redisEnabled);
+        }
+      }
+      const cache = Object.assign(new HealthySpendCache(), memCache());
+      const r = new LlmRouterService(
+        a as never,
+        provider('openai', async () => ({ text: 'x' }), false) as never,
+        metrics as never,
+        cache as never,
+        cfgWith({}) as never,
+      );
+      const res = await r.route({
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      expect(res.ok).toBe(true);
+      expect(a.generate).toHaveBeenCalled();
     } finally {
       process.env.NODE_ENV = prev.env;
       if (prev.redis === undefined) delete process.env.REDIS_URL;
