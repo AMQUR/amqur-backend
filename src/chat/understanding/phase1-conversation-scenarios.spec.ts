@@ -29,13 +29,31 @@ const SCENARIOS: Case[] = [
   { say: 'how are you', primary: 'SMALL_TALK', tag: 'how-are-you' },
   { say: 'how are you?', primary: 'SMALL_TALK', tag: 'how-are-you' },
   { say: 'how r u', primary: 'SMALL_TALK', tag: 'how-are-you-slang' },
-  { say: 'how are yu today', primary: 'SMALL_TALK', not: ['KNOWLEDGE_QUESTION'], tag: 'how-are-you-typo' },
-  { say: "how's your day going?", primary: 'SMALL_TALK', tag: 'how-are-you-day' },
-  { say: 'Pretty good, you?', primary: 'SMALL_TALK', tag: 'wellbeing-ask-back' },
+  {
+    say: 'how are yu today',
+    primary: 'SMALL_TALK',
+    not: ['KNOWLEDGE_QUESTION'],
+    tag: 'how-are-you-typo',
+  },
+  {
+    say: "how's your day going?",
+    primary: 'SMALL_TALK',
+    tag: 'how-are-you-day',
+  },
+  {
+    say: 'Pretty good, you?',
+    primary: 'SMALL_TALK',
+    tag: 'wellbeing-ask-back',
+  },
   { say: "I'm doing well.", primary: 'SMALL_TALK', tag: 'wellbeing' },
   { say: 'thanks!', primary: 'SMALL_TALK', tag: 'thanks' },
   { say: 'thank you so much', primary: 'SMALL_TALK', tag: 'thanks' },
-  { say: 'Are you a real person?', primary: 'SMALL_TALK', not: ['HUMAN_HANDOFF'], tag: 'identity' },
+  {
+    say: 'Are you a real person?',
+    primary: 'SMALL_TALK',
+    not: ['HUMAN_HANDOFF'],
+    tag: 'identity',
+  },
   { say: 'are you a bot', primary: 'SMALL_TALK', tag: 'identity' },
   { say: "I'm just looking around.", primary: 'SMALL_TALK', tag: 'browsing' },
   { say: 'just browsing', primary: 'SMALL_TALK', tag: 'browsing' },
@@ -73,24 +91,53 @@ const SCENARIOS: Case[] = [
   },
 
   // — current offers / specials —
-  { say: 'what are the specials', primary: 'CURRENT_OFFERS', not: ['KNOWLEDGE_QUESTION'], tag: 'specials' },
+  {
+    say: 'what are the specials',
+    primary: 'CURRENT_OFFERS',
+    not: ['KNOWLEDGE_QUESTION'],
+    tag: 'specials',
+  },
   { say: 'any specials?', primary: 'CURRENT_OFFERS', tag: 'specials' },
   { say: 'current offers', primary: 'CURRENT_OFFERS', tag: 'specials' },
   { say: 'do you have any deals', primary: 'CURRENT_OFFERS', tag: 'specials' },
   { say: 'any promotions?', primary: 'CURRENT_OFFERS', tag: 'specials' },
-  { say: 'what incentives do you have', primary: 'CURRENT_OFFERS', tag: 'specials' },
+  {
+    say: 'what incentives do you have',
+    primary: 'CURRENT_OFFERS',
+    tag: 'specials',
+  },
   { say: 'any rebates?', primary: 'CURRENT_OFFERS', tag: 'specials' },
   { say: "today's offers", primary: 'CURRENT_OFFERS', tag: 'specials' },
 
   // — inventory / vehicle —
   { say: 'Wrangler', primary: 'INVENTORY_SEARCH', tag: 'model' },
   { say: 'show me a wranglr', primary: 'INVENTORY_SEARCH', tag: 'model-typo' },
-  { say: 'do you have any Wranglers?', primary: 'INVENTORY_SEARCH', tag: 'inventory' },
-  { say: 'Hi, do you have any Wranglers?', primary: 'INVENTORY_SEARCH', tag: 'greeting+inventory' },
-  { say: 'black Compass under 40k', primary: 'INVENTORY_SEARCH', tag: 'inventory-filters' },
-  { say: 'qx60 in stock', primary: 'INVENTORY_SEARCH', tag: 'alphanumeric-model' },
+  {
+    say: 'do you have any Wranglers?',
+    primary: 'INVENTORY_SEARCH',
+    tag: 'inventory',
+  },
+  {
+    say: 'Hi, do you have any Wranglers?',
+    primary: 'INVENTORY_SEARCH',
+    tag: 'greeting+inventory',
+  },
+  {
+    say: 'black Compass under 40k',
+    primary: 'INVENTORY_SEARCH',
+    tag: 'inventory-filters',
+  },
+  {
+    say: 'qx60 in stock',
+    primary: 'INVENTORY_SEARCH',
+    tag: 'alphanumeric-model',
+  },
   { say: 'q x 60 in stock', primary: 'INVENTORY_SEARCH', tag: 'voice-model' },
-  { say: 'do u have a tahoo', primary: 'INVENTORY_SEARCH', tag: 'model-typo-2' },
+  {
+    say: 'do u have a tahoo',
+    primary: 'INVENTORY_SEARCH',
+    tag: 'model-typo-2',
+  },
   {
     say: "Show me what you've got.",
     primary: 'INVENTORY_SEARCH',
@@ -137,11 +184,31 @@ const SCENARIOS: Case[] = [
     ctx: { hasSelectedVehicle: true },
     tag: 'otd-taxes',
   },
-  { say: 'Can I finance this Grand Wagoneer?', primary: 'FINANCE_REQUEST', tag: 'finance' },
-  { say: "Does that mean I'm approved?", primary: 'FINANCE_REQUEST', tag: 'approval-q' },
-  { say: 'Where is the credit application?', primary: 'CREDIT_APPLICATION', tag: 'credit-app' },
-  { say: 'Can I apply for financing?', primary: 'CREDIT_APPLICATION', tag: 'credit-app' },
-  { say: 'How do I get preapproved?', primary: 'CREDIT_APPLICATION', tag: 'credit-app' },
+  {
+    say: 'Can I finance this Grand Wagoneer?',
+    primary: 'FINANCE_REQUEST',
+    tag: 'finance',
+  },
+  {
+    say: "Does that mean I'm approved?",
+    primary: 'FINANCE_REQUEST',
+    tag: 'approval-q',
+  },
+  {
+    say: 'Where is the credit application?',
+    primary: 'CREDIT_APPLICATION',
+    tag: 'credit-app',
+  },
+  {
+    say: 'Can I apply for financing?',
+    primary: 'CREDIT_APPLICATION',
+    tag: 'credit-app',
+  },
+  {
+    say: 'How do I get preapproved?',
+    primary: 'CREDIT_APPLICATION',
+    tag: 'credit-app',
+  },
   {
     say: 'Can I do it online?',
     primary: 'CREDIT_APPLICATION',
@@ -157,8 +224,16 @@ const SCENARIOS: Case[] = [
   },
 
   // — service / parts —
-  { say: 'I need an oil change', primary: 'SERVICE_APPOINTMENT', tag: 'service' },
-  { say: 'need a tire rotation', primary: 'SERVICE_APPOINTMENT', tag: 'service' },
+  {
+    say: 'I need an oil change',
+    primary: 'SERVICE_APPOINTMENT',
+    tag: 'service',
+  },
+  {
+    say: 'need a tire rotation',
+    primary: 'SERVICE_APPOINTMENT',
+    tag: 'service',
+  },
   {
     say: 'Actually, can you schedule service for my other Jeep?',
     primary: 'SERVICE_APPOINTMENT',
@@ -176,7 +251,11 @@ const SCENARIOS: Case[] = [
   { say: 'do you sell floor mats', primary: 'PARTS_INQUIRY', tag: 'parts' },
 
   // — hours / location / phone —
-  { say: 'What time do you close today?', primary: 'HOURS_LOCATION', tag: 'hours' },
+  {
+    say: 'What time do you close today?',
+    primary: 'HOURS_LOCATION',
+    tag: 'hours',
+  },
   { say: 'are you open on Sunday?', primary: 'HOURS_LOCATION', tag: 'hours' },
   { say: 'where are you located?', primary: 'HOURS_LOCATION', tag: 'location' },
   {
@@ -187,8 +266,16 @@ const SCENARIOS: Case[] = [
   { say: 'how do i call you guys', primary: 'HOURS_LOCATION', tag: 'phone' },
 
   // — shopping / purchase / trade —
-  { say: 'I want to buy a car', primary: 'SHOPPING_START', tag: 'shopping-start' },
-  { say: "I'm looking for a car.", primary: 'SHOPPING_START', tag: 'shopping-start' },
+  {
+    say: 'I want to buy a car',
+    primary: 'SHOPPING_START',
+    tag: 'shopping-start',
+  },
+  {
+    say: "I'm looking for a car.",
+    primary: 'SHOPPING_START',
+    tag: 'shopping-start',
+  },
   {
     say: "I'll take it",
     primary: 'PURCHASE_START',
@@ -199,8 +286,16 @@ const SCENARIOS: Case[] = [
   { say: 'can I trade my 2018 Civic', primary: 'TRADE_IN', tag: 'trade' },
 
   // — handoff / complaint / safety —
-  { say: 'connect me with a salesperson', primary: 'HUMAN_HANDOFF', tag: 'handoff' },
-  { say: 'I want to talk to a manager', primary: 'HUMAN_HANDOFF', tag: 'handoff' },
+  {
+    say: 'connect me with a salesperson',
+    primary: 'HUMAN_HANDOFF',
+    tag: 'handoff',
+  },
+  {
+    say: 'I want to talk to a manager',
+    primary: 'HUMAN_HANDOFF',
+    tag: 'handoff',
+  },
   {
     say: 'this is ridiculous, nobody is helping me',
     primary: 'COMPLAINT',
@@ -209,10 +304,24 @@ const SCENARIOS: Case[] = [
 
   // — knowledge / policy / truth-engine routes —
   { say: 'What is your doc fee?', primary: 'KNOWLEDGE_QUESTION', tag: 'fees' },
-  { say: 'do you ship out of state?', primary: 'KNOWLEDGE_QUESTION', tag: 'policy' },
+  {
+    say: 'do you ship out of state?',
+    primary: 'KNOWLEDGE_QUESTION',
+    tag: 'policy',
+  },
   { say: "what's the catch", primary: 'KNOWLEDGE_QUESTION', tag: 'catch' },
-  { say: 'what makes this special', primary: 'KNOWLEDGE_QUESTION', not: ['CURRENT_OFFERS'], tag: 'not-specials' },
-  { say: "What's new with the 2027 Tacoma?", primary: 'KNOWLEDGE_QUESTION', not: ['INVENTORY_SEARCH'], tag: 'product-edu' },
+  {
+    say: 'what makes this special',
+    primary: 'KNOWLEDGE_QUESTION',
+    not: ['CURRENT_OFFERS'],
+    tag: 'not-specials',
+  },
+  {
+    say: "What's new with the 2027 Tacoma?",
+    primary: 'KNOWLEDGE_QUESTION',
+    not: ['INVENTORY_SEARCH'],
+    tag: 'product-edu',
+  },
 
   // — multilingual —
   { say: 'hola', primary: 'SMALL_TALK', tag: 'es-greeting' },
@@ -239,9 +348,17 @@ const SCENARIOS: Case[] = [
   },
 
   // — appointments —
-  { say: 'I want a test drive Saturday', primary: 'SALES_APPOINTMENT', tag: 'test-drive' },
+  {
+    say: 'I want a test drive Saturday',
+    primary: 'SALES_APPOINTMENT',
+    tag: 'test-drive',
+  },
   { say: 'schedule a visit', primary: 'SALES_APPOINTMENT', tag: 'visit' },
-  { say: 'cancel my appointment', primary: 'APPOINTMENT_CANCEL', tag: 'cancel' },
+  {
+    say: 'cancel my appointment',
+    primary: 'APPOINTMENT_CANCEL',
+    tag: 'cancel',
+  },
   {
     say: 'move my appointment to Saturday',
     primary: 'APPOINTMENT_RESCHEDULE',
@@ -259,12 +376,39 @@ const SCENARIOS: Case[] = [
   { say: 'text me instead', primary: 'TEXT_CONTINUATION', tag: 'sms' },
 
   // — more typo / slang coverage —
-  { say: 'whats the paymnet on that', primary: 'PAYMENT_ESTIMATE', ctx: { hasSelectedVehicle: true }, tag: 'payment-typo' },
-  { say: 'can i shedule service', primary: 'SERVICE_APPOINTMENT', tag: 'schedule-typo' },
-  { say: 'how can i get pre approved', primary: 'CREDIT_APPLICATION', tag: 'preapprove-space' },
-  { say: 'wranglers on the lot?', primary: 'INVENTORY_SEARCH', tag: 'lot-availability' },
-  { say: 'am i chatting with a robot', primary: 'SMALL_TALK', not: ['HUMAN_HANDOFF'], tag: 'identity-2' },
-  { say: 'is there a human on the other end', primary: 'SMALL_TALK', not: ['HUMAN_HANDOFF'], tag: 'identity-3' },
+  {
+    say: 'whats the paymnet on that',
+    primary: 'PAYMENT_ESTIMATE',
+    ctx: { hasSelectedVehicle: true },
+    tag: 'payment-typo',
+  },
+  {
+    say: 'can i shedule service',
+    primary: 'SERVICE_APPOINTMENT',
+    tag: 'schedule-typo',
+  },
+  {
+    say: 'how can i get pre approved',
+    primary: 'CREDIT_APPLICATION',
+    tag: 'preapprove-space',
+  },
+  {
+    say: 'wranglers on the lot?',
+    primary: 'INVENTORY_SEARCH',
+    tag: 'lot-availability',
+  },
+  {
+    say: 'am i chatting with a robot',
+    primary: 'SMALL_TALK',
+    not: ['HUMAN_HANDOFF'],
+    tag: 'identity-2',
+  },
+  {
+    say: 'is there a human on the other end',
+    primary: 'SMALL_TALK',
+    not: ['HUMAN_HANDOFF'],
+    tag: 'identity-3',
+  },
 ];
 
 describe('Phase 1 conversation scenarios (≥100)', () => {

@@ -109,6 +109,14 @@ import { incidentRank } from './safety/customer-incident';
 import { seedOf, socialLine, vary } from './dialogue/social';
 import { CampaignEngine } from '../messaging/campaign.engine';
 import { ConsentService } from '../messaging/consent.service';
+import {
+  blocksConsequentialAffirm,
+  isTypoAcknowledgment,
+} from './understanding/affirmative-consent';
+import {
+  offerDisclosure,
+  selectVerifiedCurrentOffers,
+} from './offers/verified-current-offers';
 
 export type ChatProvenance = {
   sources: string[];
@@ -5197,75 +5205,43 @@ export class ChatOrchestrator {
   }
 
   /**
-   * Current specials / offers / incentives: only approved in-window spotlights and
-   * published knowledge. Never invent rebates, APR specials, or cash-back amounts.
+   * Current specials / offers / incentives: only approved, in-window, location-scoped
+   * OFFER spotlights with a disclaimer. Never invent rebates/APR/cash-back, never treat
+   * generic announcements or keyword-matched knowledge articles as current promotions.
    */
   private async handleCurrentOffers(t: Turn) {
-    const lines: string[] = [];
     const active = t.locationId
       ? await this.spotlights.activeForStore(t.tenantId, t.locationId)
       : [];
-    const offers = active.filter(
-      (s) => s.kind === 'OFFER' || s.kind === 'ANNOUNCEMENT',
-    );
-    for (const o of offers) {
-      const title = String(o.title ?? '').trim();
-      const body = String(o.body ?? '').trim();
-      const disclaimer = o.disclaimer
-        ? ` (${String(o.disclaimer).trim()})`
-        : '';
-      if (title || body) {
-        lines.push(`${title}${title && body ? ': ' : ''}${body}${disclaimer}`);
+    const offers = selectVerifiedCurrentOffers(active);
+    t.toolCount += 1;
+    if (offers.length) {
+      t.sources.add('spotlights');
+      for (const o of offers) {
+        t.facts.push(o.line.slice(0, 300));
         t.evidence.push(
           this.evidenceSvc.verifiedConfig(
             t.tenantId,
             t.locationId,
             'promotion',
-            title || body.slice(0, 80),
+            o.title || o.body.slice(0, 80),
             'spotlight',
-            typeof o.endsAt === 'string' ? o.endsAt : new Date().toISOString(),
+            o.endsAt ?? new Date().toISOString(),
           ),
         );
       }
-    }
-    const kc = await this.cap(t, 'knowledge');
-    if (kc.allowed) {
-      const hits = await this.knowledge.search({
-        tenantId: t.tenantId,
-        locationId: t.locationId,
-        query: 'specials offers incentives promotions rebates deals',
-        forWidget: true,
-        limit: 5,
-      });
-      const relevant = hits.filter((h) =>
-        /\b(special|offer|incentive|rebate|promotion|deal)\b/i.test(
-          `${h.title} ${h.content}`,
-        ),
-      );
-      for (const h of relevant.slice(0, 3)) {
-        lines.push(`${h.title}: ${h.content.slice(0, 280)}`);
-        t.evidence.push(
-          this.evidenceSvc.verifiedConfig(
-            t.tenantId,
-            t.locationId,
-            'incentives',
-            h.title,
-            'knowledge_base',
-            new Date().toISOString(),
-          ),
-        );
-      }
-      if (relevant.length) t.sources.add('knowledge_base');
-    }
-    t.toolCount += 1;
-    if (offers.length) t.sources.add('spotlights');
-    if (lines.length) {
-      t.facts.push(...lines.map((l) => l.slice(0, 300)));
+      const disclosure = offerDisclosure();
       t.answers.push(
         tr(
           t.lang,
-          `Here’s what I can verify on current offers: ${lines.join(' · ').slice(0, 700)}`,
-          `Esto es lo que puedo verificar sobre ofertas actuales: ${lines.join(' · ').slice(0, 700)}`,
+          `Here’s what I can verify on current offers for this store: ${offers
+            .map((o) => o.line)
+            .join(' · ')
+            .slice(0, 650)} ${disclosure}`,
+          `Esto es lo que puedo verificar sobre ofertas actuales de esta agencia: ${offers
+            .map((o) => o.line)
+            .join(' · ')
+            .slice(0, 650)} ${disclosure}`,
         ),
       );
       this.ask(
@@ -5291,7 +5267,7 @@ export class ChatOrchestrator {
     t.answers.push(
       tr(
         t.lang,
-        "I don’t have any verified current specials or offers on file for this store right now, so I won’t invent any. I can search inventory, run a payment estimate, or have the team confirm what’s available.",
+        "I don't have any verified current specials or offers on file for this store right now, so I won't invent any. I can search inventory, run a payment estimate, or have the team confirm what's available.",
         'No tengo especiales u ofertas actuales verificadas para esta agencia ahora, así que no voy a inventar ninguna. Puedo buscar inventario, estimar un pago o pedir que el equipo confirme lo disponible.',
       ),
     );
@@ -5630,6 +5606,36 @@ export class ChatOrchestrator {
 
   private async handleAffirm(t: Turn) {
     const p = t.st.pending ?? 'none';
+    const offerPreview = this.freshOffer(t);
+    // Typo acks ("oAY"/"OKy") and bare ok/sure must never authorize SMS consent,
+    // credit, external handoff, or appointment writes — re-ask for explicit consent.
+    if (
+      blocksConsequentialAffirm(
+        t.message,
+        p === 'none' ? null : p,
+        offerPreview?.kind,
+      )
+    ) {
+      const restorePending: PendingQuestion | 'none' =
+        p === 'none' ? 'none' : p;
+      t.st.pending = restorePending === 'none' ? 'none' : restorePending;
+      const typo = isTypoAcknowledgment(t.message);
+      this.ask(
+        t,
+        restorePending,
+        tr(
+          t.lang,
+          typo
+            ? 'Just to be sure — please reply with a clear "yes" if you want me to proceed with that (it can save your consent or contact the team).'
+            : 'Please confirm with a clear "yes" if you want me to proceed — that step can save consent or contact the team.',
+          typo
+            ? 'Solo para confirmar — responda con un "sí" claro si quiere que continúe (puede guardar su consentimiento o contactar al equipo).'
+            : 'Confirme con un "sí" claro si quiere que continúe — ese paso puede guardar consentimiento o contactar al equipo.',
+        ),
+        1,
+      );
+      return;
+    }
     t.st.pending = 'none';
     if (p === 'figure_meaning' || p === 'payment_method') {
       this.ask(
@@ -5701,7 +5707,7 @@ export class ChatOrchestrator {
       return;
     }
     // "Yes" means yes to the question we JUST asked — nothing else. No offer → no action.
-    const offer = this.freshOffer(t);
+    const offer = offerPreview;
     switch (offer?.kind) {
       case 'payment':
         return this.handlePayment(t);

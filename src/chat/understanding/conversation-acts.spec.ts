@@ -38,15 +38,17 @@ describe('conversational layer (real failed transcript)', () => {
     );
   });
 
-  it.each(['what are the specials', 'any specials?', 'current offers', 'do you have any deals'])(
-    '"%s" → CURRENT_OFFERS (not open knowledge fallback)',
-    (m) => {
-      expect(u(m).primary).toBe('CURRENT_OFFERS');
-      expect(u(m).intents.map((i) => i.intent)).not.toContain(
-        'KNOWLEDGE_QUESTION',
-      );
-    },
-  );
+  it.each([
+    'what are the specials',
+    'any specials?',
+    'current offers',
+    'do you have any deals',
+  ])('"%s" → CURRENT_OFFERS (not open knowledge fallback)', (m) => {
+    expect(u(m).primary).toBe('CURRENT_OFFERS');
+    expect(u(m).intents.map((i) => i.intent)).not.toContain(
+      'KNOWLEDGE_QUESTION',
+    );
+  });
 
   it('"what makes this special" is not a specials/offers ask', () => {
     expect(u('what makes this special').primary).not.toBe('CURRENT_OFFERS');
