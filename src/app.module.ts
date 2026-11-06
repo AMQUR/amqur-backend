@@ -7,6 +7,7 @@ import { envValidationSchema } from './config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TenantThrottlerGuard } from './common/guards/tenant-throttler.guard';
 import { rateLimit } from './common/rate-limits';
+import { SecurityHeadersMiddleware } from './common/middleware/security-headers.middleware';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 
@@ -139,6 +140,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware).forRoutes('{*path}');
+    consumer
+      .apply(SecurityHeadersMiddleware, LoggerMiddleware)
+      .forRoutes('{*path}');
   }
 }
