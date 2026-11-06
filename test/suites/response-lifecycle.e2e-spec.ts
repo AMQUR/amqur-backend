@@ -20,9 +20,7 @@ describe('response lifecycle (e2e)', () => {
 
   it('ordinary JSON responses carry X-Request-Id', async () => {
     const res = await request(base).get('/api/health/live').expect(200);
-    expect(res.headers['x-request-id']).toMatch(
-      /^[0-9a-f-]{8,}$/i,
-    );
+    expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{8,}$/i);
     expect(res.body?.success).toBe(true);
   });
 
