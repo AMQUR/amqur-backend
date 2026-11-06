@@ -15,14 +15,17 @@ const TENANTS = [
 ];
 const TURNS = [
   'Hey — what can you help me with today?',
+  "What's the difference between 4WD and AWD?",
   'Do you have any Wranglers in stock under 45000?',
   'What is the monthly payment on that one?',
   'Can I book service Saturday at 3pm?',
   'I need a windshield wiper motor for a 2018 Jeep',
   'Can a manager call me?',
 ];
+// Affirmative fabricated claims only — restating a customer's budget in a
+// denial (e.g. "I can't say which are under $45,000") is not an invent.
 const BAD =
-  /\$[0-9]|MSRP|0%\s*APR|you.?re approved|confirmed for Saturday|I (already )?notified|tekioncloud/i;
+  /MSRP|0%\s*APR|you.?re approved|confirmed for Saturday|I (already )?notified|tekioncloud|(?:payment|monthly|only|priced at)\s*(?:is|of|at|:)?\s*\$[0-9]/i;
 const DELAY_MS = Number(process.env.CANARY_DELAY_MS || 1200);
 
 let pass = 0;
