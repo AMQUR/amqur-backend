@@ -115,10 +115,12 @@ export class LlmRouterService {
     // replies continue) rather than letting each replica count on its own.
     if (process.env.NODE_ENV === 'production') {
       const configured = !!process.env.REDIS_URL?.trim();
-      const probe = (this.cache as { isRedisHealthy?: () => boolean })
-        .isRedisHealthy;
-      const healthy = typeof probe === 'function' ? probe() : false;
-      if (!configured || !healthy) return 'spend_store_unavailable';
+      // Fail closed when the shared counter is missing entirely.
+      if (!configured) return 'spend_store_unavailable';
+      // Must keep the receiver: extracting `isRedisHealthy` and calling it unbound
+      // throws (TypeError on `this.redis`) and surfaces as composer `model_exception`
+      // even when llm=configured. Fail closed if Redis is configured but down.
+      if (!this.cache.isRedisHealthy()) return 'spend_store_unavailable';
     }
     const k = this.keys(tenantId);
     if ((await this.counter(k.tokens)) >= this.dailyBudget())
