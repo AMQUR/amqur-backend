@@ -1,0 +1,58 @@
+name: Security dependency remediation (isolated)
+on:
+  push:
+    branches:
+      - security/npm-audit-2026-11-07
+    paths:
+      - .github/workflows/lockfile-security-remediation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Update only compatible lockfile versions
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-fund
+          npm audit fix --package-lock-only --ignore-scripts --no-fund
+          git diff --stat -- package.json package-lock.json
+      - name: Reinstall, generate, typecheck and test
+        run: |
+          set -euo pipefail
+          npm ci --no-fund
+          npx prisma generate
+          npx tsc --noEmit -p tsconfig.build.json
+          npx tsc --noEmit
+          npm run lint
+          npm test
+          npm run build
+      - name: Require no known high/critical production advisories
+        run: npm audit --omit=dev --audit-level=high
+      - name: Commit audited dependency changes to this security branch only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_NAME" = "security/npm-audit-2026-11-07"
+          if git diff --quiet -- package-lock.json package.json; then
+            echo "No dependency changes required"
+            exit 0
+          fi
+          git config user.name "AMQUR Security CI"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json package.json
+          git commit -m "fix(deps): remediate audited runtime dependencies [skip ci]"
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/security/npm-audit-2026-11-07
+          echo "Patched lockfile committed to isolated security branch"
