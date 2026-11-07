@@ -25,7 +25,10 @@ jobs:
         run: |
           set -euo pipefail
           npm ci --ignore-scripts --no-fund
-          npm audit fix --package-lock-only --ignore-scripts --no-fund
+          # Non-forced audit may exit 1 for dev-only or unresolved advisories.
+          # Always re-install and enforce a separate production HIGH gate below.
+          npm audit fix --package-lock-only --ignore-scripts --no-fund || true
+          npm audit fix --package-lock-only --ignore-scripts --no-fund || true
           git diff --stat -- package.json package-lock.json
       - name: Reinstall, generate, typecheck and test
         run: |
