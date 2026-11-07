@@ -1,0 +1,68 @@
+name: Public production safety probe (no credentials)
+on:
+  push:
+    branches: [inspect/production-public-20261107]
+    paths: [.github/workflows/production-public-safety-probe.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  public-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Probe publicly exposed safety contract without credentials or business writes
+        run: |
+          node --input-type=module <<'NODE'
+          const API = 'https://api.dialusnow.com/api';
+          const tenants = ['jeep-of-chicago','dial-nissan-of-chicago','dial-chevy-of-chicago','infiniti-of-chicago','dial-cdjr-of-chicago'];
+          let pass=0, fail=0;
+          function check(ok, label, detail='') {
+            console.log((ok?'PASS':'FAIL')+' '+label+(detail?' '+detail:''));
+            ok ? pass++ : fail++;
+          }
+          async function request(path, init) {
+            try {
+              const controller=new AbortController();
+              const timeout=setTimeout(()=>controller.abort(),15000);
+              const res=await fetch(API+path,{...init,signal:controller.signal});
+              clearTimeout(timeout);
+              const text=await res.text();
+              let obj={}; try {obj=JSON.parse(text)} catch {}
+              return {status:res.status,body:obj?.data??obj};
+            } catch(err) {return {status:0,body:{},error:String(err?.name||'network_error')}}
+          }
+          const version=await request('/version');
+          const sha=String(version.body?.commitSha||'');
+          check(version.status===200 && /^[a-f0-9]{40}$/i.test(sha), 'production version valid', 'sha='+sha.slice(0,12));
+          check(version.body?.environment==='production', 'production environment identity',String(version.body?.environment||'?'));
+          const health=await request('/health');
+          check(health.status===200 && health.body?.checks?.database==='up','production DB health');
+          check(health.status===200 && health.body?.checks?.redis==='up','production Redis health');
+          console.log('INFO modelConfigured='+String(health.body?.checks?.llm==='configured'));
+          for (const tenant of tenants) {
+            const cfg=await request('/public/widget-config?tenantSlug='+tenant+'&locationSlug=main');
+            check(cfg.status===200,tenant+' public config');
+            const body=JSON.stringify(cfg.body??{});
+            check(!/allowedOrigins|jwtSecret|DATABASE_URL|TEKION_CLIENT_SECRET|BEGIN PRIVATE KEY/i.test(body),tenant+' no forbidden config fields');
+            for(const origin of [undefined,'https://unauthorized.example']) {
+              const response=await request('/public/widget-token',{
+                method:'POST',
+                headers:{'Content-Type':'application/json',...(origin?{'Origin':origin}:{})},
+                body:JSON.stringify({tenantSlug:tenant,locationSlug:'main'})
+              });
+              check(response.status===403,tenant+' token rejected '+(origin?'untrusted':'missing')+' origin','HTTP '+response.status);
+            }
+          }
+          for (const path of ['/ops/overview','/ops/queues','/ops/surveys','/ops/ai/status']){
+            const x=await request(path);
+            check(x.status===401,path+' rejects anonymous access','HTTP '+x.status);
+          }
+          console.log('SUMMARY pass='+pass+' fail='+fail+' public_read_only_probe=1');
+          process.exit(fail?1:0);
+          NODE
