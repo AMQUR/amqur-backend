@@ -16,6 +16,8 @@
  * - Interpretation-only (modelInterpreted without accepted LM status) is NOT enough.
  * - Refuses production API hosts.
  */
+import { matchesExpectedCommit, isApprovedStagingEndpoint, isGenerativeConfigured } from './staging-canary-guards.mjs';
+
 const API = (process.argv[2] || 'https://staging-api.dialusnow.com').replace(
   /\/$/,
   '',
@@ -104,13 +106,8 @@ function classifyProviderFailure(fallbackReason) {
 }
 
 function assertNotProduction(apiBase) {
-  const host = apiBase.toLowerCase();
-  if (
-    host.includes('://api.dialusnow.com') ||
-    host.includes('environment=production') ||
-    /\/production(\/|$)/.test(host)
-  ) {
-    ko('refused: production API host is not allowed for generative canary');
+  if (!isApprovedStagingEndpoint(apiBase)) {
+    ko('refused: production API host is not allowed; canonical HTTPS staging API only');
     return false;
   }
   return true;
@@ -120,7 +117,7 @@ async function main() {
   if (!assertNotProduction(API)) {
     process.exit(1);
   }
-  if (!EXPECTED_SHA || EXPECTED_SHA.length < 7) {
+  if (!/^[0-9a-f]{7,40}$/.test(EXPECTED_SHA)) {
     ko(
       'EXPECTED_COMMIT_SHA required (full or ≥7-char SHA of the deployed candidate)',
     );
@@ -134,10 +131,7 @@ async function main() {
   console.log(
     `INFO  version before sha=${shaBefore || 'n/a'} expected=${EXPECTED_SHA}`,
   );
-  if (
-    !shaBefore.startsWith(EXPECTED_SHA) &&
-    !EXPECTED_SHA.startsWith(shaBefore)
-  ) {
+  if (versionBefore.status !== 200 || !matchesExpectedCommit(shaBefore, EXPECTED_SHA)) {
     ko(
       `sha-before mismatch got=${shaBefore || 'missing'} expected=${EXPECTED_SHA}`,
     );
@@ -157,10 +151,11 @@ async function main() {
   if (redis !== 'up') ko('redis not up');
   else ok('redis up');
 
-  if (llm !== 'configured') {
+  if (!isGenerativeConfigured(llm)) {
     console.log(
       'INFO  MODE=safety-only (llm not configured) — NOT generative verification',
     );
+    ko('generative-gate: llm must be configured; safety-only cannot pass');
   }
 
   const perTenantModel = Object.fromEntries(TENANTS.map((t) => [t, 0]));
@@ -292,10 +287,7 @@ async function main() {
   const shaAfter = String(
     versionAfter.body?.data?.commitSha || '',
   ).toLowerCase();
-  if (
-    !shaAfter.startsWith(EXPECTED_SHA) &&
-    !EXPECTED_SHA.startsWith(shaAfter)
-  ) {
+  if (versionAfter.status !== 200 || !matchesExpectedCommit(shaAfter, EXPECTED_SHA)) {
     ko(
       `sha-after mismatch got=${shaAfter || 'missing'} expected=${EXPECTED_SHA}`,
     );
