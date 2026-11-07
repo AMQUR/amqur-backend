@@ -5,6 +5,7 @@ on:
       - security/npm-audit-2026-11-07
     paths:
       - .github/workflows/lockfile-security-remediation.yml
+      - package.json
 
 permissions:
   contents: write
@@ -24,6 +25,8 @@ jobs:
       - name: Update only compatible lockfile versions
         run: |
           set -euo pipefail
+          # A new override requires regenerating the lockfile BEFORE npm ci.
+          npm install --package-lock-only --ignore-scripts --no-fund --no-audit
           npm ci --ignore-scripts --no-fund
           # Non-forced audit may exit 1 for dev-only or unresolved advisories.
           # Always re-install and enforce a separate production HIGH gate below.
