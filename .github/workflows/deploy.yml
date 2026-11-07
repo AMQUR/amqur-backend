@@ -103,6 +103,11 @@ jobs:
         # anonymous widget conversations on staging.
         run: bash scripts/staging-acceptance.sh "https://staging-api.dialusnow.com" "${{ github.sha }}"
 
+      - name: Staging model safety — strict five-tenant generative canary
+        env:
+          EXPECTED_COMMIT_SHA: ${{ github.sha }}
+        run: node scripts/staging-generative-canary.mjs
+
   deploy-production:
     # Requires the GitHub "production" environment with required reviewers —
     # the job pauses for manual approval. Inert until the owner creates it.
@@ -116,6 +121,14 @@ jobs:
           node-version: '22'
       - name: Guard — production environment must exist and be approved
         run: echo "approved by required reviewer"
+      - name: Enforce backup restore + alert delivery evidence before production promotion
+        env:
+          AMQUR_PRODUCTION_APPROVED_SHA: ${{ vars.AMQUR_PRODUCTION_APPROVED_SHA }}
+          AMQUR_BACKUP_RESTORE_RECEIPT: ${{ vars.AMQUR_BACKUP_RESTORE_RECEIPT }}
+          AMQUR_BACKUP_RESTORE_AT: ${{ vars.AMQUR_BACKUP_RESTORE_AT }}
+          AMQUR_ALERT_DELIVERY_RECEIPT: ${{ vars.AMQUR_ALERT_DELIVERY_RECEIPT }}
+          AMQUR_ALERT_DELIVERY_AT: ${{ vars.AMQUR_ALERT_DELIVERY_AT }}
+        run: node scripts/production-release-gate.mjs
       - name: Install Railway CLI
         run: npm i -g @railway/cli
       - name: Sync missing worker boot vars from prod-api (names only, values never printed)

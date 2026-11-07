@@ -82,14 +82,33 @@ jobs:
           npx prisma migrate status
       - name: E2E suites
         run: |
+          set -euo pipefail
           set -a && . ./test-infra/.env.test && set +a
-          npm run test:e2e
+          # Preserve full logs so headers-sent regressions cannot hide behind a green exit.
+          npm run test:e2e 2>&1 | tee /tmp/amqur-e2e.log
+          # Match Node/Express runtime codes only (not fixture strings).
+          if grep -Eiq 'ERR_HTTP_HEADERS_SENT|UnhandledPromiseRejection.*headers' /tmp/amqur-e2e.log; then
+            echo "FAIL: headers-sent error detected in e2e logs" >&2
+            exit 1
+          fi
+          if grep -Eiq 'Cannot set headers after they are sent to the client' /tmp/amqur-e2e.log \
+            && ! grep -Eiq 'response lifecycle' /tmp/amqur-e2e.log; then
+            echo "FAIL: unexplained headers-sent error in e2e logs" >&2
+            exit 1
+          fi
       - name: Upload AI evaluation report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ai-eval-report
           path: test/evidence/ai-eval-latest.json
+          if-no-files-found: warn
+      - name: Upload e2e log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-log
+          path: /tmp/amqur-e2e.log
           if-no-files-found: warn
 
   command-center:
@@ -153,6 +172,10 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm run lint
       - run: npm test
+      - name: Generative canary self-tests
+        run: node --test scripts/staging-generative-canary.test.mjs
+      - name: Production promotion gate regression tests
+        run: node --test scripts/production-release-gate.test.mjs
       - run: npm run test:cov
       - run: npm run build
 
