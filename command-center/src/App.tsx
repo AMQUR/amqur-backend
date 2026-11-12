@@ -12,6 +12,7 @@ import { Settings } from './pages/Settings';
 import { Ops } from './pages/Ops';
 import { Security } from './pages/Security';
 import { Group } from './pages/Group';
+import { DealerIntelligence } from './pages/DealerIntelligence';
 import { Spotlights } from './pages/Spotlights';
 import { ConversationStudio } from './pages/ConversationStudio';
 import { Campaigns } from './pages/Campaigns';
@@ -53,6 +54,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'settings', label: 'Rooftop settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'ops', label: 'Delivery failures', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'group', label: 'Group comparison' },
+  { id: 'dealer-intelligence', label: 'Dealer Intelligence', roles: ['SUPER_ADMIN'] },
   { id: 'security', label: 'Security' },
 ];
 
@@ -139,6 +141,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'settings' && <Settings locationId={locationId} />}
         {route === 'ops' && <Ops />}
         {route === 'group' && <Group />}
+        {route === 'dealer-intelligence' && props.role === 'SUPER_ADMIN' && <DealerIntelligence />}
         {route === 'spotlights' && <Spotlights locationId={locationId} />}
         {route === 'security' && <Security required={props.enrollRequired} />}
       </main>
