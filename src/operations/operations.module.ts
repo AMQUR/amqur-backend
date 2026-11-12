@@ -23,7 +23,15 @@ import { AppointmentsModule } from '../appointments/appointments.module';
     PartsModule,
     AppointmentsModule,
   ],
-  controllers: [OperationsController, WidgetLiveController, DealerIntelligenceController],
-  providers: [OperationsService, RooftopReadinessService, DealerIntelligenceService],
+  controllers: [
+    OperationsController,
+    WidgetLiveController,
+    DealerIntelligenceController,
+  ],
+  providers: [
+    OperationsService,
+    RooftopReadinessService,
+    DealerIntelligenceService,
+  ],
 })
 export class OperationsModule {}
