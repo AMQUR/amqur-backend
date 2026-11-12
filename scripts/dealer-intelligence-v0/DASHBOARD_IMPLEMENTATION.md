@@ -43,6 +43,7 @@ To generate a public-safe example, use only `fixtures/synthetic/` and `--synthet
 - Google Ads: observed aggregate daily spend only; not complete-channel spend. Central group account is not allocated to individual stores.
 - DMS event date vs CRM lead date vs Google attribution date **must not** be combined into a cost-per-sold or causal return-on-ad-spend calculation.
 - No live APIs, site widgets, database migrations, ad campaign writes, CRM writebacks, consent changes, or production releases.
+- The builder refuses report output paths inside this source repository and refuses synthetic fixture inputs without the explicit `--synthetic` flag. Keep output in private encrypted storage.
 - Action entries are `Needs Review` and `Implemented=No`. Escalation to live activation requires separate store-specific approvals, vendor contracts, backup/restore, monitoring/alert evidence and per-store tests.
 
 ## Future operational integration, not included in this PR

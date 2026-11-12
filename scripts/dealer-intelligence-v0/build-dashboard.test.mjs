@@ -89,6 +89,22 @@ test('private files use exact approved aggregates and do not echo customer ident
   }
  }finally{await rm(dir,{recursive:true,force:true});}
 });
+test('private outputs are refused inside public Git checkout',async()=>{
+ await assert.rejects(()=>buildDashboard({
+  adsPath:path.join(HERE,'fixtures/synthetic/ads.csv'),
+  crmPath:path.join(HERE,'fixtures/synthetic/crm.csv'),
+  dmsPath:path.join(HERE,'fixtures/synthetic/dms.csv'),
+  outputDir:path.join(HERE,'private-output'),asOf:'2026-11-10',synthetic:true
+ }),/inside the public source repository/);
+});
+test('synthetic fixtures cannot silently be presented as real data',async()=>{
+ await assert.rejects(()=>buildDashboard({
+  adsPath:path.join(HERE,'fixtures/synthetic/ads.csv'),
+  crmPath:path.join(HERE,'fixtures/synthetic/crm.csv'),
+  dmsPath:path.join(HERE,'fixtures/synthetic/dms.csv'),
+  outputDir:path.join(tmpdir(),'amqur-uncreated-preview'),asOf:'2026-11-10',synthetic:false
+ }),/require explicit --synthetic/);
+});
 test('stock comparison remains provisional; no cost-per-sold or ad ROAS is fabricated',()=>{
  const payload=makePayload({registry,...parse(),asOf:'2026-11-10'});
  assert.equal(payload.totals.verified_deliveries,undefined);

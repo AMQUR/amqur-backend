@@ -229,6 +229,14 @@ export function dashboardHtml(template,payload) {
 }
 export async function buildDashboard({adsPath,crmPath,dmsPath,outputDir,asOf='2026-11-10',synthetic=false}) {
   if (!adsPath||!crmPath||!dmsPath||!outputDir)throw new Error('Pass all aggregate inputs and a private output directory');
+  const repoRoot=path.resolve(HERE,'../..'),resolvedOut=path.resolve(outputDir);
+  if (resolvedOut===repoRoot || resolvedOut.startsWith(repoRoot+path.sep)) {
+    throw new Error('Refusing to write private dealership reports anywhere inside the public source repository');
+  }
+  const fixturePart=path.sep+'fixtures'+path.sep+'synthetic'+path.sep;
+  if (!synthetic && [adsPath,crmPath,dmsPath].some(x=>path.resolve(x).includes(fixturePart))) {
+    throw new Error('Synthetic fixtures require explicit --synthetic mode');
+  }
   const registry=JSON.parse(await readFile(REGISTRY,'utf8'));
   const storeIds=registry.rooftops.map(r=>r.key);
   const [adsText,crmText,dmsText,template]=await Promise.all([
