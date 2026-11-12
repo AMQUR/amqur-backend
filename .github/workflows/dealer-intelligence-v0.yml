@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run no-dependency scorecard tests
-        run: node --test scripts/dealer-intelligence-v0/scorecard.test.mjs
+      - name: Run no-dependency scorecard and Tekion import tests
+        run: node --test scripts/dealer-intelligence-v0/scorecard.test.mjs scripts/dealer-intelligence-v0/tekion-export-to-aggregates.test.mjs
       - name: Run synthetic-only smoke check
         run: |
           node scripts/dealer-intelligence-v0/scorecard.mjs --data scripts/dealer-intelligence-v0/fixtures/synthetic --out "$RUNNER_TEMP/amqur-demo" --as-of 2026-11-10
