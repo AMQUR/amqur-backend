@@ -4,6 +4,7 @@ import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {soldISO,cents,aggregateDeals,buildFromManifest} from './tekion-deals-to-aggregates.mjs';
+import {parseDms} from './build-dashboard.mjs';
 
 const header='Deal#,Deal Type,Stock Type,Status,Sold Date,Front Gross,Back Gross,Total Gross,Delivery Status,Deal Confirmed,Customer,Customer Email';
 const makeRow=(a)=>[...a,'SENSITIVE CUSTOMER','secret@example.invalid'].join(',');
@@ -58,6 +59,10 @@ test('output omits customer information and private deal identifiers',async()=>{
   assert.equal(data.stores.nissan.quality.candidates,2);
   const csv=await readFile(path.join(out,'dms_retail_candidates.csv'),'utf8');
   const qa=await readFile(path.join(out,'dms_quality.json'),'utf8');
+  const parsed=parseDms(csv,new Set(['nissan']));
+  assert.equal(parsed.length,28); // 14 calendar days × two new/used business lines
+  assert.equal(parsed.reduce((n,r)=>n+r.retail_candidates,0),2);
+  assert(parsed.some(r=>r.date==='2026-11-10'&&r.business_line==='new'&&r.retail_candidates===0));
   for (const s of ['SENSITIVE CUSTOMER','secret@example.invalid','A1','A2','Customer Email']) {
     assert.ok(!csv.includes(s),`CSV leaked ${s}`);
     assert.ok(!qa.includes(s),`QA leaked ${s}`);

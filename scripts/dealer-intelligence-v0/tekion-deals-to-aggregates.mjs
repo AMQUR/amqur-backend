@@ -122,9 +122,21 @@ export async function buildFromManifest({manifestPath,outDir,start,end}) {
     const body=await readFile(file.path,'utf8');
     reports.push(aggregateDeals({text:body,store:file.store,start,end}));
   }
-  const all=reports.flatMap(r=>r.daily).sort((a,b)=>a.date.localeCompare(b.date)||a.store.localeCompare(b.store)||a.business_line.localeCompare(b.business_line));
-  const csv=['date,store,business_line,retail_candidates'];
-  for (const r of all)csv.push(`${r.date},${r.store},${r.business_line},${r.retail_candidates}`);
+  // Dense store/day/new-used output preserves true observed zero as 0. A missing
+  // data source or source date remains unknown, but a date covered by this
+  // complete Deal List export with no qualifying candidates is a reported 0.
+  const first=Date.parse(start+'T00:00:00Z'),last=Date.parse(end+'T00:00:00Z');
+  const numberOfDays=Math.floor((last-first)/86400000)+1;
+  if (!Number.isSafeInteger(numberOfDays)||numberOfDays<1||numberOfDays>366)throw new Error('DMS reporting window must be 1 to 366 days');
+  const allCounts=new Map(reports.flatMap(r=>r.daily).map(r=>[`${r.date}|${r.store}|${r.business_line}`,r.retail_candidates]));
+  const csv=['sold_date,store,business_line,retail_candidates,status,source'];
+  for(let i=0;i<numberOfDays;i++){
+    const date=new Date(first+i*86400000).toISOString().slice(0,10);
+    for(const store of [...found].sort())for(const line of ['new','used']){
+      const count=allCounts.get(`${date}|${store}|${line}`)??0;
+      csv.push(`${date},${store},${line},${count},PROVISIONAL_NOT_POSTED,Tekion Deal List`);
+    }
+  }
   const payload={
     status:'PROVISIONAL_NOT_DELIVERED_OR_POSTED',period:{start,end},
     definition:'PERSONAL/BUSINESS, NEW/USED, CLOSED_OR_SOLD/BOOKED, Sold Date in period',

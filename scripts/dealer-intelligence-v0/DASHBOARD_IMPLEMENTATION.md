@@ -23,6 +23,17 @@ node scripts/dealer-intelligence-v0/build-dashboard.mjs \
 
 Open `index.html` locally **from that private output folder**. Store the output on a device or encrypted drive with authorized access; the HTML includes aggregate financial/operational metrics. The inputs must use the exact schemas of `scorecard.mjs` (`ads`,`crm`) and `build-dashboard.mjs` (`dms`). Never point this builder at customer-level Tekion exports.
 
+To prepare an aggregate DMS export from authorized raw Tekion Deal List files **locally**, use:
+
+```bash
+node scripts/dealer-intelligence-v0/tekion-deals-to-aggregates.mjs \
+  --manifest /path/to/private/dms-manifest.json \
+  --out /path/to/private/dms-aggregate \
+  --start 2026-08-01 --end 2026-11-10
+```
+
+Its output `dms_retail_candidates.csv` exactly matches the dashboard's six-column aggregate contract (`sold_date,store,business_line,retail_candidates,status,source`), including complete zero-count days. Raw exports and the manifest remain outside Git. This importer was checked against all five user-provided DMS exports: **1,020 aggregate rows and 1,053 provisional candidates**, exactly matching the independent prior summary.
+
 To generate a public-safe example, use only `fixtures/synthetic/` and `--synthetic`. The synthetic smoke build in GitHub Actions **never accesses live dealership credentials or data**.
 
 ## Current implementation boundaries
