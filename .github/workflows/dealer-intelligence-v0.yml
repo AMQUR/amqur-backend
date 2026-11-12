@@ -1,0 +1,46 @@
+name: AMQUR Dealer Intelligence v0
+on:
+  pull_request:
+    paths:
+      - 'scripts/dealer-intelligence-v0/**'
+      - 'src/operations/dealer-intelligence.*'
+      - 'command-center/src/pages/DealerIntelligence.tsx'
+      - 'command-center/src/pages/dealer-intelligence-metrics*'
+      - 'command-center/src/App.tsx'
+      - '.github/workflows/dealer-intelligence-v0.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scorecard-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test scorecard, importers, reporting, strict private policy and refresh
+        run: node --experimental-strip-types --test scripts/dealer-intelligence-v0/*.test.mjs
+      - name: Synthetic-only scorecard smoke
+        run: |
+          node scripts/dealer-intelligence-v0/scorecard.mjs --data scripts/dealer-intelligence-v0/fixtures/synthetic --out "$RUNNER_TEMP/amqur-scorecard" --as-of 2026-11-10
+          grep -q 'SYNTHETIC DEMO' "$RUNNER_TEMP/amqur-scorecard/report.md"
+      - name: Synthetic-only private dashboard smoke
+        run: |
+          node scripts/dealer-intelligence-v0/build-dashboard.mjs \
+            --ads scripts/dealer-intelligence-v0/fixtures/synthetic/ads.csv \
+            --crm scripts/dealer-intelligence-v0/fixtures/synthetic/crm.csv \
+            --dms scripts/dealer-intelligence-v0/fixtures/synthetic/dms.csv \
+            --out "$RUNNER_TEMP/amqur-dashboard" --as-of 2026-11-10 --synthetic
+          grep -q 'SYNTHETIC DEMO' "$RUNNER_TEMP/amqur-dashboard/owner-brief.md"
+          grep -q 'amqur-data' "$RUNNER_TEMP/amqur-dashboard/index.html"
+          ! grep -qi 'secret@example.invalid' "$RUNNER_TEMP/amqur-dashboard/index.html"
+      - name: Synthetic refresh must fail closed (no snapshot published)
+        run: |
+          node --experimental-strip-types scripts/dealer-intelligence-v0/refresh-private.mjs \
+            --ads "$GITHUB_WORKSPACE/scripts/dealer-intelligence-v0/fixtures/synthetic/ads.csv" \
+            --crm-aggregate "$GITHUB_WORKSPACE/scripts/dealer-intelligence-v0/fixtures/synthetic/crm.csv" \
+            --dms-aggregate "$GITHUB_WORKSPACE/scripts/dealer-intelligence-v0/fixtures/synthetic/dms.csv" \
+            --private-root "$RUNNER_TEMP/amqur-failclosed" --as-of 2026-11-10 --synthetic
+          test ! -f "$RUNNER_TEMP/amqur-failclosed/aggregate-report.json"

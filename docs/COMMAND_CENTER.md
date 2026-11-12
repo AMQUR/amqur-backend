@@ -30,3 +30,7 @@ npm run build:cc            # from backend/
 npm --prefix command-center run dev   # proxies /api to :3001
 ```
 Playwright smoke: `npx --prefix command-center playwright test`.
+
+## Dealer Intelligence (private; read-only; SUPER_ADMIN)
+
+Authenticated page `#/dealer-intelligence` queries `GET /api/ops/dealer-intelligence/snapshot`. This endpoint remains disabled unless explicitly configured with a private, non-world-readable aggregate snapshot outside the web root. It never serves individual customer data or confirmed sales without posted-ledger evidence. See `docs/operations/DEALER_INTELLIGENCE_PRIVATE_RELEASE.md`.

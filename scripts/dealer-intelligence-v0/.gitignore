@@ -1,0 +1,4 @@
+# Never commit sensitive dealership exports or locally generated reports.
+private/
+reports/
+*.real.csv
