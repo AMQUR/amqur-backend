@@ -53,7 +53,7 @@ export class DealerIntelligenceService {
         within(path.resolve(process.cwd()), resolvedFile) ||
         within(path.resolve(process.cwd()), resolvedRoot) ||
         (fileInfo.mode & 0o027) !== 0 ||
-        (rootInfo.mode & 0o007) !== 0 ||
+        (rootInfo.mode & 0o027) !== 0 ||
         fileInfo.size < 2 ||
         fileInfo.size > MAX_JSON_BYTES
       ) {

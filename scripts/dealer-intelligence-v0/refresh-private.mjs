@@ -46,7 +46,7 @@ export async function refreshPrivate({adsPath,crmAggregatePath,dmsAggregatePath,
   const actualRoot=await realpath(root);
   if(actualRoot!==root||contains(repoReal,actualRoot))throw new Error('Untrusted private output path');
   const rootStat=await lstat(actualRoot);
-  if(!rootStat.isDirectory()||rootStat.isSymbolicLink()||(rootStat.mode&0o007)!==0){
+  if(!rootStat.isDirectory()||rootStat.isSymbolicLink()||(rootStat.mode&0o027)!==0){
     throw new Error('Private report root must be an actual directory without public permissions');
   }
   const lockPath=path.join(root,'.refresh.lock');
