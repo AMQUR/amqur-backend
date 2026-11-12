@@ -34,7 +34,8 @@ export class DealerIntelligenceService {
       if (resolvedRoot !== rootPath || resolvedFile !== filePath || !rootInfo.isDirectory() ||
           !fileInfo.isFile() || fileInfo.isSymbolicLink() || !within(resolvedRoot, resolvedFile) ||
           within(path.resolve(process.cwd()), resolvedFile) || within(path.resolve(process.cwd()), resolvedRoot) ||
-          (fileInfo.mode & 0o004) !== 0 || fileInfo.size < 2 || fileInfo.size > MAX_JSON_BYTES) {
+          (fileInfo.mode & 0o027) !== 0 || (rootInfo.mode & 0o007) !== 0 ||
+          fileInfo.size < 2 || fileInfo.size > MAX_JSON_BYTES) {
         throw new Error('Private snapshot path or permissions invalid');
       }
       const raw = JSON.parse(await readFile(resolvedFile, 'utf8')) as unknown;
