@@ -1,0 +1,7 @@
+date,store,platform,business_line,spend_usd,impressions,clicks,reported_conversions
+2026-11-09,chevy,google_ads,unclassified,100,1000,70,10.5
+2026-11-10,chevy,google_ads,unclassified,110,1200,75,11
+2026-11-09,nissan,google_ads,unclassified,50,400,30,2
+2026-11-10,nissan,google_ads,unclassified,55,450,32,2.25
+2026-11-09,group,google_ads,unclassified,8,100,6,0
+2026-11-10,group,google_ads,unclassified,9,120,8,0

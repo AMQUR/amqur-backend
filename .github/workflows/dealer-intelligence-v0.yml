@@ -1,0 +1,25 @@
+name: AMQUR Dealer Intelligence v0
+on:
+  pull_request:
+    paths:
+      - 'scripts/dealer-intelligence-v0/**'
+      - '.github/workflows/dealer-intelligence-v0.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scorecard-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run no-dependency scorecard tests
+        run: node --test scripts/dealer-intelligence-v0/scorecard.test.mjs
+      - name: Run synthetic-only smoke check
+        run: |
+          node scripts/dealer-intelligence-v0/scorecard.mjs --data scripts/dealer-intelligence-v0/fixtures/synthetic --out "$RUNNER_TEMP/amqur-demo" --as-of 2026-11-10
+          grep -q 'SYNTHETIC DEMO' "$RUNNER_TEMP/amqur-demo/report.md"
+          ! grep -q 'actual customer' "$RUNNER_TEMP/amqur-demo/report.md"
