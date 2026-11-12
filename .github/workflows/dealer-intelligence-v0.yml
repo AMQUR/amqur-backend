@@ -39,8 +39,8 @@ jobs:
       - name: Synthetic refresh must fail closed (no snapshot published)
         run: |
           node --experimental-strip-types scripts/dealer-intelligence-v0/refresh-private.mjs \
-            --ads scripts/dealer-intelligence-v0/fixtures/synthetic/ads.csv \
-            --crm-aggregate scripts/dealer-intelligence-v0/fixtures/synthetic/crm.csv \
-            --dms-aggregate scripts/dealer-intelligence-v0/fixtures/synthetic/dms.csv \
+            --ads "$GITHUB_WORKSPACE/scripts/dealer-intelligence-v0/fixtures/synthetic/ads.csv" \
+            --crm-aggregate "$GITHUB_WORKSPACE/scripts/dealer-intelligence-v0/fixtures/synthetic/crm.csv" \
+            --dms-aggregate "$GITHUB_WORKSPACE/scripts/dealer-intelligence-v0/fixtures/synthetic/dms.csv" \
             --private-root "$RUNNER_TEMP/amqur-failclosed" --as-of 2026-11-10 --synthetic
           test ! -f "$RUNNER_TEMP/amqur-failclosed/aggregate-report.json"
