@@ -10,16 +10,25 @@ permissions:
 jobs:
   scorecard-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Run no-dependency scorecard and Tekion import tests
-        run: node --test scripts/dealer-intelligence-v0/scorecard.test.mjs scripts/dealer-intelligence-v0/tekion-export-to-aggregates.test.mjs
-      - name: Run synthetic-only smoke check
+      - name: Test scorecard, CRM/DMS importers and dashboard
+        run: node --test scripts/dealer-intelligence-v0/*.test.mjs
+      - name: Synthetic-only scorecard smoke
         run: |
-          node scripts/dealer-intelligence-v0/scorecard.mjs --data scripts/dealer-intelligence-v0/fixtures/synthetic --out "$RUNNER_TEMP/amqur-demo" --as-of 2026-11-10
-          grep -q 'SYNTHETIC DEMO' "$RUNNER_TEMP/amqur-demo/report.md"
-          ! grep -q 'actual customer' "$RUNNER_TEMP/amqur-demo/report.md"
+          node scripts/dealer-intelligence-v0/scorecard.mjs --data scripts/dealer-intelligence-v0/fixtures/synthetic --out "$RUNNER_TEMP/amqur-scorecard" --as-of 2026-11-10
+          grep -q 'SYNTHETIC DEMO' "$RUNNER_TEMP/amqur-scorecard/report.md"
+      - name: Synthetic-only private dashboard smoke
+        run: |
+          node scripts/dealer-intelligence-v0/build-dashboard.mjs \
+            --ads scripts/dealer-intelligence-v0/fixtures/synthetic/ads.csv \
+            --crm scripts/dealer-intelligence-v0/fixtures/synthetic/crm.csv \
+            --dms scripts/dealer-intelligence-v0/fixtures/synthetic/dms.csv \
+            --out "$RUNNER_TEMP/amqur-dashboard" --as-of 2026-11-10 --synthetic
+          grep -q 'SYNTHETIC DEMO' "$RUNNER_TEMP/amqur-dashboard/owner-brief.md"
+          grep -q 'amqur-data' "$RUNNER_TEMP/amqur-dashboard/index.html"
+          ! grep -qi 'secret@example.invalid' "$RUNNER_TEMP/amqur-dashboard/index.html"

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>AMQUR | Dealer Intelligence | Dial Auto Group</title>
+  <style>
+    :root{color-scheme:dark;--bg:#080d17;--bg2:#111b2b;--surface:#101929;--surface2:#142032;--border:#28374a;--muted:#8b9aab;--ink:#eff5fa;--mint:#79e0c3;--mint2:#29a787;--sky:#74b8f5;--amber:#f2ba6d;--purple:#b3a1fc;--radius:16px}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:radial-gradient(circle at 95% 0%,#163442 0,transparent 33%),radial-gradient(circle at 0% 23%,#152337 0,transparent 33%),var(--bg);color:var(--ink);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;line-height:1.5;min-height:100vh}
+    button,select{font:inherit}button{cursor:pointer}button:focus-visible,select:focus-visible,a:focus-visible{outline:2px solid var(--mint);outline-offset:3px}
+    a{color:var(--mint)}.shell{max-width:1450px;margin:auto;padding:0 36px 56px}.top{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #283548;padding:26px 0;gap:14px}.brand{display:flex;gap:15px;align-items:center}.brand-mark{width:44px;height:44px;border:1px solid #397a72;background:linear-gradient(135deg,#1c645c,#122536);display:grid;place-items:center;border-radius:12px;color:#e6fff6;font-size:26px;font-weight:800;letter-spacing:-6px;padding-right:6px}.brand-word{font-size:17px;font-weight:800;letter-spacing:.24em}.brand-sub{font-size:10px;letter-spacing:.23em;color:var(--muted);text-transform:uppercase;margin-top:3px}.tagline{font-size:12px;color:var(--muted);border:1px solid var(--border);border-radius:100px;padding:7px 12px}.live-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-right:8px}
+    .eyebrow{color:var(--mint);text-transform:uppercase;font-weight:750;letter-spacing:.22em;font-size:11px}.hero{display:flex;justify-content:space-between;gap:24px;align-items:end;padding:42px 0 28px}.hero h1{font-size:clamp(30px,3.4vw,51px);font-weight:680;letter-spacing:-.042em;margin:8px 0 10px;line-height:1.12}.hero p{max-width:760px;color:#a5b3c4;font-size:14px;margin:0}.hero-right{text-align:right}.label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em}.hero-asof{font-weight:740;margin-top:3px;font-size:16px}.important{color:#f1c993}
+    .safety{display:flex;align-items:flex-start;gap:11px;border:1px solid #725c38;background:#2e261caa;padding:13px 17px;border-radius:13px;color:#ebd1a6;font-size:12px;margin-bottom:25px}.safety .sign{font-size:17px}.toolbar{display:grid;grid-template-columns:1.6fr 1fr 1fr auto;gap:12px;align-items:end;margin-bottom:27px}.filter{display:block}.filter span{display:block;font-size:10px;color:#a8b7c6;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}.filter select{width:100%;padding:12px 38px 12px 14px;border:1px solid var(--border);border-radius:10px;color:var(--ink);background:#182334;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23aab7c4' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center}.btn{background:#142938;border:1px solid #37635d;color:var(--mint);border-radius:10px;padding:12px 16px;white-space:nowrap;font-weight:670;font-size:12px}.btn:hover{background:#1b3d43}.toolbar .btn{height:46px}
+    .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;margin-bottom:23px}.card{border-radius:var(--radius);border:1px solid var(--border);background:linear-gradient(165deg,#172435,#0d1725 85%);box-shadow:0 14px 28px #01050822}.kpi{padding:21px 23px;min-height:155px;position:relative;overflow:hidden}.kpi:after{content:'';position:absolute;right:-44px;top:-48px;width:128px;height:128px;border-radius:50%;border:28px solid #79e0c30c}.kpi-label{font-size:12px;color:#b3c1cf}.kpi-value{font-size:32px;font-weight:730;letter-spacing:-.035em;margin-top:20px;line-height:1}.kpi-sub{font-size:11px;color:var(--muted);margin-top:10px}.kpi:nth-child(2) .kpi-value{color:#cfe5ff}.kpi:nth-child(3) .kpi-value{color:#9be4ce}.kpi:nth-child(4) .kpi-value{color:#eec68c}
+    .section-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,1fr);gap:18px;margin-top:18px}.panel{padding:24px;min-width:0}.section-head{display:flex;justify-content:space-between;align-items:start;gap:16px;margin-bottom:20px}.section-title{font-size:17px;letter-spacing:-.02em;font-weight:720;margin:0}.section-desc{font-size:12px;color:var(--muted);margin:5px 0 0}.small-select{border:1px solid #344559;background:#1b293a;color:#e9f5fc;border-radius:8px;padding:8px 11px;font-size:11px;max-width:180px}.chart-wrap{min-height:240px;position:relative}.chart-wrap svg{width:100%;height:auto;display:block}.empty{min-height:210px;display:grid;place-items:center;color:#a7b8c7;font-size:13px;text-align:center;line-height:1.8}.legend{display:flex;align-items:center;gap:17px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:8px}.swatch{display:inline-block;border-radius:20px;width:9px;height:9px;margin-right:6px}.trend-summary{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-bottom:16px}.trend-box{border-radius:12px;background:#102332;border:1px solid #254250;padding:14px}.trend-box strong{font-size:24px;font-weight:740}.trend-box small{display:block;color:var(--muted);font-size:11px;margin-top:5px}.insight{font-size:12px;color:#adc1d0;padding:14px 0;border-top:1px solid #283749}.insight strong{color:#eee}.insight:first-of-type{border-top:0}.flag{color:#f6c887}
+    .below{margin-top:18px}.heading-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 15px}.data-table{width:100%;border-collapse:collapse;font-size:12px;table-layout:auto}.data-table th{text-align:left;color:#8799ab;letter-spacing:.08em;text-transform:uppercase;font-weight:700;font-size:10px;border-bottom:1px solid #344459;padding:14px 10px}.data-table td{padding:14px 10px;color:#e3edf6;border-bottom:1px solid #243549}.data-table th:not(:first-child),.data-table td:not(:first-child){text-align:right}.data-table tr:last-child td{border-bottom:0}.data-table tbody tr:hover{background:#1d2a3a44}.td-name{font-weight:650;min-width:175px}.data-table .mute{color:var(--muted)}.data-table .orange{color:var(--amber)}.positive{color:var(--mint)!important}.negative{color:#f2a3a0!important}.table-scroll{overflow-x:auto}.caveat{font-size:11px;color:var(--muted);margin-top:15px;max-width:980px}
+    .quality-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px}.quality-card{padding:18px}.quality-card .source-name{font-size:14px;font-weight:740}.quality-card .source-state{font-size:10px;color:var(--amber);margin-top:8px}.quality-card .source-desc{color:var(--muted);font-size:11px;margin-top:10px;line-height:1.6}.quality-card .source-dates{font-size:12px;color:#d8e5ef;margin-top:12px}
+    .action-grid{display:grid;grid-template-columns:1fr;gap:10px}.action{border:1px solid var(--border);border-radius:12px;padding:17px 19px;background:#122035}.action-title{font-weight:740;font-size:13px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}.action-copy{font-size:12px;color:#b6c6d4;margin-top:8px}.action-copy strong{color:#d9e4ed}.priority{font-size:10px;border-radius:100px;padding:3px 9px;background:#4c362d;color:#f0bf94}.priority.high{background:#24364b;color:#9cc8f0}.pending{font-size:10px;background:#283446;color:#9eb1bf;border-radius:100px;padding:3px 9px}.subsection{margin-top:26px}.foot{margin-top:39px;padding:24px 0;border-top:1px solid #2d3c4c;display:flex;justify-content:space-between;gap:20px;font-size:11px;color:#8f9eae}.foot strong{color:#dce8f2}.field-info{background:#111d2d;border:1px solid #27415d;border-radius:10px;padding:13px 15px;color:#aec5d9;font-size:12px}.no-print{display:block}
+    @media(max-width:1080px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.section-grid{grid-template-columns:1fr}.quality-grid{grid-template-columns:1fr 1fr}.toolbar{grid-template-columns:1fr 1fr}.hero-right{text-align:left}}
+    @media(max-width:680px){.shell{padding:0 16px 42px}.top{padding:16px 0}.tagline{display:none}.brand-word{font-size:15px}.hero{display:block;padding:30px 0 20px}.hero h1{font-size:35px}.hero-right{margin-top:16px}.toolbar{grid-template-columns:1fr 1fr;gap:10px}.toolbar .btn{grid-column:1/-1}.kpis{gap:10px}.kpi{min-height:132px;padding:16px}.kpi-value{font-size:24px;margin-top:18px}.section-head{display:block}.small-select{margin-top:12px}.panel{padding:18px}.trend-box strong{font-size:22px}.quality-grid{grid-template-columns:1fr}.foot{display:block}.foot p{margin-bottom:8px}}
+    @media print{body{background:#fff;color:#101725}.shell{max-width:100%;padding:0 5mm}.top,.card,.action,.trend-box,.quality-card{background:#fff;box-shadow:none;color:#111;border-color:#ddd}.toolbar,.btn,.no-print{display:none!important}.kpi .kpi-value,.section-title{color:#111}.section-grid,.kpis,.quality-grid{break-inside:avoid}.foot{color:#222}.data-table td{color:#111}.kpi{min-height:100px}.quality-card .source-desc,.section-desc,.caveat{color:#333}}
+  </style>
+</head>
+<body>
+<!--AMQUR_PRIVATE_DATA-->
+<div class="shell">
+  <header class="top">
+    <div class="brand"><div class="brand-mark" aria-hidden="true">A</div><div><div class="brand-word">AMQUR</div><div class="brand-sub">Intelligence Systems</div></div></div>
+    <div class="tagline"><span class="live-dot"></span>PRIVATE / READ-ONLY PILOT</div>
+  </header>
+  <section class="hero">
+    <div><div class="eyebrow">Flagship implementation / Client 001</div><h1>Dealer Intelligence<span style="color:var(--mint)">.</span></h1><p>A unified operating view of five Chicago dealerships—marketing activity, purchase lead volume and retail-deal candidates—with source limitations visible at every decision.</p></div>
+    <div class="hero-right"><div class="label">Data cutoff</div><div class="hero-asof" id="asof">—</div><div class="label">Dial Auto Group · AMQUR free pilot</div></div>
+  </section>
+  <div class="safety" role="note"><div class="sign" aria-hidden="true">⚠</div><div><strong>Provisional operating intelligence.</strong> Deal-list candidates are <u>not confirmed delivered or posted vehicle sales</u>. Ad conversions are not verified leads. Never interpret same-week lead and deal counts as attribution or cost per sale. Keep this file in authorized private storage.</div></div>
+  <div class="toolbar no-print">
+    <label class="filter"><span>Dealership</span><select id="store-filter" aria-label="Filter dealership"></select></label>
+    <label class="filter"><span>Reporting period</span><select id="period-filter" aria-label="Filter reporting period"></select></label>
+    <label class="filter"><span>Business line</span><select id="line-filter" aria-label="Filter vehicle type"><option value="all">New + used</option><option value="new">New vehicles</option><option value="used">Used vehicles</option></select></label>
+    <button class="btn" id="export-btn" type="button">Export filtered CSV</button>
+  </div>
+  <main>
+    <section class="kpis" aria-label="Performance overview">
+      <article class="card kpi"><div class="kpi-label">Retail deal candidates</div><div class="kpi-value" id="kpi-retail">—</div><div class="kpi-sub">DMS Sold Date · not verified deliveries</div></article>
+      <article class="card kpi"><div class="kpi-label">Eligible CRM lead records</div><div class="kpi-value" id="kpi-leads">—</div><div class="kpi-sub">Lead creation date · not unique customers</div></article>
+      <article class="card kpi"><div class="kpi-label">Connected Google Ads spend</div><div class="kpi-value" id="kpi-ads">—</div><div class="kpi-sub" id="kpi-ads-sub">Only observed days · not all-channel spend</div></article>
+      <article class="card kpi"><div class="kpi-label">Verified delivered units</div><div class="kpi-value">N/A</div><div class="kpi-sub">Posted sales ledger not provided</div></article>
+    </section>
+    <div class="section-grid">
+      <section class="card panel" aria-label="Activity trend"><div class="section-head"><div><h2 class="section-title">Daily performance pulse</h2><p class="section-desc" id="chart-period">Daily totals, filtered by dealership and period</p></div><label><span class="label">Metric</span><select class="small-select" id="chart-metric" aria-label="Select trend metric"><option value="retail_candidates">Provisional deals</option><option value="leads">CRM lead records</option><option value="spend_usd">Google spend</option></select></label></div><div class="chart-wrap" id="activity-chart" aria-live="polite"></div><div class="legend"><span><span class="swatch" style="background:var(--mint)"></span>Reported observations</span><span>Gaps = source not available, not zero</span></div></section>
+      <section class="card panel" aria-label="Executive focus"><div class="section-head"><div><h2 class="section-title">Executive focus</h2><p class="section-desc">Highest-confidence operating exceptions</p></div></div><div class="trend-summary"><div class="trend-box"><div class="label" id="nissan-earlier-label">Nissan · earlier month</div><strong id="nissan-sep">—</strong><small>Provisional candidates</small></div><div class="trend-box"><div class="label" id="nissan-later-label">Nissan · later month</div><strong id="nissan-oct">—</strong><small id="nissan-delta">Month-over-month</small></div></div><div class="insight"><strong>Nissan:</strong> The completed-month new/used deal mix requires validation. Verify posted units, model supply, appointments and follow-up before changing media budgets.</div><div class="insight"><strong>Group:</strong> CRM and DMS exports overlap, but report different event dates. Matching totals by week is not an attribution method.</div><div class="insight"><strong>Data gate:</strong> <span class="flag">Delivery status, appointment outcomes and two paid channels remain unavailable.</span></div></section>
+    </div>
+    <section class="card panel below"><div class="heading-row"><div><h2 class="section-title">Five-store comparison</h2><p class="section-desc">Separate store ownership; no central account spend allocated to a rooftop</p></div><button class="btn no-print" type="button" id="print-btn">Print brief</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>Dealership</th><th>CRM leads</th><th>Retail candidates</th><th>New</th><th>Used</th><th>Google spend</th><th>Recent MoM*</th></tr></thead><tbody id="store-table"></tbody></table></div><div class="caveat">*Recent completed months compare provisional Deal List counts only, not final posted sales. Current month is incomplete. Google spend is available only for supplied reporting dates; any partial coverage is labeled, not extrapolated.</div></section>
+    <section class="below"><div class="heading-row"><div><h2 class="section-title">Source reliability</h2><p class="section-desc">Every number must keep its provenance and reporting window</p></div></div><div class="quality-grid" id="quality-cards"></div><div class="field-info subsection" id="quality-note">Missing source records do not imply zero activity.</div></section>
+    <section class="below"><div class="heading-row"><div><h2 class="section-title">Action register</h2><p class="section-desc">Evidence-backed recommendations only · never executed automatically</p></div></div><div class="action-grid" id="action-list"></div></section>
+  </main>
+  <footer class="foot"><div><strong>AMQUR × Dial Auto Group</strong><p>Free family-affiliated flagship implementation · Internal analysis only · Five dealerships</p></div><div><strong>Integrity by design</strong><p>No customer-level fields · No automatic ad/CRM changes · No public hosting</p></div></footer>
+</div>
+<script>
+(()=>{
+  'use strict';
+  const data=JSON.parse(document.getElementById('amqur-data').textContent);
+  const $=id=>document.getElementById(id);
+  const fmt=n=>n===null||n===undefined?'N/A':Math.round(n).toLocaleString('en-US');
+  const money=n=>n===null||n===undefined?'N/A':n.toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2});
+  const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const addDays=(d,n)=>new Date(Date.parse(d+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
+  const dates=(from,to)=>{const a=[];for(let d=from;d<=to;d=addDays(d,1))a.push(d);return a;};
+  const sum=(rows,key)=>{const a=rows.map(r=>r[key]).filter(v=>v!==null&&v!==undefined);return a.length?a.reduce((x,y)=>x+y,0):null;};
+  const f={store:'all',period:'last7',line:'all',chart:'retail_candidates'};
+  const onePeriod=id=>data.periods.find(p=>p.id===id);
+  const inWindow=r=>{const p=onePeriod(f.period);return r.date>=p.start&&r.date<=p.end;};
+  const matchStore=r=>f.store==='all'?r.store!=='group':r.store===f.store;
+  const matchLine=r=>f.line==='all'||r.business_line===f.line;
+  const rows=(type,store='current')=>(data[type]||[]).filter(r=>(store==='all'?true:matchStore(r))&&inWindow(r)&&(type==='ads'?true:matchLine(r)));
+  const counts=(type,field,store='current')=>sum(rows(type,store),field);
+  const coverage=(rs,p,store='current')=>{
+    const unique=new Set(rs.filter(r=>r.date>=p.start&&r.date<=p.end&&(store==='all'||matchStore(r))).map(r=>r.date));
+    return `${unique.size}/${dates(p.start,p.end).length} days`;
+  };
+  const metricValue=(metric,rs)=>sum(rs,metric);
+  const html=s=>String(s??'');
+  const monthCount=(store,month,line)=>sum(data.dms.filter(r=>r.store===store&&r.date.startsWith(month)&&(line==='all'||r.business_line===line)),'retail_candidates')??0;
+  const keyMetric=(store,key)=>{const p=onePeriod(f.period);const fn=r=>r.date>=p.start&&r.date<=p.end&&(store==='all'?r.store!=='group':r.store===store)&&(f.line==='all'||r.business_line===f.line);return sum(data[key==='leads'?'crm':'dms'].filter(fn),key);};
+  const spendForStore=store=>{if(f.line!=='all')return null;const p=onePeriod(f.period);return sum(data.ads.filter(r=>r.date>=p.start&&r.date<=p.end&&(store==='all'?r.store!=='group':r.store===store)),'spend_usd');};
+  function init(){
+    $('asof').textContent=data.as_of+' / cutoff';
+    const s=$('store-filter');s.add(new Option('All five rooftops','all'));data.stores.forEach(x=>s.add(new Option(x.name,x.key)));
+    const p=$('period-filter');data.periods.forEach(x=>p.add(new Option(x.label,x.id)));
+    s.onchange=()=>{f.store=s.value;update();};p.onchange=()=>{f.period=p.value;update();};
+    $('line-filter').onchange=()=>{f.line=$('line-filter').value;update();};
+    $('chart-metric').onchange=()=>{f.chart=$('chart-metric').value;updateChart();};
+    $('export-btn').onclick=exportCsv;
+    $('print-btn').onclick=()=>window.print();
+    update();
+  }
+  function update(){
+    const p=onePeriod(f.period);
+    const lead=counts('crm','leads'),retail=counts('dms','retail_candidates'),spend=spendForStore('all');
+    $('kpi-leads').textContent=fmt(lead);$('kpi-retail').textContent=fmt(retail);$('kpi-ads').textContent=money(spend);
+    const days=coverage(data.ads.filter(r=>r.store!=='group'),p);
+    $('kpi-ads-sub').textContent=f.line!=='all'?'N/A: Google spend is not split by new/used in supplied data':(spend===null?'No Google Ads data supplied for this period':`${days} observed; all five rooftops only, excludes central account`);
+    $('chart-period').textContent=`${p.label} · ${f.store==='all'?'all dealerships':data.stores.find(s=>s.key===f.store).name}`;
+    updateChart();updateNissan();updateStores();updateQuality();updateActions();
+  }
+  function updateNissan(){
+    const sep=monthCount('nissan',data.comparison.earlier,'all'),oct=monthCount('nissan',data.comparison.later,'all');
+    $('nissan-sep').textContent=fmt(sep);$('nissan-oct').textContent=fmt(oct);
+    const first=data.comparison.earlier,second=data.comparison.later;
+    $('nissan-earlier-label').textContent=first+' retail';$('nissan-later-label').textContent=second+' retail';
+    $('nissan-delta').textContent=sep?`${((oct/sep-1)*100).toFixed(1)}% vs September · retail candidates`:'No September data';
+  }
+  function updateStores(){
+    const all=data.stores.filter(s=>f.store==='all'||s.key===f.store);
+    $('store-table').innerHTML=all.map(s=>{
+      const lead=keyMetric(s.key,'leads'),retail=keyMetric(s.key,'retail_candidates');
+      const newCount=sum(data.dms.filter(r=>r.store===s.key&&inWindow(r)&&r.business_line==='new'),'retail_candidates');
+      const usedCount=sum(data.dms.filter(r=>r.store===s.key&&inWindow(r)&&r.business_line==='used'),'retail_candidates');
+      const sep=monthCount(s.key,data.comparison.earlier,f.line),oct=monthCount(s.key,data.comparison.later,f.line),chg=sep===0?null:((oct/sep)-1)*100;
+      const colored=chg===null?'mute':chg<0?'negative':'positive';
+      const spend=spendForStore(s.key);
+      return `<tr><td class="td-name">${escape(s.name)}</td><td>${fmt(lead)}</td><td>${fmt(retail)}</td><td>${f.line==='used'?'—':fmt(newCount)}</td><td>${f.line==='new'?'—':fmt(usedCount)}</td><td>${money(spend)}</td><td class="${colored}">${chg===null?'N/A':(chg>0?'+':'')+chg.toFixed(1)+'%'}</td></tr>`;
+    }).join('');
+  }
+  function updateQuality(){
+    const p=onePeriod(f.period), labels={ads:'Google Ads',crm:'Tekion CRM leads',dms:'Tekion DMS deal candidates'};
+    $('quality-cards').innerHTML=['ads','crm','dms'].map(type=>{
+      let inPeriod=data[type].filter(r=>inWindow(r)&&matchStore(r));
+      const observed=new Set(inPeriod.map(r=>r.store+'|'+r.date)).size;
+      const expected=dates(p.start,p.end).length*(f.store==='all'?data.stores.length:1);
+      const coverageLabel=`${observed}/${expected} rooftop-days`;
+      const status=observed===0?'Unavailable':observed===expected?'Observed coverage':'Partial coverage';
+      const meta=data.coverage[type];
+      return `<article class="card quality-card"><div class="source-name">${labels[type]}</div><div class="source-state">${status} · ${coverageLabel}</div><div class="source-dates">Provided: ${escape(meta.start??'N/A')} – ${escape(meta.end??'N/A')}</div><div class="source-desc">${escape(meta.description)}</div></article>`;
+    }).join('');
+    $('quality-note').textContent=`${data.status}. Meta Ads, Microsoft Ads, appointment outcomes and posted/delivered DMS totals are not present. ${p.label} is only comparable within the same metric/definition.`;
+  }
+  function updateActions(){
+    const selected=data.action_register.filter(a=>f.store==='all'||a.store==='Dial Auto Group'||a.store===data.stores.find(s=>s.key===f.store).name);
+    $('action-list').innerHTML=selected.map(a=>`<article class="action"><div class="action-title"><span>${escape(a.store)}</span><span class="priority ${a.priority==='High'?'high':''}">${escape(a.priority)}</span><span class="pending">${escape(a.approval_status)} · Not implemented</span></div><div class="action-copy"><strong>${escape(a.issue)}</strong> — ${escape(a.evidence)}</div><div class="action-copy">Next: ${escape(a.recommended_action)}</div></article>`).join('');
+  }
+  function updateChart(){
+    const metric=f.chart,p=onePeriod(f.period),xDates=dates(p.start,p.end);
+    const all=(metric==='leads'?data.crm:metric==='spend_usd'?data.ads:data.dms).filter(r=>{
+      if(metric==='spend_usd')return inWindow(r)&&matchStore(r)&&f.line==='all';
+      return inWindow(r)&&matchStore(r)&&matchLine(r);
+    });
+    const dayValues=xDates.map(date=>sum(all.filter(r=>r.date===date),metric));
+    const existing=dayValues.filter(x=>x!==null);
+    const el=$('activity-chart');
+    if(!existing.length){el.innerHTML='<div class="empty">No observations for this metric and selection.<br/>This is unknown, not zero.</div>';return;}
+    const max=Math.max(...existing,1)*1.1,left=43,right=15,top=16,bottom=43,w=740,h=245,pw=w-left-right,ph=h-top-bottom;
+    const sx=i=>left+(xDates.length===1?pw/2:(i*pw/(xDates.length-1)));
+    const sy=n=>top+ph-(n/max)*ph;
+    const ticks=[0,.25,.5,.75,1];
+    let body=ticks.map(t=>{const y=sy(max*t);return `<line x1="${left}" y1="${y}" x2="${w-right}" y2="${y}" stroke="#2c4153" stroke-width="1"/><text x="${left-9}" y="${y+4}" text-anchor="end" font-size="10" fill="#8ca0b2">${fmt(max*t)}</text>`;}).join('');
+    const lines=[];let segment=[];
+    for(let i=0;i<dayValues.length;i++){
+      const v=dayValues[i];if(v===null){if(segment.length){lines.push(segment);segment=[];}continue;}segment.push([sx(i),sy(v),v,i]);
+    }if(segment.length)lines.push(segment);
+    for(const seg of lines){
+      if(seg.length>1)body+=`<polyline fill="none" stroke="#79e0c3" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round" points="${seg.map(x=>x[0]+','+x[1]).join(' ')}"/>`;
+      for(const [x,y,v,i] of seg)body+=`<circle cx="${x}" cy="${y}" r="3.6" fill="#80edc9" stroke="#091525" stroke-width="2"><title>${escape(xDates[i])}: ${metric==='spend_usd'?money(v):fmt(v)}</title></circle>`;
+    }
+    const tickIdx=[...new Set([0,Math.floor((xDates.length-1)/4),Math.floor((xDates.length-1)/2),Math.floor((xDates.length-1)*3/4),xDates.length-1])];
+    body+=tickIdx.map(i=>`<text x="${sx(i)}" y="${h-11}" text-anchor="middle" fill="#8ca0b2" font-size="11">${escape(xDates[i].slice(5))}</text>`).join('');
+    el.innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="Daily ${metric.replaceAll('_',' ')} from ${p.start} to ${p.end}; missing dates are gaps">${body}</svg>`;
+  }
+  function exportCsv(){
+    const stores=data.stores.filter(s=>f.store==='all'||s.key===f.store);
+    const r=stores.map(s=>[s.name,keyMetric(s.key,'leads'),keyMetric(s.key,'retail_candidates'),
+      sum(data.dms.filter(x=>x.store===s.key&&inWindow(x)&&x.business_line==='new'),'retail_candidates'),
+      sum(data.dms.filter(x=>x.store===s.key&&inWindow(x)&&x.business_line==='used'),'retail_candidates'),spendForStore(s.key)]);
+    const line=values=>values.map(x=>`"${String(x??'').replaceAll('"','""')}"`).join(',');
+    const header=['dealership','crm_lead_records','provisional_retail_candidates','new_provisional','used_provisional','google_spend_observed_usd'];
+    const csv=[line(header),...r.map(line)].join('\r\n')+'\r\n';
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=`AMQUR-${f.period}-${f.store}-${f.line}-private-aggregates.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  init();
+})();
+</script>
+</body>
+</html>
