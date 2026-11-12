@@ -1,0 +1,26 @@
+name: AMQUR One-Time Prettier Review
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/amqur-one-time-format-review.yml'
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Format candidate source in disposable CI checkout (no commits or deployment)
+        run: |
+          npx prettier --write "src/operations/dealer-intelligence.policy.ts" "src/operations/dealer-intelligence.service.ts" "src/operations/dealer-intelligence.controller.ts" "src/operations/dealer-intelligence.service.spec.ts" "command-center/src/pages/DealerIntelligence.tsx" "command-center/src/pages/dealer-intelligence-metrics.ts" "command-center/src/pages/dealer-intelligence-metrics.test.ts"
+          for f in "src/operations/dealer-intelligence.policy.ts" "src/operations/dealer-intelligence.service.ts" "src/operations/dealer-intelligence.controller.ts" "src/operations/dealer-intelligence.service.spec.ts" "command-center/src/pages/DealerIntelligence.tsx" "command-center/src/pages/dealer-intelligence-metrics.ts" "command-center/src/pages/dealer-intelligence-metrics.test.ts"; do
+            echo "AMQUR_FMT_START:${f}"
+            cat "$f"
+            echo "AMQUR_FMT_END:${f}"
+          done
