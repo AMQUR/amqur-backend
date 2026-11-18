@@ -122,6 +122,7 @@ model Tenant {
   customerSurveys         CustomerSurvey[]
   customerSurveyTemplates CustomerSurveyTemplate[]
   workflowDefinitions     WorkflowDefinition[]
+  workflowRuns            WorkflowRun[]
   workflowVersions        WorkflowVersion[]
 
   createdAt DateTime @default(now())
@@ -1887,6 +1888,7 @@ model WorkflowDefinition {
   draftContributorUserIds   String[]  @default([])
 
   versions WorkflowVersion[]
+  runs     WorkflowRun[]
 
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -1919,4 +1921,77 @@ model WorkflowVersion {
 
   @@unique([definitionId, version])
   @@index([tenantId, definitionId])
+}
+
+enum WorkflowRunStatus {
+  RUNNING
+  SUSPENDED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+/// A SIMULATION run of a published WorkflowVersion. Persists state per step; no external effects.
+/// A run suspended at a human_review node stays suspended until an authorized, independent
+/// decision; silence or expiry is never approval.
+model WorkflowRun {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+
+  definitionId String
+  definition   WorkflowDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  version      Int
+
+  mode           String            @default("SIMULATION")
+  status         WorkflowRunStatus @default(RUNNING)
+  /// completed | blocked_pending_review | human_approved | human_denied | expired | cancelled | failed
+  outcome        String?
+  currentNodeId  String?
+  /// Query with emails/phones/long digit runs masked; the raw query is never stored.
+  queryRedacted  String
+  queryLength    Int
+  idempotencyKey String?
+  /// Reference ids/titles/scores only; never document content.
+  references     Json              @default("[]")
+
+  startedByUserId    String
+  suspendedAt        DateTime?
+  suspendedExpiresAt DateTime?
+  decidedByUserId    String?
+  decidedAt          DateTime?
+  failureReason      String?
+
+  steps WorkflowStepRun[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, definitionId, idempotencyKey])
+  @@index([tenantId, definitionId, createdAt])
+  @@index([tenantId, status])
+}
+
+model WorkflowStepRun {
+  id String @id @default(cuid())
+
+  tenantId String
+  runId    String
+  run      WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  seq        Int
+  nodeId     String
+  nodeType   String
+  status     String
+  durationMs Int
+  /// Redacted summary only (counts, ids).
+  output     Json?
+
+  createdAt DateTime @default(now())
+
+  @@unique([runId, seq])
+  @@index([tenantId, runId])
 }
