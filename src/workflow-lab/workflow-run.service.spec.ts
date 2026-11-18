@@ -292,7 +292,12 @@ describe('WorkflowRunService.decide', () => {
     await ok.svc.decide(other, 'r1', 'APPROVE');
     expect(ok.prisma.workflowRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'r1', tenantId: 't1', status: 'SUSPENDED' },
+        where: {
+          id: 'r1',
+          tenantId: 't1',
+          status: 'SUSPENDED',
+          suspendedExpiresAt: { gt: expect.any(Date) },
+        },
         data: expect.objectContaining({
           outcome: 'human_approved',
           decidedByUserId: 'reviewer',
@@ -315,6 +320,28 @@ describe('WorkflowRunService.decide', () => {
     );
     expect(prisma.workflowRun.updateMany.mock.calls[0][0].data).toEqual(
       expect.objectContaining({ status: 'CANCELLED', outcome: 'expired' }),
+    );
+  });
+
+  it('rejects a missing deadline and expires the suspended run safely', async () => {
+    const { svc, prisma } = setup({
+      run: { ...suspended, suspendedExpiresAt: null },
+    });
+    await expect(svc.decide(other, 'r1', 'APPROVE')).rejects.toThrow(
+      ConflictException,
+    );
+    expect(prisma.workflowRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          tenantId: 't1',
+          status: 'SUSPENDED',
+          OR: [
+            { suspendedExpiresAt: null },
+            { suspendedExpiresAt: { lte: expect.any(Date) } },
+          ],
+        }),
+        data: { status: 'CANCELLED', outcome: 'expired' },
+      }),
     );
   });
 
