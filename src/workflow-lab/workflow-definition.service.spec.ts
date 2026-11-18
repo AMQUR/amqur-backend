@@ -60,7 +60,9 @@ const inReview = {
   status: 'IN_REVIEW',
   draftGraph: graph,
   reviewRequestedByUserId: 'author',
+  createdByUserId: 'author',
   lastEditedByUserId: 'author',
+  draftContributorUserIds: ['author'],
   pendingRestoreFromVersion: null,
   updatedAt: new Date(0),
 };
@@ -119,6 +121,70 @@ describe('WorkflowDefinitionService', () => {
     ).rejects.toThrow(ForbiddenException);
     await expect(edited.svc.deny(reviewer, 'd1')).rejects.toThrow(
       ForbiddenException,
+    );
+    expect(tx.workflowVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('blocks anyone who contributed to the draft since the last publish, not just the last editor', async () => {
+    const c = sum(graph);
+    const multi = setup({
+      ...inReview,
+      lastEditedByUserId: 'late-editor',
+      draftContributorUserIds: ['author', 'early-editor', 'late-editor'],
+    });
+    const early = {
+      tenantId: 't1',
+      userId: 'early-editor',
+      boundLocationId: null,
+    };
+    await expect(multi.svc.approveAndPublish(early, 'd1', c)).rejects.toThrow(
+      ForbiddenException,
+    );
+    await expect(multi.svc.deny(early, 'd1')).rejects.toThrow(
+      ForbiddenException,
+    );
+    expect(multi.tx.workflowVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on unknown history: the creator is still blocked when contributors are empty', async () => {
+    const legacy = setup({
+      ...inReview,
+      createdByUserId: 'creator',
+      reviewRequestedByUserId: 'someone',
+      lastEditedByUserId: null,
+      draftContributorUserIds: [],
+    });
+    const creator = {
+      tenantId: 't1',
+      userId: 'creator',
+      boundLocationId: null,
+    };
+    await expect(
+      legacy.svc.approveAndPublish(creator, 'd1', sum(graph)),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it('records each editor as a contributor and clears contributors on publish', async () => {
+    const { svc, prisma, tx } = setup({
+      ...inReview,
+      draftContributorUserIds: ['author'],
+    });
+    const e2 = { tenantId: 't1', userId: 'e2', boundLocationId: null };
+    await svc.updateDraft(e2, 'd1', { name: 'n' });
+    expect(prisma.workflowDefinition.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          draftContributorUserIds: ['author', 'e2'],
+        }),
+      }),
+    );
+    await setup(inReview).svc.approveAndPublish(reviewer, 'd1', sum(graph));
+    const t = setup(inReview);
+    await t.svc.approveAndPublish(reviewer, 'd1', sum(graph));
+    expect(t.tx.workflowDefinition.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ draftContributorUserIds: [] }),
+      }),
     );
     expect(tx.workflowVersion.create).not.toHaveBeenCalled();
   });

@@ -1876,13 +1876,15 @@ model WorkflowDefinition {
   /// Highest published version number (0 = never published).
   latestVersion Int                      @default(0)
 
-  createdByUserId         String
-  reviewRequestedByUserId String?
-  reviewRequestedAt       DateTime?
+  createdByUserId           String
+  reviewRequestedByUserId   String?
+  reviewRequestedAt         DateTime?
   /// Last user to change draftGraph/name; may not approve or deny the review.
-  lastEditedByUserId      String?
+  lastEditedByUserId        String?
   /// Set when the draft was produced by a rollback request awaiting review.
   pendingRestoreFromVersion Int?
+  /// Every user who changed the draft since the last publish; none may approve or deny it.
+  draftContributorUserIds   String[]  @default([])
 
   versions WorkflowVersion[]
 

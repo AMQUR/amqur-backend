@@ -77,6 +77,7 @@ export class WorkflowDefinitionService {
         draftGraph: graph as unknown as Prisma.InputJsonValue,
         createdByUserId: actor.userId,
         lastEditedByUserId: actor.userId,
+        draftContributorUserIds: [actor.userId],
       },
     });
   }
@@ -122,6 +123,7 @@ export class WorkflowDefinitionService {
       reviewRequestedByUserId: null,
       reviewRequestedAt: null,
       lastEditedByUserId: actor.userId,
+      draftContributorUserIds: this.withContributor(def, actor.userId),
       pendingRestoreFromVersion: null,
     };
     if (input.name !== undefined) data.name = input.name;
@@ -150,20 +152,39 @@ export class WorkflowDefinitionService {
     });
   }
 
-  /** The actor may not have requested the review nor last edited the draft. */
+  private withContributor(
+    def: { draftContributorUserIds?: string[] | null },
+    userId: string,
+  ): string[] {
+    return [...new Set([...(def.draftContributorUserIds ?? []), userId])];
+  }
+
+  /**
+   * The actor may not have requested the review, created or edited the draft, or contributed
+   * to it since the last publish. Unknown history (missing/empty contributors) also blocks the
+   * creator, so ambiguous state fails closed.
+   */
   private assertIndependentReviewer(
     actor: WorkflowActor,
     def: {
+      createdByUserId: string;
       reviewRequestedByUserId: string | null;
       lastEditedByUserId: string | null;
+      draftContributorUserIds?: string[] | null;
     },
   ) {
-    if (
-      def.reviewRequestedByUserId === actor.userId ||
-      def.lastEditedByUserId === actor.userId
-    )
+    const known = (def.draftContributorUserIds ?? []).length > 0;
+    const blocked = new Set<string>([
+      // Creator is only blocked outright when contributor history is unknown; once a draft
+      // cycle has its own contributor list, the list is authoritative.
+      ...(known ? [] : [def.createdByUserId]),
+      ...(def.reviewRequestedByUserId ? [def.reviewRequestedByUserId] : []),
+      ...(def.lastEditedByUserId ? [def.lastEditedByUserId] : []),
+      ...(def.draftContributorUserIds ?? []),
+    ]);
+    if (blocked.has(actor.userId))
       throw new ForbiddenException(
-        'Reviewer must differ from the requester and the last editor',
+        'Reviewer must be independent of everyone who created, edited or requested review of this draft',
       );
   }
 
@@ -244,6 +265,7 @@ export class WorkflowDefinitionService {
         reviewRequestedByUserId: actor.userId,
         reviewRequestedAt: new Date(),
         lastEditedByUserId: actor.userId,
+        draftContributorUserIds: this.withContributor(def, actor.userId),
         pendingRestoreFromVersion: old.version,
       },
     });
@@ -278,6 +300,7 @@ export class WorkflowDefinitionService {
           reviewRequestedByUserId: null,
           reviewRequestedAt: null,
           pendingRestoreFromVersion: null,
+          draftContributorUserIds: [],
         },
       });
       if (claimed.count !== 1)
