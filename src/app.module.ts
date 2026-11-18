@@ -49,6 +49,7 @@ import { DealsModule } from './deals/deals.module';
 import { ReviewsModule } from './reviews/reviews.module';
 import { DocumentsModule } from './documents/documents.module';
 import { SurveysModule } from './surveys/surveys.module';
+import { WorkflowLabModule } from './workflow-lab/workflow-lab.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -123,6 +124,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     ReviewsModule,
     DocumentsModule,
     SurveysModule,
+    WorkflowLabModule,
   ],
 
   providers: [
