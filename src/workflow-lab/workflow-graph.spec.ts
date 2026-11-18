@@ -120,4 +120,24 @@ describe('WorkflowGraph validation', () => {
       parseWorkflowGraph(withTool({ ...note, consentRef: 'c1' })),
     ).toThrow(/unsupported field/);
   });
+
+  it('rejects personal data in tool_action fields and stores trimmed values', () => {
+    expect(() =>
+      parseWorkflowGraph(
+        withTool({
+          tool: 'crm.note.add',
+          fields: { leadId: 'l1', note: 'call jane@example.com' },
+        }),
+      ),
+    ).toThrow(/personal data/);
+    const g = parseWorkflowGraph(
+      withTool({
+        tool: 'crm.note.add',
+        fields: { leadId: ' l1 ', note: ' Follow up ' },
+      }),
+    );
+    expect(g.nodes[1]).toMatchObject({
+      fields: { leadId: 'l1', note: 'Follow up' },
+    });
+  });
 });

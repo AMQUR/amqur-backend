@@ -122,18 +122,27 @@ function parseNode(input: unknown, index: number): WorkflowNode {
           `${path}.tool requires customer consent and cannot be used in a workflow`,
         );
       const fields = record(n.fields, `${path}.fields`);
+      let clean: Record<string, string>;
       try {
-        validateToolInput(tool, fields);
+        clean = validateToolInput(tool, fields);
       } catch (e: unknown) {
         if (e instanceof ToolInputError)
           throw new WorkflowValidationError(`${path}.fields: ${e.message}`);
         throw e;
       }
+      // Persist only the validated (trimmed, masked) values. Text that masking would alter
+      // looks like personal data, so reject it rather than store or silently rewrite it.
+      for (const [key, value] of Object.entries(clean)) {
+        if (value !== (fields[key] as string).trim())
+          throw new WorkflowValidationError(
+            `${path}.fields.${key} must not contain personal data (emails, phone numbers, VINs)`,
+          );
+      }
       return {
         id,
         type: 'tool_action',
         tool: toolName,
-        fields: fields as Record<string, string>,
+        fields: clean,
         next: requiredString(n, 'next', path, 40),
       };
     }
