@@ -6,6 +6,7 @@ import {
   EMBEDDING_PROVIDER,
   type EmbeddingProvider,
 } from './embedding.provider';
+import { KnowledgeVectorStore } from './knowledge-vector-store';
 import { cosineSimilarity, parseStoredVector } from './vector-math';
 
 export type KnowledgeSearchResult = {
@@ -30,6 +31,7 @@ export class KnowledgeRetrievalService {
     @Optional()
     @Inject(EMBEDDING_PROVIDER)
     private readonly embedder?: EmbeddingProvider,
+    @Optional() private readonly vectorStore?: KnowledgeVectorStore,
   ) {}
 
   /** Query embedding; null (lexical-only) when disabled or the provider fails. */
@@ -119,6 +121,19 @@ export class KnowledgeRetrievalService {
     });
     // Semantic candidates pass through the SAME tenant/status/visibility/window filters;
     // only vectors from the current model are compared.
+    // When pgvector is enabled, ANN picks the candidate ids (tenant/status/visibility/window
+    // pre-filtered in SQL); Prisma then re-applies every filter, so the vector index can
+    // never widen access. Otherwise fall back to the bounded recent-candidates scan.
+    const nearestIds =
+      queryVector && this.vectorStore
+        ? await this.vectorStore.nearest({
+            tenantId: params.tenantId,
+            vector: queryVector,
+            statuses: statuses.map(String),
+            customerOnly: Boolean(params.forWidget),
+            limit: SEMANTIC_CANDIDATES,
+          })
+        : null;
     const semanticChunks =
       queryVector && this.embedder
         ? await this.prisma.knowledgeChunk.findMany({
@@ -126,10 +141,15 @@ export class KnowledgeRetrievalService {
               ...baseWhere,
               AND: [locationOr],
               embeddingModel: this.embedder.modelId,
+              ...(nearestIds ? { id: { in: nearestIds } } : {}),
             },
             include,
-            orderBy: { updatedAt: 'desc' },
-            take: SEMANTIC_CANDIDATES,
+            ...(nearestIds
+              ? {}
+              : {
+                  orderBy: { updatedAt: 'desc' as const },
+                  take: SEMANTIC_CANDIDATES,
+                }),
           })
         : [];
     const byId = new Map<string, (typeof lexicalChunks)[number]>();

@@ -1,6 +1,7 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { KnowledgeVectorStore } from './knowledge-vector-store';
 import {
   EMBEDDING_PROVIDER,
   type EmbeddingProvider,
@@ -19,6 +20,7 @@ export class KnowledgeEmbeddingService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(EMBEDDING_PROVIDER) private readonly provider: EmbeddingProvider,
+    @Optional() private readonly vectors?: KnowledgeVectorStore,
   ) {}
 
   async embedPending(
@@ -61,6 +63,7 @@ export class KnowledgeEmbeddingService {
             embeddingModel: this.provider.modelId,
           },
         });
+        await this.vectors?.store(pending[i].id, tenantId, vectors[i].vector);
       }
       embedded += pending.length;
     }

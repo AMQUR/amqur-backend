@@ -9,6 +9,7 @@ import {
   createEmbeddingProvider,
   EMBEDDING_PROVIDER,
 } from './embedding.provider';
+import { KnowledgeVectorStore } from './knowledge-vector-store';
 import { KnowledgeEmbeddingService } from './knowledge-embedding.service';
 import { KnowledgeLifecycleService } from './knowledge-lifecycle.service';
 
@@ -23,6 +24,7 @@ import { KnowledgeLifecycleService } from './knowledge-lifecycle.service';
     WebsiteIngestionService,
     KnowledgeLifecycleService,
     KnowledgeEmbeddingService,
+    KnowledgeVectorStore,
     {
       provide: EMBEDDING_PROVIDER,
       useFactory: () => createEmbeddingProvider(),

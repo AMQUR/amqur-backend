@@ -185,3 +185,41 @@ describe('KnowledgeRetrievalService hybrid (semantic) mode', () => {
     expect(r).toHaveLength(1);
   });
 });
+
+describe('KnowledgeRetrievalService pgvector candidates', () => {
+  it('restricts semantic fetch to ANN ids but keeps tenant/visibility filters', async () => {
+    const prisma = {
+      knowledgeChunk: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const embedder = {
+      providerId: 'f',
+      modelId: 'm-v1',
+      isAvailable: () => true,
+      embed: jest
+        .fn()
+        .mockResolvedValue([{ model: 'm-v1', dimensions: 1, vector: [1] }]),
+    };
+    const store = { nearest: jest.fn().mockResolvedValue(['c9']) };
+    const svc = new KnowledgeRetrievalService(
+      prisma as never,
+      embedder as never,
+      store as never,
+    );
+    await svc.search({
+      tenantId: 'tenant-a',
+      query: 'guarantee',
+      forWidget: true,
+    });
+    expect(store.nearest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tenantId: 'tenant-a',
+        customerOnly: true,
+        statuses: ['PUBLISHED'],
+      }),
+    );
+    const semanticWhere = prisma.knowledgeChunk.findMany.mock.calls[1][0].where;
+    expect(semanticWhere.id).toEqual({ in: ['c9'] });
+    expect(semanticWhere.tenantId).toBe('tenant-a');
+    expect(semanticWhere.document.visibility).toBe('CUSTOMER');
+  });
+});
