@@ -52,7 +52,9 @@ function requiredString(
 ): string {
   const value = obj[field];
   if (typeof value !== 'string' || !value.trim() || value.length > maxLength)
-    throw new WorkflowValidationError(`${path}.${field} must be a nonempty string <= ${maxLength} chars`);
+    throw new WorkflowValidationError(
+      `${path}.${field} must be a nonempty string <= ${maxLength} chars`,
+    );
   return value;
 }
 
@@ -61,7 +63,9 @@ function parseNode(input: unknown, index: number): WorkflowNode {
   const n = record(input, path);
   const id = requiredString(n, 'id', path, 40);
   if (!VALID_ID.test(id))
-    throw new WorkflowValidationError(`${path}.id must use lowercase a-z, digits, - or _`);
+    throw new WorkflowValidationError(
+      `${path}.id must use lowercase a-z, digits, - or _`,
+    );
   switch (n.type) {
     case 'start':
       exactKeys(n, ['id', 'type', 'next'], path);
@@ -69,8 +73,14 @@ function parseNode(input: unknown, index: number): WorkflowNode {
     case 'knowledge_search': {
       exactKeys(n, ['id', 'type', 'next', 'limit'], path);
       const limit = n.limit ?? 3;
-      if (!Number.isInteger(limit) || (limit as number) < 1 || (limit as number) > 5)
-        throw new WorkflowValidationError(`${path}.limit must be an integer between 1 and 5`);
+      if (
+        !Number.isInteger(limit) ||
+        (limit as number) < 1 ||
+        (limit as number) > 5
+      )
+        throw new WorkflowValidationError(
+          `${path}.limit must be an integer between 1 and 5`,
+        );
       return {
         id,
         type: 'knowledge_search',
@@ -118,31 +128,45 @@ function outgoing(node: WorkflowNode): string[] {
 export function parseWorkflowGraph(value: unknown): WorkflowGraph {
   const graph = record(value, 'graph');
   exactKeys(graph, ['version', 'nodes'], 'graph');
-  if (graph.version !== 1) throw new WorkflowValidationError('Only graph version 1 is supported');
-  if (!Array.isArray(graph.nodes) || graph.nodes.length < 2 || graph.nodes.length > MAX_NODES)
-    throw new WorkflowValidationError(`graph.nodes must contain 2-${MAX_NODES} nodes`);
+  if (graph.version !== 1)
+    throw new WorkflowValidationError('Only graph version 1 is supported');
+  if (
+    !Array.isArray(graph.nodes) ||
+    graph.nodes.length < 2 ||
+    graph.nodes.length > MAX_NODES
+  )
+    throw new WorkflowValidationError(
+      `graph.nodes must contain 2-${MAX_NODES} nodes`,
+    );
 
   const nodes = graph.nodes.map((node, i) => parseNode(node, i));
   const byId = new Map<string, WorkflowNode>();
   for (const node of nodes) {
-    if (byId.has(node.id)) throw new WorkflowValidationError(`Duplicate node: ${node.id}`);
+    if (byId.has(node.id))
+      throw new WorkflowValidationError(`Duplicate node: ${node.id}`);
     byId.set(node.id, node);
   }
   const starts = nodes.filter((n) => n.type === 'start');
-  if (starts.length !== 1) throw new WorkflowValidationError('Exactly one start node is required');
+  if (starts.length !== 1)
+    throw new WorkflowValidationError('Exactly one start node is required');
   if (!nodes.some((n) => n.type === 'end' || n.type === 'human_review'))
-    throw new WorkflowValidationError('A terminal end or human_review node is required');
+    throw new WorkflowValidationError(
+      'A terminal end or human_review node is required',
+    );
   for (const node of nodes) {
     for (const dest of outgoing(node)) {
       if (!byId.has(dest))
-        throw new WorkflowValidationError(`Node ${node.id} points to missing node ${dest}`);
+        throw new WorkflowValidationError(
+          `Node ${node.id} points to missing node ${dest}`,
+        );
     }
   }
 
   const visited = new Set<string>();
   const active = new Set<string>();
   const visit = (id: string): void => {
-    if (active.has(id)) throw new WorkflowValidationError(`Cycle detected at ${id}`);
+    if (active.has(id))
+      throw new WorkflowValidationError(`Cycle detected at ${id}`);
     if (visited.has(id)) return;
     active.add(id);
     for (const dest of outgoing(byId.get(id)!)) visit(dest);
@@ -151,6 +175,8 @@ export function parseWorkflowGraph(value: unknown): WorkflowGraph {
   };
   visit(starts[0].id);
   if (visited.size !== nodes.length)
-    throw new WorkflowValidationError('Every node must be reachable from start');
+    throw new WorkflowValidationError(
+      'Every node must be reachable from start',
+    );
   return { version: 1, nodes };
 }
