@@ -60,7 +60,11 @@ function setup(
       findMany: jest.fn().mockResolvedValue([]),
     },
     workflowStepRun: { create: jest.fn().mockResolvedValue({}) },
+    $transaction: jest.fn(),
   };
+  prisma.$transaction.mockImplementation(
+    (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+  );
   const svc = new WorkflowRunService(
     prisma as unknown as PrismaService,
     { search } as unknown as KnowledgeRetrievalService,
@@ -290,6 +294,7 @@ describe('WorkflowRunService.decide', () => {
   it('approval and denial are recorded by an independent reviewer via a conditional claim', async () => {
     const ok = setup({ run: suspended });
     await ok.svc.decide(other, 'r1', 'APPROVE');
+    expect(ok.prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(ok.prisma.workflowRun.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
