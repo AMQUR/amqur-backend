@@ -5,9 +5,18 @@ const valid = () => ({
   nodes: [
     { id: 'start', type: 'start', next: 'knowledge' },
     { id: 'knowledge', type: 'knowledge_search', limit: 3, next: 'branch' },
-    { id: 'branch', type: 'branch_on_verified_sources', whenFound: 'end', whenMissing: 'review' },
+    {
+      id: 'branch',
+      type: 'branch_on_verified_sources',
+      whenFound: 'end',
+      whenMissing: 'review',
+    },
     { id: 'end', type: 'end' },
-    { id: 'review', type: 'human_review', reason: 'Missing verified information' },
+    {
+      id: 'review',
+      type: 'human_review',
+      reason: 'Missing verified information',
+    },
   ],
 });
 
@@ -18,14 +27,21 @@ describe('WorkflowGraph validation', () => {
 
   it('rejects arbitrary code/HTTP tools', () => {
     const graph = valid();
-    graph.nodes[1] = { id: 'knowledge', type: 'http_request', next: 'branch' } as typeof graph.nodes[number];
+    graph.nodes[1] = {
+      id: 'knowledge',
+      type: 'http_request',
+      next: 'branch',
+    } as (typeof graph.nodes)[number];
     expect(() => parseWorkflowGraph(graph)).toThrow(WorkflowValidationError);
   });
 
   it('rejects cycles', () => {
     const graph = valid();
     graph.nodes[2] = {
-      id: 'branch', type: 'branch_on_verified_sources', whenFound: 'knowledge', whenMissing: 'review',
+      id: 'branch',
+      type: 'branch_on_verified_sources',
+      whenFound: 'knowledge',
+      whenMissing: 'review',
     };
     expect(() => parseWorkflowGraph(graph)).toThrow(/Cycle detected/);
   });
@@ -47,9 +63,16 @@ describe('WorkflowGraph validation', () => {
 
   it('rejects excessive result limits and unexpected fields', () => {
     const graph = valid();
-    graph.nodes[1] = { id: 'knowledge', type: 'knowledge_search', limit: 100, next: 'branch' };
+    graph.nodes[1] = {
+      id: 'knowledge',
+      type: 'knowledge_search',
+      limit: 100,
+      next: 'branch',
+    };
     expect(() => parseWorkflowGraph(graph)).toThrow(/between 1 and 5/);
     const extra = valid();
-    expect(() => parseWorkflowGraph({ ...extra, apiKey: 'never' })).toThrow(/unsupported field/);
+    expect(() => parseWorkflowGraph({ ...extra, apiKey: 'never' })).toThrow(
+      /unsupported field/,
+    );
   });
 });
