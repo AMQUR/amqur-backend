@@ -1,12 +1,10 @@
-import {
-  Injectable,
-  UnauthorizedException,
-  ForbiddenException,
-} from '@nestjs/common';
+import { Injectable, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { CanaryAuthService } from './canary-auth.service';
+
+export const WIDGET_TOKEN_DENIED = 'Widget not available for this origin';
 
 @Injectable()
 export class WidgetAuthService {
@@ -27,29 +25,22 @@ export class WidgetAuthService {
       where: { slug: tenantSlug },
     });
 
-    if (!tenant) {
-      throw new UnauthorizedException('Invalid tenant');
-    }
+    // One indistinguishable refusal for: unknown tenant, no allowlist, origin
+    // not on the allowlist, missing Origin, unknown location. Different
+    // statuses or messages would let anyone enumerate tenant slugs and learn
+    // which tenants are live.
+    const denied = () => new ForbiddenException(WIDGET_TOKEN_DENIED);
+
+    if (!tenant) throw denied();
 
     // Fail closed: empty allowlist must never mint tokens for arbitrary origins.
-    const allowedRaw = tenant.allowedOrigins?.trim();
-    if (!allowedRaw) {
-      throw new ForbiddenException(
-        'Widget origins not configured for this tenant',
-      );
-    }
-    const allowed = allowedRaw
+    const allowed = (tenant.allowedOrigins ?? '')
       .split(',')
       .map((o) => o.trim().toLowerCase())
       .filter(Boolean);
-    if (allowed.length === 0) {
-      throw new ForbiddenException(
-        'Widget origins not configured for this tenant',
-      );
-    }
     const origin = (requestOrigin ?? '').trim().toLowerCase();
-    if (!origin || !allowed.includes(origin)) {
-      throw new ForbiddenException('Origin not allowed for this tenant');
+    if (allowed.length === 0 || !origin || !allowed.includes(origin)) {
+      throw denied();
     }
 
     const location = await this.prisma.location.findFirst({
@@ -59,9 +50,7 @@ export class WidgetAuthService {
       },
     });
 
-    if (!location) {
-      throw new UnauthorizedException('Invalid location');
-    }
+    if (!location) throw denied();
 
     await this.assertCanarySessionIfStrict(
       origin,
@@ -84,6 +73,9 @@ export class WidgetAuthService {
         tenantId: tenant.id,
         locationId: location.id,
         typ: 'widget',
+        // Bound to the page origin it was issued for; JwtAuthGuard refuses the
+        // token when a browser presents it from any other origin.
+        origin,
       },
       {
         ...(widgetSecret ? { secret: widgetSecret } : {}),
