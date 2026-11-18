@@ -75,3 +75,15 @@ main { padding: 20px 24px; min-width: 0; } main:focus { outline: none; }
 }
 dl.kv { grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13.5px; } dl.kv dt { color: var(--muted, #667); } dl.kv dd { margin: 0; overflow-wrap: anywhere; }
 .btn--danger { background: #b42318; color: #fff; }
+
+/* Workflow Studio */
+.studio-grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr)); }
+.stack { display: grid; gap: .6rem; }
+.row { display: flex; flex-wrap: wrap; gap: .6rem; align-items: end; }
+.linkish { background: none; border: 0; padding: .15rem 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; text-align: left; }
+.linkish[aria-current='true'] { font-weight: 700; }
+.diagram svg g[role='button'] { cursor: pointer; }
+.diagram svg g[role='button']:focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+/* Long navigation must scroll inside the sidebar so Sign out stays reachable on short viewports. */
+.side { overflow-y: auto; }

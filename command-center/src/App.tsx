@@ -27,6 +27,7 @@ import { Surveys } from './pages/Surveys';
 import { Service } from './pages/Service';
 import { Parts } from './pages/Parts';
 import { Finance } from './pages/Finance';
+import { WorkflowStudio } from './pages/WorkflowStudio';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -40,6 +41,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'queues', label: 'All work queues' },
   { id: 'knowledge', label: 'Knowledge' },
   { id: 'studio', label: 'Conversation Studio', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
+  { id: 'workflows', label: 'Workflow Studio', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'campaigns', label: 'Campaigns', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'surveys', label: 'CSI surveys', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] },
   { id: 'action-pages', label: 'Action pages', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
@@ -127,6 +129,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'queues' && <Queues locationId={locationId} />}
         {route === 'knowledge' && <Knowledge locationId={locationId} />}
         {route === 'studio' && <ConversationStudio locationId={locationId} />}
+        {route === 'workflows' && <WorkflowStudio locationId={locationId} />}
         {route === 'campaigns' && <Campaigns locationId={locationId} />}
         {route === 'surveys' && <Surveys locationId={locationId} />}
         {route === 'action-pages' && <ActionPages locationId={locationId} />}
