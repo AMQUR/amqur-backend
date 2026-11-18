@@ -123,6 +123,7 @@ model Tenant {
   customerSurveyTemplates CustomerSurveyTemplate[]
   workflowDefinitions     WorkflowDefinition[]
   workflowRuns            WorkflowRun[]
+  toolActionRequests      ToolActionRequest[]
   workflowVersions        WorkflowVersion[]
 
   createdAt DateTime @default(now())
@@ -1994,4 +1995,52 @@ model WorkflowStepRun {
 
   @@unique([runId, seq])
   @@index([tenantId, runId])
+}
+
+enum ToolActionStatus {
+  PENDING_APPROVAL
+  APPROVED
+  DENIED
+  EXPIRED
+  CANCELLED
+  EXECUTED
+  FAILED
+}
+
+/// Staff-approved, idempotent, outbox-dispatched tool action. MOCK providers only in this phase.
+model ToolActionRequest {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+
+  toolName    String
+  toolVersion Int
+  /// Validated input with free-text fields masked; raw customer text is never stored.
+  input       Json
+  /// sha256 over tool, version, location and redacted input; approval is bound to this value.
+  checksum    String
+  /// Opaque reference to the customer consent record, required by consent-gated tools.
+  consentRef  String?
+
+  status         ToolActionStatus @default(PENDING_APPROVAL)
+  idempotencyKey String?
+  expiresAt      DateTime
+
+  requestedByUserId String
+  decidedByUserId   String?
+  decidedAt         DateTime?
+  decisionNote      String?
+  outboxEventId     String?
+  result            Json?
+  failureReason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, locationId])
 }
