@@ -89,38 +89,40 @@ model Tenant {
 
   consentRecords ConsentRecord[]
 
-  locations              Location[]
-  users                  User[]
-  vehicles               Vehicle[]
-  conversations          Conversation[]
-  leads                  Lead[]
-  appointments           Appointment[]
-  escalations            Escalation[]
-  auditLogs              AuditLog[]
-  integrationConnections IntegrationConnection[]
-  sourceAuthorityRules   SourceAuthorityRule[]
-  sourceConflicts        SourceConflict[]
-  inventoryImportRuns    InventoryImportRun[]
-  savedVehicles          SavedVehicle[]
-  partsInquiries         PartsInquiry[]
-  outboxEvents           OutboxEvent[]
-  webhookInboxes         WebhookInbox[]
-  followUpCampaigns      FollowUpCampaign[]
-  canaryInvites          CanaryInvite[]
-  knowledgeDocuments     KnowledgeDocument[]
-  knowledgeSources       KnowledgeSource[]
-  tradeRequests          TradeRequest[]
-  fileObjects            FileObject[]
-  analyticsEvents        AnalyticsEvent[]
-  voiceCallSessions      VoiceCallSession[]
-  websiteAllowedDomains  WebsiteAllowedDomain[]
-  financeRequests        FinanceRequest[]
-  priceQuoteRequests     PriceQuoteRequest[]
-  conversationPlaybooks  ConversationPlaybook[]
-  promptVersions         PromptVersion[]
-  customerActionPages      CustomerActionPage[]
-  customerSurveys          CustomerSurvey[]
-  customerSurveyTemplates  CustomerSurveyTemplate[]
+  locations               Location[]
+  users                   User[]
+  vehicles                Vehicle[]
+  conversations           Conversation[]
+  leads                   Lead[]
+  appointments            Appointment[]
+  escalations             Escalation[]
+  auditLogs               AuditLog[]
+  integrationConnections  IntegrationConnection[]
+  sourceAuthorityRules    SourceAuthorityRule[]
+  sourceConflicts         SourceConflict[]
+  inventoryImportRuns     InventoryImportRun[]
+  savedVehicles           SavedVehicle[]
+  partsInquiries          PartsInquiry[]
+  outboxEvents            OutboxEvent[]
+  webhookInboxes          WebhookInbox[]
+  followUpCampaigns       FollowUpCampaign[]
+  canaryInvites           CanaryInvite[]
+  knowledgeDocuments      KnowledgeDocument[]
+  knowledgeSources        KnowledgeSource[]
+  tradeRequests           TradeRequest[]
+  fileObjects             FileObject[]
+  analyticsEvents         AnalyticsEvent[]
+  voiceCallSessions       VoiceCallSession[]
+  websiteAllowedDomains   WebsiteAllowedDomain[]
+  financeRequests         FinanceRequest[]
+  priceQuoteRequests      PriceQuoteRequest[]
+  conversationPlaybooks   ConversationPlaybook[]
+  promptVersions          PromptVersion[]
+  customerActionPages     CustomerActionPage[]
+  customerSurveys         CustomerSurvey[]
+  customerSurveyTemplates CustomerSurveyTemplate[]
+  workflowDefinitions     WorkflowDefinition[]
+  workflowVersions        WorkflowVersion[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -239,8 +241,9 @@ model Location {
   conversationPlaybooks  ConversationPlaybook[]
   promptVersions         PromptVersion[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  workflowDefinitions WorkflowDefinition[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -1619,22 +1622,22 @@ model ConversationPlaybook {
   locationScope String @default("_")
 
   /// Stable key within tenant+location (e.g. "sales-first-response")
-  key         String
-  title       String
-  department  PlaybookDepartment @default(GENERAL)
-  status      PlaybookStatus     @default(DRAFT)
-  version     Int                @default(1)
+  key        String
+  title      String
+  department PlaybookDepartment @default(GENERAL)
+  status     PlaybookStatus     @default(DRAFT)
+  version    Int                @default(1)
 
   /// Tone: casual | professional | concise | friendly | premium
-  tone           String  @default("concise")
+  tone         String  @default("concise")
   /// Target reply length hint for compose (does not override safety/detail exceptions)
-  brevity        String  @default("short")
+  brevity      String  @default("short")
   /// Optional daypart/rapport allowance for this playbook only
-  allowRapport   Boolean @default(false)
-  oneQuestion    Boolean @default(true)
+  allowRapport Boolean @default(false)
+  oneQuestion  Boolean @default(true)
 
   /// Approved greetings / phrases (string[])
-  approvedPhrases Json?
+  approvedPhrases  Json?
   /// Forbidden phrases (string[]) — soft style filter, never silent failure of safety
   forbiddenPhrases Json?
   /// Good vs bad training examples: [{ good, bad, note? }]
@@ -1697,8 +1700,8 @@ model CustomerActionPage {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  locationId String?
-  leadId     String?
+  locationId     String?
+  leadId         String?
   conversationId String?
 
   /// SCHEDULE | TRADE_INTAKE | DOCUMENT_UPLOAD | FINANCE_INFO | CONTACT_UPDATE | CUSTOM
@@ -1711,10 +1714,10 @@ model CustomerActionPage {
   /// Opaque payload for staff (VIN interest, etc.) — never returned on public resolve
   staffMeta   Json?
 
-  tokenHash String @unique
+  tokenHash   String    @unique
   /// OPEN | COMPLETED | EXPIRED | REVOKED
-  status    String    @default("OPEN")
-  expiresAt DateTime?
+  status      String    @default("OPEN")
+  expiresAt   DateTime?
   completedAt DateTime?
   revokedAt   DateTime?
 
@@ -1733,14 +1736,14 @@ model CustomerSurveyTemplate {
   tenantId String
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
-  locationId String?
-  kind       CustomerSurveyKind @default(SALES)
-  name       String
+  locationId     String?
+  kind           CustomerSurveyKind @default(SALES)
+  name           String
   /// Staff interview script / phone talk track — not a customer SMS body
-  scriptBody String
-  defaultChannel String  @default("IN_PERSON")
-  active     Boolean @default(true)
-  version    Int     @default(1)
+  scriptBody     String
+  defaultChannel String             @default("IN_PERSON")
+  active         Boolean            @default(true)
+  version        Int                @default(1)
 
   createdByUserId String?
   createdAt       DateTime @default(now())
@@ -1766,12 +1769,12 @@ model CustomerSurvey {
   conversationId String?
   appointmentId  String?
 
-  kind       CustomerSurveyKind @default(SALES)
+  kind       CustomerSurveyKind      @default(SALES)
   templateId String?
   template   CustomerSurveyTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
 
   /// SMS | EMAIL | LINK | IN_PERSON — channel of capture; SMS does not imply outbound send
-  channel String  @default("LINK")
+  channel String               @default("LINK")
   status  CustomerSurveyStatus @default(DRAFT)
 
   /// 1–10 when the customer responded — null until RESPONDED
@@ -1779,16 +1782,16 @@ model CustomerSurvey {
   comment String?
 
   /// Manager recovery queue when score is low or complaint language is present
-  followUpRequired Boolean @default(false)
-  followUpStatus   CustomerSurveyFollowUpStatus @default(NONE)
+  followUpRequired      Boolean                      @default(false)
+  followUpStatus        CustomerSurveyFollowUpStatus @default(NONE)
   assignedManagerUserId String?
-  managerNote      String?
-  followUpAt       DateTime?
+  managerNote           String?
+  followUpAt            DateTime?
 
-  sentAt       DateTime?
-  respondedAt  DateTime?
+  sentAt          DateTime?
+  respondedAt     DateTime?
   createdByUserId String?
-  metadata     Json?
+  metadata        Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1847,4 +1850,67 @@ model Experiment {
 
   @@unique([tenantId, key])
   @@index([tenantId, status])
+}
+
+enum WorkflowDefinitionStatus {
+  DRAFT
+  IN_REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+/// Staff-authored workflow. The mutable draft lives here; published graphs are immutable WorkflowVersion rows.
+model WorkflowDefinition {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  /// null = tenant-wide; set = rooftop-specific
+  locationId String?
+  location   Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  name          String
+  status        WorkflowDefinitionStatus @default(DRAFT)
+  draftGraph    Json
+  /// Highest published version number (0 = never published).
+  latestVersion Int                      @default(0)
+
+  createdByUserId         String
+  reviewRequestedByUserId String?
+  reviewRequestedAt       DateTime?
+
+  versions WorkflowVersion[]
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  archivedAt DateTime?
+
+  @@index([tenantId, status])
+  @@index([tenantId, locationId])
+}
+
+/// Immutable published snapshot. Rollback publishes a NEW version copying an older graph.
+model WorkflowVersion {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  definitionId String
+  definition   WorkflowDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+
+  version             Int
+  graph               Json
+  graphChecksum       String
+  publishedByUserId   String
+  requestedByUserId   String?
+  /// Set when this version was produced by rolling back to an earlier version number.
+  restoredFromVersion Int?
+  note                String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([definitionId, version])
+  @@index([tenantId, definitionId])
 }
