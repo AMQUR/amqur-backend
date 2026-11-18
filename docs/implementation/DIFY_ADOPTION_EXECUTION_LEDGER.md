@@ -72,3 +72,17 @@ PR #39 is additive (new module + `app.module.ts` import + composer logging chang
 - Executor (`tool.action.mock`) runs only APPROVED actions, is idempotent on replay, and only ever calls the mock; raw customer text is never persisted, so a real provider phase must add a secure payload path.
 - Rooftop-bound managers see and act only on their own rooftop; tenant-wide actions are admin-only. Tenant, role and rooftop come only from the JWT.
 - Rollback: revert the PR; the migration only adds a table and enum.
+
+
+## 2026-11-18 (late) — install-readiness audit against live services
+
+- HEAD audited: backend `e36b94c`, widget `2b3a4b4`.
+- Live state (public endpoints): prod API `1ff5420`; prod widget `2b3a4b4`; staging API `8405645` and staging widget `7e98c7c` — **both staging commits are on unmerged PR branches (#33, widget #24), not `main`**. Prod health `llm: missing`.
+- Deploy: 11 consecutive failures (`44296005232`…`44397745247`), same step. Last green `39097551581` on **2026-10-18** (earlier notes saying 7 Nov were wrong for this workflow). Secret `RAILWAY_API_TOKEN` last set 2026-08-10, repo-level only. CLI flags unchanged 5.70→5.75. Cause still unproven.
+- Railway connected account has no viewer role on the project; no deployment IDs, variable names or pgvector check obtained.
+- Production: all six tenants have empty `allowedOrigins`; every widget-token request is 403. Staging lacks `dial-auto-group`.
+- PRs opened: #52 deploy failure classification (CI green); #53 uniform widget-token refusal + origin-bound tokens (910 unit tests green locally); widget #28 staging embed loader, manifest SHA, generated snippets, kit docs (draft, CI green); this PR `docs/release/*`.
+- Merge of #52 was refused by the session's permission layer; left for the owner. Nothing was deployed. No flags changed.
+- Not built (verified by code read): SSE streaming, group store selector, ADF/XML builder, customer voice/uploads, token revocation.
+- Next action: owner merges #52 → read `category=` in the Deploy log → fix the secret if `UNAUTHORIZED`.
+- Rollback: all four PRs are independent reverts; no migrations.
