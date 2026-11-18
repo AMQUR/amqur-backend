@@ -26,7 +26,13 @@ const reviewGraph = {
 };
 const starter = { tenantId: 't1', userId: 'starter', boundLocationId: null };
 const other = { tenantId: 't1', userId: 'reviewer', boundLocationId: null };
-const def = { id: 'd1', tenantId: 't1', locationId: 'loc-a' };
+const def = {
+  id: 'd1',
+  tenantId: 't1',
+  locationId: 'loc-a',
+  status: 'PUBLISHED',
+  archivedAt: null,
+};
 
 function setup(
   opts: {
@@ -84,6 +90,7 @@ describe('WorkflowRunService.start', () => {
       id: 'r1',
       steps: [],
       locationId: 'loc-a',
+      status: 'RUNNING',
     });
     await svc.start(starter, {
       definitionId: 'd1',
@@ -115,9 +122,10 @@ describe('WorkflowRunService.start', () => {
       id: 'r1',
       steps: [],
       locationId: 'loc-a',
+      status: 'RUNNING',
     });
     await svc.start(starter, { definitionId: 'd1', query: 'unknown topic' });
-    const finalUpdate = prisma.workflowRun.update.mock.calls.at(-1)[0].data;
+    const finalUpdate = prisma.workflowRun.updateMany.mock.calls.at(-1)[0].data;
     expect(finalUpdate.status).toBe('SUSPENDED');
     expect(finalUpdate.outcome).toBe('blocked_pending_review');
     expect(finalUpdate.suspendedExpiresAt).toBeInstanceOf(Date);
@@ -130,9 +138,10 @@ describe('WorkflowRunService.start', () => {
       id: 'r1',
       steps: [],
       locationId: 'loc-a',
+      status: 'RUNNING',
     });
     await svc.start(starter, { definitionId: 'd1', query: 'x' });
-    expect(prisma.workflowRun.update.mock.calls.at(-1)[0].data).toEqual(
+    expect(prisma.workflowRun.updateMany.mock.calls.at(-1)[0].data).toEqual(
       expect.objectContaining({
         status: 'FAILED',
         failureReason: 'step_error',
@@ -198,6 +207,68 @@ const suspended = {
   steps: [{}, {}],
   suspendedExpiresAt: new Date(Date.now() + 3_600_000),
 };
+
+describe('WorkflowRunService execution state machine', () => {
+  const running = {
+    id: 'r1',
+    steps: [],
+    locationId: 'loc-a',
+    status: 'RUNNING',
+  };
+
+  it('refuses to run an archived workflow', async () => {
+    const { svc, prisma } = setup();
+    prisma.workflowDefinition.findFirst.mockResolvedValue({
+      ...def,
+      status: 'ARCHIVED',
+    });
+    await expect(
+      svc.start(starter, { definitionId: 'd1', query: 'x' }),
+    ).rejects.toThrow(ConflictException);
+    const soft = setup();
+    soft.prisma.workflowDefinition.findFirst.mockResolvedValue({
+      ...def,
+      archivedAt: new Date(),
+    });
+    await expect(
+      soft.svc.start(starter, { definitionId: 'd1', query: 'x' }),
+    ).rejects.toThrow(ConflictException);
+    expect(prisma.workflowRun.create).not.toHaveBeenCalled();
+  });
+
+  it('every execute() transition is conditional on the run still being RUNNING', async () => {
+    const { svc, prisma } = setup({ results: [] });
+    prisma.workflowRun.findFirst.mockResolvedValue(running);
+    await svc.start(starter, { definitionId: 'd1', query: 'x' });
+    expect(prisma.workflowRun.update).not.toHaveBeenCalled();
+    for (const call of prisma.workflowRun.updateMany.mock.calls)
+      expect(call[0].where).toEqual({
+        id: 'r1',
+        tenantId: 't1',
+        status: 'RUNNING',
+      });
+  });
+
+  it('stops without recording steps or transitions if the run was cancelled mid-flight', async () => {
+    const { svc, prisma } = setup();
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      ...running,
+      status: 'CANCELLED',
+    });
+    await svc.start(starter, { definitionId: 'd1', query: 'x' });
+    expect(prisma.workflowStepRun.create).not.toHaveBeenCalled();
+    expect(prisma.workflowRun.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a cancel landing before the final transition is not overwritten', async () => {
+    const { svc, prisma } = setup({ results: [] });
+    prisma.workflowRun.findFirst.mockResolvedValue(running);
+    prisma.workflowRun.updateMany.mockResolvedValue({ count: 0 });
+    await svc.start(starter, { definitionId: 'd1', query: 'x' });
+    expect(prisma.workflowRun.update).not.toHaveBeenCalled();
+    expect(prisma.workflowRun.updateMany).toHaveBeenCalled();
+  });
+});
 
 describe('WorkflowRunService.decide', () => {
   it('refuses the starter, non-suspended runs and wrong rooftops', async () => {

@@ -7,7 +7,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, WorkflowRunStatus } from '@prisma/client';
+import {
+  Prisma,
+  WorkflowDefinitionStatus,
+  WorkflowRunStatus,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KnowledgeRetrievalService } from '../knowledge/knowledge-retrieval.service';
 import type { WorkflowActor } from './workflow-definition.service';
@@ -75,6 +79,8 @@ export class WorkflowRunService {
     });
     if (!def) throw new NotFoundException('Workflow not found');
     this.assertLocation(actor, def.locationId);
+    if (def.status === WorkflowDefinitionStatus.ARCHIVED || def.archivedAt)
+      throw new ConflictException('Archived workflows cannot be run');
 
     if (input.idempotencyKey) {
       const existing = await this.prisma.workflowRun.findFirst({
@@ -153,6 +159,29 @@ export class WorkflowRunService {
     return this.loadRun(actor, run.id);
   }
 
+  private async stillRunning(runId: string, tenantId: string) {
+    const r = await this.prisma.workflowRun.findFirst({
+      where: { id: runId, tenantId },
+      select: { status: true },
+    });
+    return r?.status === WorkflowRunStatus.RUNNING;
+  }
+
+  /** State change that only applies while the run is still RUNNING (no overwriting a cancel). */
+  private async transition(
+    runId: string,
+    tenantId: string,
+    data: Prisma.WorkflowRunUpdateManyMutationInput & {
+      currentNodeId?: string;
+    },
+  ): Promise<boolean> {
+    const r = await this.prisma.workflowRun.updateMany({
+      where: { id: runId, tenantId, status: WorkflowRunStatus.RUNNING },
+      data,
+    });
+    return r.count === 1;
+  }
+
   private async execute(
     runId: string,
     tenantId: string,
@@ -169,6 +198,8 @@ export class WorkflowRunService {
     let references: Reference[] = [];
     let seq = 0;
     for (let i = 0; i <= graph.nodes.length && node; i += 1) {
+      // A cancel (or any other transition) that landed meanwhile stops execution.
+      if (!(await this.stillRunning(runId, tenantId))) return;
       const started = Date.now();
       let next: string | null = null;
       let status = 'completed';
@@ -217,15 +248,12 @@ export class WorkflowRunService {
             durationMs: Date.now() - started,
           },
         });
-        await this.prisma.workflowRun.update({
-          where: { id: runId },
-          data: {
-            status: WorkflowRunStatus.FAILED,
-            outcome: 'failed',
-            failureReason: 'step_error',
-            currentNodeId: node.id,
-            references: references as unknown as Prisma.InputJsonValue,
-          },
+        await this.transition(runId, tenantId, {
+          status: WorkflowRunStatus.FAILED,
+          outcome: 'failed',
+          failureReason: 'step_error',
+          currentNodeId: node.id,
+          references: references as unknown as Prisma.InputJsonValue,
         });
         return;
       }
@@ -243,40 +271,31 @@ export class WorkflowRunService {
       });
       if (node.type === 'human_review') {
         const now = new Date();
-        await this.prisma.workflowRun.update({
-          where: { id: runId },
-          data: {
-            status: WorkflowRunStatus.SUSPENDED,
-            outcome: 'blocked_pending_review',
-            currentNodeId: node.id,
-            suspendedAt: now,
-            suspendedExpiresAt: new Date(now.getTime() + REVIEW_TTL_MS),
-            references: references as unknown as Prisma.InputJsonValue,
-          },
+        await this.transition(runId, tenantId, {
+          status: WorkflowRunStatus.SUSPENDED,
+          outcome: 'blocked_pending_review',
+          currentNodeId: node.id,
+          suspendedAt: now,
+          suspendedExpiresAt: new Date(now.getTime() + REVIEW_TTL_MS),
+          references: references as unknown as Prisma.InputJsonValue,
         });
         return;
       }
       if (node.type === 'end') {
-        await this.prisma.workflowRun.update({
-          where: { id: runId },
-          data: {
-            status: WorkflowRunStatus.COMPLETED,
-            outcome: 'completed',
-            currentNodeId: node.id,
-            references: references as unknown as Prisma.InputJsonValue,
-          },
+        await this.transition(runId, tenantId, {
+          status: WorkflowRunStatus.COMPLETED,
+          outcome: 'completed',
+          currentNodeId: node.id,
+          references: references as unknown as Prisma.InputJsonValue,
         });
         return;
       }
       node = next ? nodes.get(next) : undefined;
     }
-    await this.prisma.workflowRun.update({
-      where: { id: runId },
-      data: {
-        status: WorkflowRunStatus.FAILED,
-        outcome: 'failed',
-        failureReason: 'step_budget_exceeded',
-      },
+    await this.transition(runId, tenantId, {
+      status: WorkflowRunStatus.FAILED,
+      outcome: 'failed',
+      failureReason: 'step_budget_exceeded',
     });
   }
 
