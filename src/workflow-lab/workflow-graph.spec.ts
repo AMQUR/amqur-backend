@@ -75,4 +75,69 @@ describe('WorkflowGraph validation', () => {
       /unsupported field/,
     );
   });
+
+  const withTool = (node: Record<string, unknown>) => ({
+    version: 1,
+    nodes: [
+      { id: 'start', type: 'start', next: 'tool' },
+      { id: 'tool', type: 'tool_action', next: 'end', ...node },
+      { id: 'end', type: 'end' },
+    ],
+  });
+  const note = {
+    tool: 'crm.note.add',
+    fields: { leadId: 'l1', note: 'Follow up' },
+  };
+
+  it('accepts a consent-free catalog tool_action node', () => {
+    expect(parseWorkflowGraph(withTool(note)).nodes[1]).toMatchObject({
+      type: 'tool_action',
+      tool: 'crm.note.add',
+    });
+  });
+
+  it('rejects unknown tools, consent-required tools, bad fields and extra keys', () => {
+    expect(() =>
+      parseWorkflowGraph(withTool({ ...note, tool: 'shell.exec' })),
+    ).toThrow(/not in the catalog/);
+    expect(() =>
+      parseWorkflowGraph(
+        withTool({
+          tool: 'message.send',
+          fields: { leadId: 'l1', channel: 'SMS', body: 'hi' },
+        }),
+      ),
+    ).toThrow(/requires customer consent/);
+    expect(() =>
+      parseWorkflowGraph(withTool({ ...note, fields: { leadId: 'l1' } })),
+    ).toThrow(/Missing field/);
+    expect(() =>
+      parseWorkflowGraph(
+        withTool({ ...note, fields: { leadId: 'l1', note: 'x', extra: 'y' } }),
+      ),
+    ).toThrow(/Unknown field/);
+    expect(() =>
+      parseWorkflowGraph(withTool({ ...note, consentRef: 'c1' })),
+    ).toThrow(/unsupported field/);
+  });
+
+  it('rejects personal data in tool_action fields and stores trimmed values', () => {
+    expect(() =>
+      parseWorkflowGraph(
+        withTool({
+          tool: 'crm.note.add',
+          fields: { leadId: 'l1', note: 'call jane@example.com' },
+        }),
+      ),
+    ).toThrow(/personal data/);
+    const g = parseWorkflowGraph(
+      withTool({
+        tool: 'crm.note.add',
+        fields: { leadId: ' l1 ', note: ' Follow up ' },
+      }),
+    );
+    expect(g.nodes[1]).toMatchObject({
+      fields: { leadId: 'l1', note: 'Follow up' },
+    });
+  });
 });

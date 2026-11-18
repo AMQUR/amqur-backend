@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   Prisma,
@@ -14,6 +15,10 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KnowledgeRetrievalService } from '../knowledge/knowledge-retrieval.service';
+import {
+  ToolActionService,
+  toolRegistryEnabled,
+} from '../tool-registry/tool-action.service';
 import type { WorkflowActor } from './workflow-definition.service';
 import {
   parseWorkflowGraph,
@@ -48,6 +53,7 @@ export class WorkflowRunService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly knowledge: KnowledgeRetrievalService,
+    @Optional() private readonly tools?: ToolActionService,
   ) {}
 
   private assertLocation(actor: WorkflowActor, locationId: string | null) {
@@ -155,7 +161,7 @@ export class WorkflowRunService {
       }
       throw e;
     }
-    await this.execute(run.id, actor.tenantId, def.locationId, graph, query);
+    await this.execute(run.id, actor, def.locationId, graph, query);
     return this.loadRun(actor, run.id);
   }
 
@@ -184,11 +190,12 @@ export class WorkflowRunService {
 
   private async execute(
     runId: string,
-    tenantId: string,
+    actor: WorkflowActor,
     locationId: string | null,
     graph: WorkflowGraph,
     query: string,
   ) {
+    const tenantId = actor.tenantId;
     const nodes = new Map<string, WorkflowNode>(
       graph.nodes.map((n): [string, WorkflowNode] => [n.id, n]),
     );
@@ -230,6 +237,33 @@ export class WorkflowRunService {
             next = references.length > 0 ? node.whenFound : node.whenMissing;
             output = { verifiedSourceCount: references.length, next };
             break;
+          case 'tool_action': {
+            // Proposal only: lands in the staff approval inbox; the run never waits for or
+            // performs the action. A disabled registry skips the node and creates nothing.
+            next = node.next;
+            if (!toolRegistryEnabled() || !this.tools) {
+              status = 'skipped';
+              output = { reason: 'tool_registry_disabled' };
+              break;
+            }
+            if (!actor.role) throw new Error('missing_role');
+            const proposed = await this.tools.propose(
+              {
+                tenantId,
+                userId: actor.userId,
+                role: actor.role,
+                boundLocationId: actor.boundLocationId,
+              },
+              {
+                tool: node.tool,
+                input: node.fields,
+                locationId: locationId ?? undefined,
+                idempotencyKey: `wfrun-${runId}-${node.id}`,
+              },
+            );
+            output = { actionId: proposed.id, actionStatus: proposed.status };
+            break;
+          }
           case 'human_review':
             status = 'suspended';
             break;

@@ -1,6 +1,14 @@
+import {
+  findTool,
+  ToolInputError,
+  validateToolInput,
+} from '../tool-registry/tool-catalog';
+
 /**
  * AMQUR original, intentionally limited workflow DSL for safe staff previews.
  * No model calls, arbitrary HTTP, code execution, CRM mutations or scheduling.
+ * `tool_action` only PROPOSES a typed catalog action into the staff approval inbox; it never
+ * executes anything, and only tools that need no customer consent are allowed.
  */
 export type WorkflowNode =
   | { id: string; type: 'start'; next: string }
@@ -10,6 +18,13 @@ export type WorkflowNode =
       type: 'branch_on_verified_sources';
       whenFound: string;
       whenMissing: string;
+    }
+  | {
+      id: string;
+      type: 'tool_action';
+      tool: string;
+      fields: Record<string, string>;
+      next: string;
     }
   | { id: string; type: 'human_review'; reason: string }
   | { id: string; type: 'end' };
@@ -96,6 +111,41 @@ function parseNode(input: unknown, index: number): WorkflowNode {
         whenFound: requiredString(n, 'whenFound', path, 40),
         whenMissing: requiredString(n, 'whenMissing', path, 40),
       };
+    case 'tool_action': {
+      exactKeys(n, ['id', 'type', 'tool', 'fields', 'next'], path);
+      const toolName = requiredString(n, 'tool', path, 64);
+      const tool = findTool(toolName);
+      if (!tool)
+        throw new WorkflowValidationError(`${path}.tool is not in the catalog`);
+      if (tool.requiresCustomerConsent)
+        throw new WorkflowValidationError(
+          `${path}.tool requires customer consent and cannot be used in a workflow`,
+        );
+      const fields = record(n.fields, `${path}.fields`);
+      let clean: Record<string, string>;
+      try {
+        clean = validateToolInput(tool, fields);
+      } catch (e: unknown) {
+        if (e instanceof ToolInputError)
+          throw new WorkflowValidationError(`${path}.fields: ${e.message}`);
+        throw e;
+      }
+      // Persist only the validated (trimmed, masked) values. Text that masking would alter
+      // looks like personal data, so reject it rather than store or silently rewrite it.
+      for (const [key, value] of Object.entries(clean)) {
+        if (value !== (fields[key] as string).trim())
+          throw new WorkflowValidationError(
+            `${path}.fields.${key} must not contain personal data (emails, phone numbers, VINs)`,
+          );
+      }
+      return {
+        id,
+        type: 'tool_action',
+        tool: toolName,
+        fields: clean,
+        next: requiredString(n, 'next', path, 40),
+      };
+    }
     case 'human_review':
       exactKeys(n, ['id', 'type', 'reason'], path);
       return {
@@ -115,6 +165,7 @@ function outgoing(node: WorkflowNode): string[] {
   switch (node.type) {
     case 'start':
     case 'knowledge_search':
+    case 'tool_action':
       return [node.next];
     case 'branch_on_verified_sources':
       return [node.whenFound, node.whenMissing];

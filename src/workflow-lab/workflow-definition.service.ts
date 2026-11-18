@@ -13,6 +13,8 @@ import { parseWorkflowGraph, WorkflowValidationError } from './workflow-graph';
 export type WorkflowActor = {
   tenantId: string;
   userId: string;
+  /** Verified JWT role; used when a run proposes a tool action on the starter's behalf. */
+  role?: string;
   /** Rooftop the actor is bound to (STAFF/MANAGER); null for tenant-wide admins. */
   boundLocationId: string | null;
 };

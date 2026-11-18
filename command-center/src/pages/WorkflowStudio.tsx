@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { api, session } from '../api';
 import { fmtDate, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, statusTone } from '../ui';
+import { workflowTools, type ToolCatalog } from '../tools/toolActions';
 import {
   diffGraphs,
   layout,
@@ -266,7 +267,7 @@ function Inspector({ node, nodes, editable, onChange, onDelete }: { node: WfNode
   return (
     <div className="stack">
       <p><strong>{node.id}</strong> <span className="muted small">{NODE_LABEL[node.type]}</span></p>
-      {(node.type === 'start' || node.type === 'knowledge_search') && pick('Next step', node.next, (v) => onChange({ ...node, next: v }))}
+      {(node.type === 'start' || node.type === 'knowledge_search' || node.type === 'tool_action') && pick('Next step', node.next, (v) => onChange({ ...node, next: v }))}
       {node.type === 'knowledge_search' && (
         <label>Maximum sources (1–5)
           <input type="number" min={1} max={5} value={node.limit} disabled={!editable} onChange={(e) => onChange({ ...node, limit: Number(e.target.value) })} />
@@ -276,6 +277,7 @@ function Inspector({ node, nodes, editable, onChange, onDelete }: { node: WfNode
         {pick('If verified sources were found, go to', node.whenFound, (v) => onChange({ ...node, whenFound: v }))}
         {pick('If none were found, go to', node.whenMissing, (v) => onChange({ ...node, whenMissing: v }))}
       </>)}
+      {node.type === 'tool_action' && <ToolActionEditor node={node} editable={editable} onChange={onChange} />}
       {node.type === 'human_review' && (
         <label>Reason shown to the reviewer
           <textarea rows={3} maxLength={160} value={node.reason} disabled={!editable} onChange={(e) => onChange({ ...node, reason: e.target.value })} />
@@ -284,6 +286,28 @@ function Inspector({ node, nodes, editable, onChange, onDelete }: { node: WfNode
       {node.type === 'knowledge_search' && <p className="muted small">Only published, customer-visible, in-date knowledge is searched.</p>}
       {editable && node.type !== 'start' && <button className="btn btn--ghost" onClick={onDelete}>Delete step</button>}
     </div>
+  );
+}
+
+function ToolActionEditor({ node, editable, onChange }: { node: Extract<WfNode, { type: 'tool_action' }>; editable: boolean; onChange: (n: WfNode) => void }) {
+  const catalog = useAsync(() => api<ToolCatalog>('/ops/tools/catalog'), []);
+  const tools = workflowTools(catalog.data);
+  const spec = tools.find((t) => t.name === node.tool);
+  return (
+    <>
+      <label>Action to propose
+        <select value={node.tool} disabled={!editable} onChange={(e) => onChange({ ...node, tool: e.target.value, fields: {} })}>
+          <option value="">Choose an action…</option>
+          {tools.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+        </select>
+      </label>
+      {spec && Object.entries(spec.fields ?? {}).map(([k, f]) => (
+        <label key={k}>{k}{f.optional ? ' (optional)' : ''}
+          <input maxLength={f.max} value={node.fields[k] ?? ''} disabled={!editable} onChange={(e) => onChange({ ...node, fields: { ...node.fields, [k]: e.target.value } })} />
+        </label>
+      ))}
+      <p className="muted small">This step only <strong>proposes</strong> the action into the Action approvals inbox as the person who starts the run. Nothing runs until a different reviewer approves it. Actions that need customer consent are not available in workflows, and the step is skipped while tool actions are switched off.</p>
+    </>
   );
 }
 

@@ -77,3 +77,22 @@ describe('layout / diff / newNode', () => {
     expect(/^[a-z][a-z0-9_-]{0,39}$/.test(b.id)).toBe(true);
   });
 });
+
+describe('tool_action node', () => {
+  const withTool = (tool: string): WfGraph => ({
+    version: 1,
+    nodes: [
+      { id: 'start', type: 'start', next: 'tool' },
+      { id: 'tool', type: 'tool_action', tool, fields: {}, next: 'end' },
+      { id: 'end', type: 'end' },
+    ],
+  });
+  it('requires an action choice and follows its next edge', () => {
+    expect(validateGraph(withTool('')).map((i) => i.message)).toEqual(['Choose which action to propose.']);
+    expect(validateGraph(withTool('crm.note.add'))).toEqual([]);
+    expect(layout(withTool('crm.note.add')).get('end')?.col).toBe(2);
+  });
+  it('creates an empty, unconfigured node', () => {
+    expect(newNode('tool_action', [])).toMatchObject({ type: 'tool_action', tool: '', fields: {}, next: '' });
+  });
+});

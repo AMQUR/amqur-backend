@@ -185,11 +185,11 @@ export class ToolActionService {
   }
 
   /** Same key + same content returns the original; same key + different content is a conflict. */
-  private replay(
+  private replay<T extends { checksum: string; locationId: string | null }>(
     actor: ToolActor,
-    existing: { checksum: string; locationId: string | null },
+    existing: T,
     checksum: string,
-  ) {
+  ): T {
     this.assertLocation(actor, existing.locationId);
     if (existing.checksum !== checksum)
       throw new ConflictException(

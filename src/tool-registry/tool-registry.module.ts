@@ -8,5 +8,6 @@ import { ToolRegistryController } from './tool-registry.controller';
   imports: [IntegrationsModule],
   providers: [ToolActionService, ToolActionExecutor],
   controllers: [ToolRegistryController],
+  exports: [ToolActionService],
 })
 export class ToolRegistryModule {}
