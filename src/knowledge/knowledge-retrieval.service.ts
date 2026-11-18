@@ -1,7 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { KnowledgeStatus, KnowledgeVisibility, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { neutralizePromptInjection } from './prompt-injection.util';
+import {
+  EMBEDDING_PROVIDER,
+  type EmbeddingProvider,
+} from './embedding.provider';
+import { KnowledgeVectorStore } from './knowledge-vector-store';
+import { cosineSimilarity, parseStoredVector } from './vector-math';
 
 export type KnowledgeSearchResult = {
   chunkId: string;
@@ -15,10 +21,29 @@ export type KnowledgeSearchResult = {
 
 const RELEVANCE_THRESHOLD = 0.15;
 const MAX_RESULTS = 10;
+const SEMANTIC_THRESHOLD = 0.35;
+const SEMANTIC_CANDIDATES = 400;
 
 @Injectable()
 export class KnowledgeRetrievalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional()
+    @Inject(EMBEDDING_PROVIDER)
+    private readonly embedder?: EmbeddingProvider,
+    @Optional() private readonly vectorStore?: KnowledgeVectorStore,
+  ) {}
+
+  /** Query embedding; null (lexical-only) when disabled or the provider fails. */
+  private async embedQuery(q: string): Promise<number[] | null> {
+    if (!this.embedder?.isAvailable()) return null;
+    try {
+      const [r] = await this.embedder.embed([q]);
+      return r?.vector ?? null;
+    } catch {
+      return null;
+    }
+  }
 
   async search(params: {
     tenantId: string;
@@ -54,48 +79,83 @@ export class KnowledgeRetrievalService {
       content: { contains: kw, mode: 'insensitive' as const },
     }));
 
-    const chunks = await this.prisma.knowledgeChunk.findMany({
-      where: {
+    const baseWhere: Prisma.KnowledgeChunkWhereInput = {
+      tenantId: params.tenantId,
+      document: {
         tenantId: params.tenantId,
+        status: { in: statuses },
+        ...(visibility ? { visibility } : {}),
         AND: [
-          {
-            OR: [
-              { locationId: null },
-              ...(params.locationId ? [{ locationId: params.locationId }] : []),
-            ],
-          },
-          { OR: contentOr },
+          { OR: [{ effectiveAt: null }, { effectiveAt: { lte: now } }] },
+          { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
         ],
-        document: {
-          tenantId: params.tenantId,
-          status: { in: statuses },
-          ...(visibility ? { visibility } : {}),
-          AND: [
-            {
-              OR: [{ effectiveAt: null }, { effectiveAt: { lte: now } }],
-            },
-            {
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            },
-          ],
+      },
+    };
+    const locationOr = {
+      OR: [
+        { locationId: null },
+        ...(params.locationId ? [{ locationId: params.locationId }] : []),
+      ],
+    };
+    const include = {
+      document: {
+        select: {
+          id: true,
+          title: true,
+          metadata: true,
+          status: true,
+          locationId: true,
+          lastVerifiedAt: true,
+          updatedAt: true,
+          source: { select: { authorityLevel: true } },
         },
       },
-      include: {
-        document: {
-          select: {
-            id: true,
-            title: true,
-            metadata: true,
-            status: true,
-            locationId: true,
-            lastVerifiedAt: true,
-            updatedAt: true,
-            source: { select: { authorityLevel: true } },
-          },
-        },
-      },
-      take: (params.limit ?? MAX_RESULTS) * 3,
+    };
+    const take = (params.limit ?? MAX_RESULTS) * 3;
+
+    const queryVector = await this.embedQuery(q);
+    const lexicalChunks = await this.prisma.knowledgeChunk.findMany({
+      where: { ...baseWhere, AND: [locationOr, { OR: contentOr }] },
+      include,
+      take,
     });
+    // Semantic candidates pass through the SAME tenant/status/visibility/window filters;
+    // only vectors from the current model are compared.
+    // When pgvector is enabled, ANN picks the candidate ids (tenant/status/visibility/window
+    // pre-filtered in SQL); Prisma then re-applies every filter, so the vector index can
+    // never widen access. Otherwise fall back to the bounded recent-candidates scan.
+    const nearestIds =
+      queryVector && this.vectorStore
+        ? await this.vectorStore.nearest({
+            tenantId: params.tenantId,
+            vector: queryVector,
+            statuses: statuses.map(String),
+            customerOnly: Boolean(params.forWidget),
+            limit: SEMANTIC_CANDIDATES,
+          })
+        : null;
+    const semanticChunks =
+      queryVector && this.embedder
+        ? await this.prisma.knowledgeChunk.findMany({
+            where: {
+              ...baseWhere,
+              AND: [locationOr],
+              embeddingModel: this.embedder.modelId,
+              ...(nearestIds ? { id: { in: nearestIds } } : {}),
+            },
+            include,
+            ...(nearestIds
+              ? {}
+              : {
+                  orderBy: { updatedAt: 'desc' as const },
+                  take: SEMANTIC_CANDIDATES,
+                }),
+          })
+        : [];
+    const byId = new Map<string, (typeof lexicalChunks)[number]>();
+    for (const c of lexicalChunks) byId.set(c.id, c);
+    for (const c of semanticChunks) if (!byId.has(c.id)) byId.set(c.id, c);
+    const chunks = [...byId.values()];
 
     // Hybrid score: lexical relevance dominates; authority, recency, location relevance and
     // document state break ties. (Semantic similarity joins when an embedding provider is
@@ -105,6 +165,16 @@ export class KnowledgeRetrievalService {
         const lower = chunk.content.toLowerCase();
         const hits = keywords.filter((kw) => lower.includes(kw)).length;
         const lexical = hits / keywords.length;
+        const stored =
+          queryVector &&
+          this.embedder &&
+          (chunk as { embeddingModel?: string | null }).embeddingModel ===
+            this.embedder.modelId
+            ? parseStoredVector((chunk as { embedding?: unknown }).embedding)
+            : null;
+        const semantic = stored
+          ? Math.max(0, cosineSimilarity(queryVector!, stored))
+          : 0;
         const phrase =
           keywords.length > 1 && lower.includes(keywords.join(' ')) ? 0.15 : 0;
         const doc = chunk.document as typeof chunk.document & {
@@ -128,16 +198,21 @@ export class KnowledgeRetrievalService {
             ? 1
             : 0;
         const state = doc.status === 'PUBLISHED' ? 1 : 0.3;
+        const lexWeight = stored ? 0.3 : 0.6;
         const score =
-          lexical * 0.6 +
+          lexical * lexWeight +
+          semantic * (stored ? 0.3 : 0) +
           phrase +
           authority * 0.15 +
           recency * 0.1 +
           locationMatch * 0.1 +
           state * 0.05;
-        return { chunk, score, lexical };
+        return { chunk, score, lexical, semantic };
       })
-      .filter((r) => r.lexical >= RELEVANCE_THRESHOLD)
+      .filter(
+        (r) =>
+          r.lexical >= RELEVANCE_THRESHOLD || r.semantic >= SEMANTIC_THRESHOLD,
+      )
       .sort((a, b) => b.score - a.score)
       .slice(0, params.limit ?? MAX_RESULTS);
 
