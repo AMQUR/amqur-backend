@@ -42,7 +42,9 @@ export class WorkflowPreviewService {
     if (!context.tenantId)
       throw new BadRequestException('Tenant context is required');
 
-    const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+    const nodes = new Map<string, WorkflowNode>(
+      graph.nodes.map((node): [string, WorkflowNode] => [node.id, node]),
+    );
     const start = graph.nodes.find((node) => node.type === 'start')!;
     let id: string = start.id;
     let references: Array<{ documentId: string; title: string; score: number }> = [];
