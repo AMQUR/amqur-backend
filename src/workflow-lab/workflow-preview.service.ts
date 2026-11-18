@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import { KnowledgeRetrievalService } from '../knowledge/knowledge-retrieval.service';
 import {
   parseWorkflowGraph,
@@ -25,7 +30,10 @@ type TraceItem = {
  */
 @Injectable()
 export class WorkflowPreviewService {
-  constructor(private readonly knowledge: KnowledgeRetrievalService) {}
+  constructor(
+    private readonly knowledge: KnowledgeRetrievalService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   async preview(graphInput: unknown, context: WorkflowPreviewContext) {
     let graph;
@@ -43,6 +51,15 @@ export class WorkflowPreviewService {
       );
     if (!context.tenantId)
       throw new BadRequestException('Tenant context is required');
+
+    // A rooftop id must belong to the JWT tenant (read-only lookup); never trust the request.
+    if (context.locationId) {
+      const location = await this.prisma.location.findFirst({
+        where: { id: context.locationId, tenantId: context.tenantId },
+        select: { id: true },
+      });
+      if (!location) throw new ForbiddenException('Location access denied');
+    }
 
     const nodes = new Map<string, WorkflowNode>(
       graph.nodes.map((node): [string, WorkflowNode] => [node.id, node]),
