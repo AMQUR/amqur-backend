@@ -32,7 +32,7 @@ d('WorkflowDefinitionService (real DB)', () => {
     await prisma.$disconnect();
   });
 
-  it('publishes sequential immutable versions, rollback adds v3, other tenant is denied', async () => {
+  it('publishes versions only with independent exact-draft approval; rollback goes through review', async () => {
     const author = { tenantId: tA, userId: 'author', boundLocationId: null };
     const reviewer = {
       tenantId: tA,
@@ -41,12 +41,24 @@ d('WorkflowDefinitionService (real DB)', () => {
     };
     const def = await svc.create(author, { name: 'wf', graph });
     await svc.requestReview(author, def.id);
-    await expect(svc.approveAndPublish(author, def.id)).rejects.toThrow();
-    const v1 = await svc.approveAndPublish(reviewer, def.id);
+    const seen = (await svc.get(reviewer, def.id)).draftChecksum;
+    await expect(svc.approveAndPublish(author, def.id, seen)).rejects.toThrow();
+    await expect(
+      svc.approveAndPublish(reviewer, def.id, 'x'.repeat(64)),
+    ).rejects.toThrow();
+    const v1 = await svc.approveAndPublish(reviewer, def.id, seen);
     await svc.updateDraft(author, def.id, { name: 'wf2' });
     await svc.requestReview(author, def.id);
-    const v2 = await svc.approveAndPublish(reviewer, def.id);
-    const v3 = await svc.rollback(reviewer, def.id, 1);
+    const seen2 = (await svc.get(reviewer, def.id)).draftChecksum;
+    const v2 = await svc.approveAndPublish(reviewer, def.id, seen2);
+    await svc.rollback(reviewer, def.id, 1);
+    const pending = await svc.get(author, def.id);
+    expect(pending.status).toBe('IN_REVIEW');
+    const v3 = await svc.approveAndPublish(
+      author,
+      def.id,
+      pending.draftChecksum,
+    );
     expect([v1.version, v2.version, v3.version]).toEqual([1, 2, 3]);
     expect(v3.restoredFromVersion).toBe(1);
     expect(v3.graphChecksum).toBe(v1.graphChecksum);

@@ -1879,6 +1879,10 @@ model WorkflowDefinition {
   createdByUserId         String
   reviewRequestedByUserId String?
   reviewRequestedAt       DateTime?
+  /// Last user to change draftGraph/name; may not approve or deny the review.
+  lastEditedByUserId      String?
+  /// Set when the draft was produced by a rollback request awaiting review.
+  pendingRestoreFromVersion Int?
 
   versions WorkflowVersion[]
 

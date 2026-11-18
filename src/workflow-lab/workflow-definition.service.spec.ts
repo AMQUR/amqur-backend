@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { createHash } from 'crypto';
 import { WorkflowDefinitionService } from './workflow-definition.service';
 import type { PrismaService } from '../prisma/prisma.service';
 
@@ -14,13 +15,16 @@ const graph = {
     { id: 'end', type: 'end' },
   ],
 };
+const sum = (g: unknown) =>
+  createHash('sha256').update(JSON.stringify(g)).digest('hex');
 const author = { tenantId: 't1', userId: 'author', boundLocationId: null };
 const reviewer = { tenantId: 't1', userId: 'reviewer', boundLocationId: null };
 
 function setup(def: Record<string, unknown> | null) {
   const tx = {
     workflowDefinition: {
-      update: jest.fn().mockResolvedValue({ latestVersion: 3 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findFirstOrThrow: jest.fn().mockResolvedValue({ latestVersion: 3 }),
     },
     workflowVersion: {
       create: jest.fn().mockImplementation(async (a) => a.data),
@@ -56,6 +60,9 @@ const inReview = {
   status: 'IN_REVIEW',
   draftGraph: graph,
   reviewRequestedByUserId: 'author',
+  lastEditedByUserId: 'author',
+  pendingRestoreFromVersion: null,
+  updatedAt: new Date(0),
 };
 
 describe('WorkflowDefinitionService', () => {
@@ -99,18 +106,31 @@ describe('WorkflowDefinitionService', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 
-  it('refuses self-approval and self-denial', async () => {
+  it('refuses self-approval, self-denial and approval by the last editor', async () => {
     const { svc, tx } = setup(inReview);
-    await expect(svc.approveAndPublish(author, 'd1')).rejects.toThrow(
+    const c = sum(graph);
+    await expect(svc.approveAndPublish(author, 'd1', c)).rejects.toThrow(
       ForbiddenException,
     );
     await expect(svc.deny(author, 'd1')).rejects.toThrow(ForbiddenException);
+    const edited = setup({ ...inReview, lastEditedByUserId: 'reviewer' });
+    await expect(
+      edited.svc.approveAndPublish(reviewer, 'd1', c),
+    ).rejects.toThrow(ForbiddenException);
+    await expect(edited.svc.deny(reviewer, 'd1')).rejects.toThrow(
+      ForbiddenException,
+    );
     expect(tx.workflowVersion.create).not.toHaveBeenCalled();
   });
 
-  it('publishes an immutable version when a different reviewer approves', async () => {
+  it('publishes an immutable version when an independent reviewer approves the exact draft', async () => {
     const { svc, tx } = setup(inReview);
-    const v = (await svc.approveAndPublish(reviewer, 'd1', 'ok')) as {
+    const v = (await svc.approveAndPublish(
+      reviewer,
+      'd1',
+      sum(graph),
+      'ok',
+    )) as unknown as {
       version: number;
       publishedByUserId: string;
       requestedByUserId: string;
@@ -121,11 +141,37 @@ describe('WorkflowDefinitionService', () => {
     expect(tx.workflowVersion.create).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects approval of a draft that differs from what the reviewer saw', async () => {
+    const { svc, tx } = setup(inReview);
+    await expect(
+      svc.approveAndPublish(reviewer, 'd1', sum({ other: 1 })),
+    ).rejects.toThrow(ConflictException);
+    expect(tx.workflowVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects when the draft changes between read and publish (conditional claim)', async () => {
+    const { svc, tx } = setup(inReview);
+    tx.workflowDefinition.updateMany.mockResolvedValue({ count: 0 });
+    await expect(
+      svc.approveAndPublish(reviewer, 'd1', sum(graph)),
+    ).rejects.toThrow(ConflictException);
+    expect(tx.workflowVersion.create).not.toHaveBeenCalled();
+    expect(tx.workflowDefinition.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: 'IN_REVIEW',
+          updatedAt: new Date(0),
+          tenantId: 't1',
+        }),
+      }),
+    );
+  });
+
   it('only publishes from IN_REVIEW (silence/draft is never approval)', async () => {
     const { svc, tx } = setup({ ...inReview, status: 'DRAFT' });
-    await expect(svc.approveAndPublish(reviewer, 'd1')).rejects.toThrow(
-      ConflictException,
-    );
+    await expect(
+      svc.approveAndPublish(reviewer, 'd1', sum(graph)),
+    ).rejects.toThrow(ConflictException);
     expect(tx.workflowVersion.create).not.toHaveBeenCalled();
   });
 
@@ -140,7 +186,7 @@ describe('WorkflowDefinitionService', () => {
     expect(tx.workflowVersion.create).not.toHaveBeenCalled();
   });
 
-  it('editing resets a pending review to DRAFT', async () => {
+  it('editing resets review and records the editor', async () => {
     const { svc, prisma } = setup(inReview);
     await svc.updateDraft(author, 'd1', { name: 'renamed' });
     expect(prisma.workflowDefinition.update).toHaveBeenCalledWith(
@@ -148,34 +194,57 @@ describe('WorkflowDefinitionService', () => {
         data: expect.objectContaining({
           status: 'DRAFT',
           reviewRequestedByUserId: null,
+          lastEditedByUserId: 'author',
         }),
       }),
     );
   });
 
-  it('rollback publishes a NEW version copying the old graph', async () => {
+  it('rollback only opens a review request; it never publishes directly', async () => {
     const { svc, prisma, tx } = setup({ ...inReview, status: 'PUBLISHED' });
     prisma.workflowVersion.findFirst.mockResolvedValue({ version: 1, graph });
-    const v = (await svc.rollback(author, 'd1', 1)) as {
-      restoredFromVersion: number;
-      version: number;
-    };
-    expect(v.restoredFromVersion).toBe(1);
-    expect(v.version).toBe(3);
-    expect(tx.workflowVersion.create).toHaveBeenCalledTimes(1);
+    await svc.rollback(author, 'd1', 1);
+    expect(tx.workflowVersion.create).not.toHaveBeenCalled();
+    expect(prisma.workflowDefinition.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'IN_REVIEW',
+          pendingRestoreFromVersion: 1,
+          reviewRequestedByUserId: 'author',
+        }),
+      }),
+    );
     prisma.workflowVersion.findFirst.mockResolvedValue(null);
     await expect(svc.rollback(author, 'd1', 99)).rejects.toThrow(
       NotFoundException,
     );
   });
 
+  it('approved rollback publishes a new version tagged with the restored version', async () => {
+    const { svc, tx } = setup({ ...inReview, pendingRestoreFromVersion: 1 });
+    const v = (await svc.approveAndPublish(
+      reviewer,
+      'd1',
+      sum(graph),
+    )) as unknown as {
+      restoredFromVersion: number;
+    };
+    expect(v.restoredFromVersion).toBe(1);
+    expect(tx.workflowVersion.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses rollback of archived workflows', async () => {
+    const { svc } = setup({ ...inReview, status: 'ARCHIVED' });
+    await expect(svc.rollback(author, 'd1', 1)).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
   it('never exposes update/delete on versions', () => {
-    const { svc } = setup(inReview);
     expect(
       Object.getOwnPropertyNames(WorkflowDefinitionService.prototype).filter(
         (n) => /deleteVersion|editVersion|updateVersion/.test(n),
       ),
     ).toEqual([]);
-    expect(svc).toBeDefined();
   });
 });

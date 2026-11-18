@@ -76,6 +76,7 @@ export class WorkflowDefinitionService {
         name: input.name,
         draftGraph: graph as unknown as Prisma.InputJsonValue,
         createdByUserId: actor.userId,
+        lastEditedByUserId: actor.userId,
       },
     });
   }
@@ -92,8 +93,10 @@ export class WorkflowDefinitionService {
     });
   }
 
+  /** Returns the definition plus the checksum a reviewer must echo back when deciding. */
   async get(actor: WorkflowActor, id: string) {
-    return this.load(actor, id);
+    const def = await this.load(actor, id);
+    return { ...def, draftChecksum: checksum(def.draftGraph) };
   }
 
   async versions(actor: WorkflowActor, id: string) {
@@ -118,6 +121,8 @@ export class WorkflowDefinitionService {
       status: WorkflowDefinitionStatus.DRAFT,
       reviewRequestedByUserId: null,
       reviewRequestedAt: null,
+      lastEditedByUserId: actor.userId,
+      pendingRestoreFromVersion: null,
     };
     if (input.name !== undefined) data.name = input.name;
     if (input.graph !== undefined)
@@ -145,17 +150,55 @@ export class WorkflowDefinitionService {
     });
   }
 
-  /** Approver must differ from the requester; the draft graph is re-validated at publish time. */
-  async approveAndPublish(actor: WorkflowActor, id: string, note?: string) {
+  /** The actor may not have requested the review nor last edited the draft. */
+  private assertIndependentReviewer(
+    actor: WorkflowActor,
+    def: {
+      reviewRequestedByUserId: string | null;
+      lastEditedByUserId: string | null;
+    },
+  ) {
+    if (
+      def.reviewRequestedByUserId === actor.userId ||
+      def.lastEditedByUserId === actor.userId
+    )
+      throw new ForbiddenException(
+        'Reviewer must differ from the requester and the last editor',
+      );
+  }
+
+  /** Reviewer must echo the checksum of the exact draft they reviewed. */
+  private assertReviewedExactDraft(
+    def: { draftGraph: unknown },
+    reviewedChecksum: string,
+  ) {
+    if (reviewedChecksum !== checksum(def.draftGraph))
+      throw new ConflictException(
+        'Draft changed since it was reviewed; review the current draft',
+      );
+  }
+
+  async approveAndPublish(
+    actor: WorkflowActor,
+    id: string,
+    reviewedChecksum: string,
+    note?: string,
+  ) {
     const def = await this.load(actor, id);
     if (def.status !== WorkflowDefinitionStatus.IN_REVIEW)
       throw new ConflictException('Workflow is not awaiting review');
-    if (def.reviewRequestedByUserId === actor.userId)
-      throw new ForbiddenException('Reviewer must differ from the requester');
+    this.assertIndependentReviewer(actor, def);
+    this.assertReviewedExactDraft(def, reviewedChecksum);
     const graph = validate(def.draftGraph);
     return this.publishVersion(actor, def.id, graph, {
       requestedByUserId: def.reviewRequestedByUserId,
-      note,
+      restoredFromVersion: def.pendingRestoreFromVersion ?? undefined,
+      note:
+        note ??
+        (def.pendingRestoreFromVersion
+          ? `Rollback to v${def.pendingRestoreFromVersion}`
+          : undefined),
+      expectedUpdatedAt: def.updatedAt,
     });
   }
 
@@ -164,21 +207,26 @@ export class WorkflowDefinitionService {
     const def = await this.load(actor, id);
     if (def.status !== WorkflowDefinitionStatus.IN_REVIEW)
       throw new ConflictException('Workflow is not awaiting review');
-    if (def.reviewRequestedByUserId === actor.userId)
-      throw new ForbiddenException('Reviewer must differ from the requester');
+    this.assertIndependentReviewer(actor, def);
     return this.prisma.workflowDefinition.update({
       where: { id: def.id },
       data: {
         status: WorkflowDefinitionStatus.DRAFT,
         reviewRequestedByUserId: null,
         reviewRequestedAt: null,
+        pendingRestoreFromVersion: null,
       },
     });
   }
 
-  /** Publishes a NEW version whose graph copies an earlier one. History is never rewritten. */
+  /**
+   * Rollback is a review request, never a direct publish: the old graph becomes the draft and
+   * a different user must approve it. History is never rewritten.
+   */
   async rollback(actor: WorkflowActor, id: string, toVersion: number) {
     const def = await this.load(actor, id);
+    if (def.status === WorkflowDefinitionStatus.ARCHIVED)
+      throw new ConflictException('Archived workflows cannot be rolled back');
     const old = await this.prisma.workflowVersion.findFirst({
       where: {
         definitionId: def.id,
@@ -188,9 +236,16 @@ export class WorkflowDefinitionService {
     });
     if (!old) throw new NotFoundException('Version not found');
     const graph = validate(old.graph);
-    return this.publishVersion(actor, def.id, graph, {
-      restoredFromVersion: old.version,
-      note: `Rollback to v${old.version}`,
+    return this.prisma.workflowDefinition.update({
+      where: { id: def.id },
+      data: {
+        draftGraph: graph as unknown as Prisma.InputJsonValue,
+        status: WorkflowDefinitionStatus.IN_REVIEW,
+        reviewRequestedByUserId: actor.userId,
+        reviewRequestedAt: new Date(),
+        lastEditedByUserId: actor.userId,
+        pendingRestoreFromVersion: old.version,
+      },
     });
   }
 
@@ -202,18 +257,34 @@ export class WorkflowDefinitionService {
       requestedByUserId?: string | null;
       restoredFromVersion?: number;
       note?: string;
+      expectedUpdatedAt?: Date;
     },
   ) {
     return this.prisma.$transaction(async (tx) => {
-      // Atomic version bump: concurrent publishers cannot reuse a number.
-      const bumped = await tx.workflowDefinition.update({
-        where: { id: definitionId },
+      // Conditional claim: only succeeds while still IN_REVIEW and untouched since it was read,
+      // so a concurrent edit cannot be published unseen.
+      const claimed = await tx.workflowDefinition.updateMany({
+        where: {
+          id: definitionId,
+          tenantId: actor.tenantId,
+          status: WorkflowDefinitionStatus.IN_REVIEW,
+          ...(extra.expectedUpdatedAt
+            ? { updatedAt: extra.expectedUpdatedAt }
+            : {}),
+        },
         data: {
           latestVersion: { increment: 1 },
           status: WorkflowDefinitionStatus.PUBLISHED,
           reviewRequestedByUserId: null,
           reviewRequestedAt: null,
+          pendingRestoreFromVersion: null,
         },
+      });
+      if (claimed.count !== 1)
+        throw new ConflictException('Workflow changed during approval');
+      const bumped = await tx.workflowDefinition.findFirstOrThrow({
+        where: { id: definitionId, tenantId: actor.tenantId },
+        select: { latestVersion: true },
       });
       return tx.workflowVersion.create({
         data: {

@@ -42,6 +42,8 @@ class UpdateWorkflowDto {
 }
 
 class DecisionDto {
+  /** Checksum of the draft the reviewer saw (GET :id -> draftChecksum). */
+  @IsString() @MinLength(64) @MaxLength(64) reviewedChecksum!: string;
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 
@@ -109,7 +111,12 @@ export class WorkflowDefinitionController {
     @Param('id') id: string,
     @Body() dto: DecisionDto,
   ) {
-    return this.defs.approveAndPublish(toActor(user), id, dto.note);
+    return this.defs.approveAndPublish(
+      toActor(user),
+      id,
+      dto.reviewedChecksum,
+      dto.note,
+    );
   }
 
   @Post(':id/deny')
