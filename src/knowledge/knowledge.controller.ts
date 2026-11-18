@@ -17,6 +17,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { Throttle } from '@nestjs/throttler';
 import { KnowledgeStatus, KnowledgeVisibility } from '@prisma/client';
 import { KnowledgeLifecycleService } from './knowledge-lifecycle.service';
 import { resolveLocationScope } from '../common/decorators/current-user.decorator';
@@ -29,6 +30,7 @@ import {
 } from '../common/decorators/current-user.decorator';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { KnowledgeService } from './knowledge.service';
+import { KnowledgeEmbeddingService } from './knowledge-embedding.service';
 
 class CreateKnowledgeDocumentDto {
   @IsString()
@@ -96,6 +98,7 @@ export class KnowledgeController {
   constructor(
     private readonly knowledge: KnowledgeService,
     private readonly lifecycle: KnowledgeLifecycleService,
+    private readonly embeddings: KnowledgeEmbeddingService,
   ) {}
 
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
@@ -251,5 +254,18 @@ export class KnowledgeController {
       dto.url,
       dto.title,
     );
+  }
+
+  /**
+   * Embeds this tenant's chunks that lack a current-model vector. Tenant comes from the JWT only.
+   * No-op (provider_disabled) unless embeddings are explicitly enabled. Does not change
+   * document status or what customers may see.
+   */
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Post('embeddings/reindex')
+  reindexEmbeddings(@CurrentUser() user: AuthUser) {
+    assertStaffRole(user);
+    return this.embeddings.embedPending(user.tenantId, { limit: 200 });
   }
 }
