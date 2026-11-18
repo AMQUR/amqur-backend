@@ -56,6 +56,7 @@ export function toActor(user: AuthUser): WorkflowActor {
   return {
     tenantId: resolveTenantId(user),
     userId: user.sub,
+    role: user.role,
     boundLocationId:
       (user.role === 'STAFF' || user.role === 'MANAGER') && user.locationId
         ? user.locationId

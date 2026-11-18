@@ -20,7 +20,7 @@ export type WorkflowPreviewContext = {
 type TraceItem = {
   nodeId: string;
   type: WorkflowNode['type'];
-  status: 'completed' | 'blocked_pending_review';
+  status: 'completed' | 'blocked_pending_review' | 'would_propose';
   durationMs: number;
 };
 
@@ -99,6 +99,11 @@ export class WorkflowPreviewService {
         }
         case 'branch_on_verified_sources':
           next = references.length > 0 ? node.whenFound : node.whenMissing;
+          break;
+        case 'tool_action':
+          // Preview never proposes anything; it only shows that a proposal would be made.
+          status = 'would_propose';
+          next = node.next;
           break;
         case 'human_review':
           status = 'blocked_pending_review';

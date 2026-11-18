@@ -7,6 +7,7 @@ export type WfNode =
   | { id: string; type: 'start'; next: string }
   | { id: string; type: 'knowledge_search'; next: string; limit: number }
   | { id: string; type: 'branch_on_verified_sources'; whenFound: string; whenMissing: string }
+  | { id: string; type: 'tool_action'; tool: string; fields: Record<string, string>; next: string }
   | { id: string; type: 'human_review'; reason: string }
   | { id: string; type: 'end' };
 export type WfGraph = { version: 1; nodes: WfNode[] };
@@ -19,6 +20,7 @@ export const NODE_LABEL: Record<NodeType, string> = {
   start: 'Start',
   knowledge_search: 'Search published knowledge',
   branch_on_verified_sources: 'Branch: verified sources found?',
+  tool_action: 'Propose action for staff approval',
   human_review: 'Human review (stops here)',
   end: 'End',
 };
@@ -29,6 +31,7 @@ export function outgoing(n: WfNode): string[] {
   switch (n.type) {
     case 'start':
     case 'knowledge_search':
+    case 'tool_action':
       return [n.next];
     case 'branch_on_verified_sources':
       return [n.whenFound, n.whenMissing];
@@ -48,6 +51,7 @@ export function validateGraph(g: WfGraph): Issue[] {
     byId.set(n.id, n);
     if (n.type === 'knowledge_search' && (!Number.isInteger(n.limit) || n.limit < 1 || n.limit > 5))
       add(n.id, 'Result limit must be a whole number from 1 to 5.');
+    if (n.type === 'tool_action' && !n.tool) add(n.id, 'Choose which action to propose.');
     if (n.type === 'human_review' && (!n.reason.trim() || n.reason.length > 160))
       add(n.id, 'Review reason is required (max 160 characters).');
   }
@@ -145,6 +149,8 @@ export function newNode(type: NodeType, existing: WfNode[]): WfNode {
       return { id, type, next: '', limit: 3 };
     case 'branch_on_verified_sources':
       return { id, type, whenFound: '', whenMissing: '' };
+    case 'tool_action':
+      return { id, type, tool: '', fields: {}, next: '' };
     case 'human_review':
       return { id, type, reason: 'A dealership specialist should answer this.' };
     case 'end':

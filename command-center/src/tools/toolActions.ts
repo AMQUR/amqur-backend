@@ -17,6 +17,7 @@ export type ToolCatalogEntry = {
   requiresCustomerConsent: boolean;
   proposerRoles: string[];
   approverRoles: string[];
+  fields?: Record<string, { type: string; min?: number; max: number; optional?: boolean; redact?: boolean }>;
 };
 
 export type ToolCatalog = {
@@ -114,3 +115,7 @@ export function expiryText(row: Pick<ToolActionRow, 'expiresAt' | 'status'>, now
   const h = Math.floor(ms / 3_600_000);
   return h >= 1 ? `expires in ${h}h` : `expires in ${Math.max(1, Math.floor(ms / 60_000))}m`;
 }
+
+/** Tools a workflow may propose: consent-free only (the server enforces this too). */
+export const workflowTools = (catalog: Pick<ToolCatalog, 'tools'> | null): ToolCatalogEntry[] =>
+  (catalog?.tools ?? []).filter((t) => !t.requiresCustomerConsent);

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
+import { ToolRegistryModule } from '../tool-registry/tool-registry.module';
 import { WorkflowLabController } from './workflow-lab.controller';
 import { WorkflowDefinitionController } from './workflow-definition.controller';
 import { WorkflowDefinitionService } from './workflow-definition.service';
@@ -8,7 +9,7 @@ import { WorkflowRunService } from './workflow-run.service';
 import { WorkflowPreviewService } from './workflow-preview.service';
 
 @Module({
-  imports: [KnowledgeModule],
+  imports: [KnowledgeModule, ToolRegistryModule],
   providers: [
     WorkflowPreviewService,
     WorkflowDefinitionService,

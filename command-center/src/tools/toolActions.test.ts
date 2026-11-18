@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { capability, decisionBody, expiryText, inputEntries, isExpired, listPath, type ToolActionRow, type ToolCatalogEntry } from './toolActions';
+import { workflowTools, capability, decisionBody, expiryText, inputEntries, isExpired, listPath, type ToolActionRow, type ToolCatalogEntry } from './toolActions';
 
 const NOW = Date.parse('2026-11-18T12:00:00Z');
 const row = (o: Partial<ToolActionRow> = {}): ToolActionRow => ({
@@ -40,5 +40,11 @@ describe('tool action inbox helpers', () => {
     expect(isExpired(row(), NOW)).toBe(false);
     expect(expiryText(row(), NOW)).toBe('expires in 12h');
     expect(expiryText(row({ status: 'DENIED' }), NOW)).toBe('');
+  });
+  it('offers only consent-free tools to workflows', () => {
+    const consent = { ...tool, name: 'appointment.request' };
+    const free = { ...tool, name: 'crm.note.add', requiresCustomerConsent: false };
+    expect(workflowTools({ tools: [consent, free] }).map((t) => t.name)).toEqual(['crm.note.add']);
+    expect(workflowTools(null)).toEqual([]);
   });
 });

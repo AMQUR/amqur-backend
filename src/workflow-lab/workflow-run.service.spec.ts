@@ -382,3 +382,106 @@ describe('WorkflowRunService.cancel/get/list', () => {
     );
   });
 });
+
+describe('WorkflowRunService tool_action node', () => {
+  const toolGraph = {
+    version: 1,
+    nodes: [
+      { id: 'start', type: 'start', next: 'tool' },
+      {
+        id: 'tool',
+        type: 'tool_action',
+        tool: 'crm.note.add',
+        fields: { leadId: 'l1', note: 'Follow up' },
+        next: 'done',
+      },
+      { id: 'done', type: 'end' },
+    ],
+  };
+  const admin = { ...starter, role: 'ADMIN' };
+  const build = (propose: jest.Mock) => {
+    const { prisma } = setup({ graph: toolGraph });
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      id: 'r1',
+      steps: [],
+      locationId: 'loc-a',
+      status: 'RUNNING',
+    });
+    const svc = new WorkflowRunService(
+      prisma as never,
+      { search: jest.fn() } as never,
+      { propose } as never,
+    );
+    return { svc, prisma };
+  };
+  const steps = (prisma: { workflowStepRun: { create: jest.Mock } }) =>
+    prisma.workflowStepRun.create.mock.calls.map((c) => c[0].data);
+  afterEach(() => delete process.env.TOOL_REGISTRY_ENABLED);
+
+  it('proposes (never executes) as the run starter with a stable idempotency key, then continues', async () => {
+    process.env.TOOL_REGISTRY_ENABLED = 'true';
+    const propose = jest
+      .fn()
+      .mockResolvedValue({ id: 'act1', status: 'PENDING_APPROVAL' });
+    const { svc, prisma } = build(propose);
+    await svc.start(admin, { definitionId: 'd1', query: 'hello' });
+    expect(propose).toHaveBeenCalledWith(
+      {
+        tenantId: 't1',
+        userId: 'starter',
+        role: 'ADMIN',
+        boundLocationId: null,
+      },
+      {
+        tool: 'crm.note.add',
+        input: { leadId: 'l1', note: 'Follow up' },
+        locationId: 'loc-a',
+        idempotencyKey: 'wfrun-r1-tool',
+      },
+    );
+    const s = steps(prisma);
+    expect(
+      s.find((x: { nodeId: string }) => x.nodeId === 'tool'),
+    ).toMatchObject({
+      status: 'completed',
+      output: { actionId: 'act1', actionStatus: 'PENDING_APPROVAL' },
+    });
+    expect(s.some((x: { nodeId: string }) => x.nodeId === 'done')).toBe(true);
+  });
+
+  it('skips the node and creates nothing when the registry is off', async () => {
+    const propose = jest.fn();
+    const { svc, prisma } = build(propose);
+    await svc.start(admin, { definitionId: 'd1', query: 'hello' });
+    expect(propose).not.toHaveBeenCalled();
+    expect(
+      steps(prisma).find((x: { nodeId: string }) => x.nodeId === 'tool'),
+    ).toMatchObject({
+      status: 'skipped',
+      output: { reason: 'tool_registry_disabled' },
+    });
+  });
+
+  it('fails the run when the starter has no role or the proposal is refused', async () => {
+    process.env.TOOL_REGISTRY_ENABLED = 'true';
+    const refuse = jest
+      .fn()
+      .mockRejectedValue(
+        new ForbiddenException('Role may not propose this tool'),
+      );
+    const a = build(refuse);
+    await a.svc.start(admin, { definitionId: 'd1', query: 'hello' });
+    expect(
+      steps(a.prisma).find((x: { nodeId: string }) => x.nodeId === 'tool'),
+    ).toMatchObject({ status: 'failed' });
+    expect(a.prisma.workflowRun.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ failureReason: 'step_error' }),
+      }),
+    );
+    const propose = jest.fn();
+    const b = build(propose);
+    await b.svc.start(starter, { definitionId: 'd1', query: 'hello' });
+    expect(propose).not.toHaveBeenCalled();
+  });
+});

@@ -52,6 +52,7 @@ describe('WorkflowDefinitionController authorization', () => {
     expect(toActor(manager)).toEqual({
       tenantId: 'tenant-a',
       userId: 'u1',
+      role: 'MANAGER',
       boundLocationId: 'rooftop-a',
     });
     const admin: AuthUser = {

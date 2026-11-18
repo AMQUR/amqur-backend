@@ -127,4 +127,29 @@ describe('WorkflowPreviewService', () => {
       service.preview({ version: 1, nodes }, context),
     ).rejects.toThrow(BadRequestException);
   });
+
+  it('shows a tool_action node as would_propose and never calls tools', async () => {
+    const { service } = setup([]);
+    const res = await service.preview(
+      {
+        version: 1,
+        nodes: [
+          { id: 'start', type: 'start', next: 'tool' },
+          {
+            id: 'tool',
+            type: 'tool_action',
+            tool: 'crm.note.add',
+            fields: { leadId: 'l1', note: 'x' },
+            next: 'done',
+          },
+          { id: 'done', type: 'end' },
+        ],
+      },
+      context,
+    );
+    expect(res.status).toBe('complete');
+    expect(res.trace.find((t) => t.nodeId === 'tool')?.status).toBe(
+      'would_propose',
+    );
+  });
 });
