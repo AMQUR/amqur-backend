@@ -26,9 +26,9 @@ function setup(
   results: Array<{ documentId: string; title: string; score: number }>,
 ) {
   const search = jest.fn().mockResolvedValue(results);
-  const service = new WorkflowPreviewService(
-    { search } as unknown as KnowledgeRetrievalService,
-  );
+  const service = new WorkflowPreviewService({
+    search,
+  } as unknown as KnowledgeRetrievalService);
   return { service, search };
 }
 
