@@ -64,6 +64,18 @@ export class JwtAuthGuard implements CanActivate {
       if (payload?.typ !== 'access' && payload?.typ !== 'widget') {
         throw new UnauthorizedException('Invalid token type');
       }
+      // Widget tokens carry the page origin they were minted for. A browser
+      // always sends Origin on these cross-site calls, so a token lifted from
+      // one site cannot be replayed from a page on another. Tokens issued
+      // before this claim existed (≤ token TTL) have no origin and still pass.
+      if (payload.typ === 'widget' && typeof payload.origin === 'string') {
+        const header = request.headers.origin;
+        const presented =
+          typeof header === 'string' ? header.trim().toLowerCase() : '';
+        if (presented && presented !== payload.origin) {
+          throw new UnauthorizedException('Token origin mismatch');
+        }
+      }
       request.user = payload;
     } catch {
       throw new UnauthorizedException('Invalid or expired token');

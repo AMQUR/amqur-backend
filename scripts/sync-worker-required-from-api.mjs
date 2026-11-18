@@ -11,7 +11,12 @@
  * For production, source service is prod-api and target is prod-worker.
  */
 
-import { execFileSync } from 'node:child_process';
+import {
+  describeRailwayFailure,
+  railwayCliVersion,
+  readRailwayVariables,
+  runRailway,
+} from './lib/railway-cli.mjs';
 
 const environment = process.argv[2];
 if (!['staging', 'production'].includes(environment)) {
@@ -34,38 +39,6 @@ const targetService = environment === 'staging' ? 'worker' : 'prod-worker';
 /** Boot/crypto parity only — never copy LLM, Twilio, Tekion, or monitoring secrets. */
 const KEYS = ['CORS_ORIGINS', 'INTEGRATION_ENCRYPTION_KEY'];
 
-function railwayJson(args) {
-  const out = execFileSync('railway', args, {
-    encoding: 'utf8',
-    env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 8 * 1024 * 1024,
-  });
-  return JSON.parse(out);
-}
-
-function asVariables(raw) {
-  let current = raw;
-  for (let i = 0; i < 3; i += 1) {
-    if (!current || typeof current !== 'object' || Array.isArray(current)) break;
-    if (current.variables) current = current.variables;
-    else if (current.data) current = current.data;
-    else break;
-  }
-  if (Array.isArray(current)) {
-    const entries = current.map((record) => [
-      record?.name ?? record?.key,
-      record?.value,
-    ]);
-    if (entries.some(([key]) => typeof key !== 'string')) {
-      throw new Error('invalid format');
-    }
-    return Object.fromEntries(entries);
-  }
-  if (!current || typeof current !== 'object') throw new Error('invalid format');
-  return current;
-}
-
 function present(vars, name, minLength) {
   return typeof vars[name] === 'string' && vars[name].trim().length >= minLength;
 }
@@ -75,37 +48,28 @@ const minLen = {
   INTEGRATION_ENCRYPTION_KEY: 32,
 };
 
+console.log(`railway CLI: ${railwayCliVersion()}`);
+
 let sourceVars;
 let targetVars;
+let reading = sourceService;
 try {
-  sourceVars = asVariables(
-    railwayJson([
-      'variables',
-      '--project',
-      projectId,
-      '--service',
-      sourceService,
-      '--environment',
-      environment,
-      '--json',
-    ]),
-  );
-  targetVars = asVariables(
-    railwayJson([
-      'variables',
-      '--project',
-      projectId,
-      '--service',
-      targetService,
-      '--environment',
-      environment,
-      '--json',
-    ]),
-  );
-} catch {
+  sourceVars = readRailwayVariables({
+    projectId,
+    service: sourceService,
+    environment,
+  });
+  reading = targetService;
+  targetVars = readRailwayVariables({
+    projectId,
+    service: targetService,
+    environment,
+  });
+} catch (error) {
   console.error(
-    `Sync BLOCKED for ${environment}: could not read Railway variables; values not printed.`,
+    `Sync BLOCKED for ${environment}: could not read Railway variables for ${reading}; values not printed.`,
   );
+  console.error(`  ${describeRailwayFailure(error)}`);
   process.exit(1);
 }
 
@@ -146,16 +110,12 @@ try {
   for (const key of toSet) {
     args.push('--set', `${key}=${sourceVars[key]}`);
   }
-  execFileSync('railway', args, {
-    encoding: 'utf8',
-    env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    maxBuffer: 8 * 1024 * 1024,
-  });
-} catch {
+  runRailway(args);
+} catch (error) {
   console.error(
     `Sync BLOCKED for ${environment}/${targetService}: railway set failed; values not printed.`,
   );
+  console.error(`  ${describeRailwayFailure(error)}`);
   process.exit(1);
 }
 
