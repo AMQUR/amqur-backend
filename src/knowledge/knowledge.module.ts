@@ -5,7 +5,11 @@ import { KnowledgeRetrievalService } from './knowledge-retrieval.service';
 import { KnowledgeService } from './knowledge.service';
 import { KnowledgeController } from './knowledge.controller';
 import { WebsiteIngestionService } from './website-ingestion.service';
-import { DisabledEmbeddingProvider } from './embedding.provider';
+import {
+  createEmbeddingProvider,
+  EMBEDDING_PROVIDER,
+} from './embedding.provider';
+import { KnowledgeEmbeddingService } from './knowledge-embedding.service';
 import { KnowledgeLifecycleService } from './knowledge-lifecycle.service';
 
 @Global()
@@ -18,7 +22,11 @@ import { KnowledgeLifecycleService } from './knowledge-lifecycle.service';
     KnowledgeService,
     WebsiteIngestionService,
     KnowledgeLifecycleService,
-    { provide: 'EmbeddingProvider', useClass: DisabledEmbeddingProvider },
+    KnowledgeEmbeddingService,
+    {
+      provide: EMBEDDING_PROVIDER,
+      useFactory: () => createEmbeddingProvider(),
+    },
   ],
   exports: [
     KnowledgeChunkerService,
@@ -27,6 +35,7 @@ import { KnowledgeLifecycleService } from './knowledge-lifecycle.service';
     KnowledgeService,
     WebsiteIngestionService,
     KnowledgeLifecycleService,
+    KnowledgeEmbeddingService,
   ],
 })
 export class KnowledgeModule {}
