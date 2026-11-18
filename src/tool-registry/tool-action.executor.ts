@@ -6,6 +6,8 @@ import {
   PermanentOutboxError,
 } from '../integrations/core/outbox-processor.service';
 import { TOOL_ACTION_TOPIC } from './tool-action.service';
+import { findTool } from './tool-catalog';
+import { ToolConsentService } from './tool-consent.service';
 
 /**
  * Dispatches APPROVED actions to the MOCK provider. It never calls a real CRM, SMS or email
@@ -16,6 +18,7 @@ export class ToolActionExecutor implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly processor: OutboxProcessorService,
+    private readonly consent: ToolConsentService,
   ) {}
 
   onModuleInit() {
@@ -35,6 +38,38 @@ export class ToolActionExecutor implements OnModuleInit {
       return { note: 'already_executed' };
     if (row.status !== ToolActionStatus.APPROVED)
       throw new PermanentOutboxError(`not_approved_${row.status}`);
+    // Consent can be revoked after approval: re-verify right before execution and fail closed.
+    const tool = findTool(row.toolName);
+    const verdict = tool
+      ? await this.consent.verify(tool, {
+          tenantId,
+          locationId: row.locationId,
+          input: row.input as Record<string, unknown>,
+          consentRef: row.consentRef,
+        })
+      : ({ ok: false, reason: 'tool_missing' } as const);
+    if (!verdict.ok) {
+      await this.prisma.$transaction(async (tx) => {
+        const failed = await tx.toolActionRequest.updateMany({
+          where: { id, tenantId, status: ToolActionStatus.APPROVED },
+          data: {
+            status: ToolActionStatus.FAILED,
+            failureReason: verdict.reason,
+          },
+        });
+        if (failed.count !== 1) return;
+        await tx.auditLog.create({
+          data: {
+            tenantId,
+            action: 'tool.action.blocked.consent',
+            resource: 'ToolActionRequest',
+            resourceId: id,
+            metadata: { tool: row.toolName, reason: verdict.reason },
+          },
+        });
+      });
+      throw new PermanentOutboxError(verdict.reason);
+    }
     const result = { mock: true, tool: row.toolName, executedAt: new Date() };
     await this.prisma.$transaction(async (tx) => {
       const claimed = await tx.toolActionRequest.updateMany({
