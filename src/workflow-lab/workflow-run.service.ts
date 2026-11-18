@@ -332,36 +332,39 @@ export class WorkflowRunService {
       throw new ConflictException('Review window expired');
     }
     const approved = decision === 'APPROVE';
-    const claimed = await this.prisma.workflowRun.updateMany({
-      where: {
-        id: run.id,
-        tenantId: actor.tenantId,
-        status: WorkflowRunStatus.SUSPENDED,
-        // Enforce the deadline in the SAME atomic DB update as the decision.
-        // A review that expires between our read and write cannot be approved.
-        suspendedExpiresAt: { gt: decisionAt },
-      },
-      data: {
-        status: approved
-          ? WorkflowRunStatus.COMPLETED
-          : WorkflowRunStatus.CANCELLED,
-        outcome: approved ? 'human_approved' : 'human_denied',
-        decidedByUserId: actor.userId,
-        decidedAt: decisionAt,
-      },
-    });
-    if (claimed.count !== 1)
-      throw new ConflictException('Run changed during decision');
-    await this.prisma.workflowStepRun.create({
-      data: {
-        tenantId: actor.tenantId,
-        runId: run.id,
-        seq: run.steps.length,
-        nodeId: run.currentNodeId ?? 'human_review',
-        nodeType: 'human_decision',
-        status: approved ? 'approved' : 'denied',
-        durationMs: 0,
-      },
+    // Commit the decision and its immutable step record together: a failed
+    // audit insert must never leave a run in a terminal approved state.
+    await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.workflowRun.updateMany({
+        where: {
+          id: run.id,
+          tenantId: actor.tenantId,
+          status: WorkflowRunStatus.SUSPENDED,
+          // Deadline must still be valid at the time the DB claims this decision.
+          suspendedExpiresAt: { gt: decisionAt },
+        },
+        data: {
+          status: approved
+            ? WorkflowRunStatus.COMPLETED
+            : WorkflowRunStatus.CANCELLED,
+          outcome: approved ? 'human_approved' : 'human_denied',
+          decidedByUserId: actor.userId,
+          decidedAt: decisionAt,
+        },
+      });
+      if (claimed.count !== 1)
+        throw new ConflictException('Run changed during decision');
+      await tx.workflowStepRun.create({
+        data: {
+          tenantId: actor.tenantId,
+          runId: run.id,
+          seq: run.steps.length,
+          nodeId: run.currentNodeId ?? 'human_review',
+          nodeType: 'human_decision',
+          status: approved ? 'approved' : 'denied',
+          durationMs: 0,
+        },
+      });
     });
     return this.loadRun(actor, run.id);
   }
