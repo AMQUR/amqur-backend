@@ -164,7 +164,7 @@ describe('WorkflowDefinitionService', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 
-  it('records each editor as a contributor and clears contributors on publish', async () => {
+  it('atomically appends each editor as a contributor and clears contributors on publish', async () => {
     const { svc, prisma, tx } = setup({
       ...inReview,
       draftContributorUserIds: ['author'],
@@ -174,7 +174,7 @@ describe('WorkflowDefinitionService', () => {
     expect(prisma.workflowDefinition.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          draftContributorUserIds: ['author', 'e2'],
+          draftContributorUserIds: { push: 'e2' },
         }),
       }),
     );

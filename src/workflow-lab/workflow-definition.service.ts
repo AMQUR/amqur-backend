@@ -123,7 +123,8 @@ export class WorkflowDefinitionService {
       reviewRequestedByUserId: null,
       reviewRequestedAt: null,
       lastEditedByUserId: actor.userId,
-      draftContributorUserIds: this.withContributor(def, actor.userId),
+      // Atomic DB append: concurrent editors can never overwrite each other's entry.
+      draftContributorUserIds: { push: actor.userId },
       pendingRestoreFromVersion: null,
     };
     if (input.name !== undefined) data.name = input.name;
@@ -150,13 +151,6 @@ export class WorkflowDefinitionService {
         reviewRequestedAt: new Date(),
       },
     });
-  }
-
-  private withContributor(
-    def: { draftContributorUserIds?: string[] | null },
-    userId: string,
-  ): string[] {
-    return [...new Set([...(def.draftContributorUserIds ?? []), userId])];
   }
 
   /**
@@ -265,7 +259,8 @@ export class WorkflowDefinitionService {
         reviewRequestedByUserId: actor.userId,
         reviewRequestedAt: new Date(),
         lastEditedByUserId: actor.userId,
-        draftContributorUserIds: this.withContributor(def, actor.userId),
+        // Atomic DB append: concurrent editors can never overwrite each other's entry.
+        draftContributorUserIds: { push: actor.userId },
         pendingRestoreFromVersion: old.version,
       },
     });
