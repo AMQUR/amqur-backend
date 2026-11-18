@@ -36,7 +36,7 @@ Status scale: coded / tested / CI-green / staging-verified / prod-code-deployed 
 | 1b | Optional pgvector column + ANN candidates | coded; **real-DB verified on disposable `pgvector/pgvector:pg16`** (nearest ordering, no drafts, no cross-tenant); migration verified as no-op on plain `postgres:16` | #40 `43d884b` | NOT verified on Railway staging/prod Postgres (BLOCKED_EXTERNAL: extension availability) |
 | 1c | Retrieval eval (synthetic fixture) + injection corpus | tested | #40 | synthetic only; not real-world accuracy |
 | 1d | File/URL ingestion hardening, reranker, conflict detection, source inspector | not started | — | existing website ingestion already allowlist+SSRF-guarded (reviewed, not extended) |
-| 2a | Definitions, immutable versions, review/publish/rollback | coded+tested; real-DB lifecycle test passes; CI in progress | #41 `2f894da` (stacked on #39) | 118 suites/812 tests; migration `20261118070000` |
+| 2a | Definitions, immutable versions, review/publish/rollback | coded+tested; real-DB lifecycle test passes; CI in progress. Automated security review found 3 MEDIUM issues (last-editor SoD, approve TOCTOU, rollback bypassing review) — all fixed in `c8c37ec` (checksum-bound approval, conditional claim, rollback = review request) | #41 `c8c37ec` (stacked on #39) | 118 suites/816 tests pass (1 real-DB skipped w/o env; passes with TEST_DB_URL); migrations `20261118070000`, `20261118071000` |
 | 2b | Run/step persistence, human-review suspension, async runtime | not started | — | |
 | 3 | Workflow Studio UI | not started | — | |
 | 4 | Tool registry, approvals | not started | — | |
