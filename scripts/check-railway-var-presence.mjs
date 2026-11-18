@@ -7,7 +7,10 @@
  *     node scripts/check-railway-var-presence.mjs <environment> <service> KEY1 KEY2 …
  */
 
-import { execFileSync } from 'node:child_process';
+import {
+  describeRailwayFailure,
+  readRailwayVariables,
+} from './lib/railway-cli.mjs';
 
 const [environment, service, ...keys] = process.argv.slice(2);
 if (!environment || !service || keys.length === 0) {
@@ -23,44 +26,14 @@ if (!projectId || !process.env.RAILWAY_API_TOKEN) {
   process.exit(2);
 }
 
-function asVariables(raw) {
-  let current = raw;
-  for (let i = 0; i < 3; i += 1) {
-    if (!current || typeof current !== 'object' || Array.isArray(current)) break;
-    if (current.variables) current = current.variables;
-    else if (current.data) current = current.data;
-    else break;
-  }
-  if (Array.isArray(current)) {
-    return Object.fromEntries(
-      current.map((r) => [r?.name ?? r?.key, r?.value]),
-    );
-  }
-  if (!current || typeof current !== 'object') throw new Error('invalid format');
-  return current;
-}
-
 let vars;
 try {
-  const out = execFileSync(
-    'railway',
-    [
-      'variables',
-      '--project',
-      projectId,
-      '--service',
-      service,
-      '--environment',
-      environment,
-      '--json',
-    ],
-    { encoding: 'utf8', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  vars = asVariables(JSON.parse(out));
-} catch {
+  vars = readRailwayVariables({ projectId, service, environment });
+} catch (error) {
   console.error(
     `BLOCKED ${environment}/${service}: could not read variables; values not printed.`,
   );
+  console.error(`  ${describeRailwayFailure(error)}`);
   process.exit(1);
 }
 
