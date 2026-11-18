@@ -38,7 +38,9 @@ export class WorkflowPreviewService {
     }
     const query = context.query.trim();
     if (!query || query.length > 300)
-      throw new BadRequestException('Query must be between 1 and 300 characters');
+      throw new BadRequestException(
+        'Query must be between 1 and 300 characters',
+      );
     if (!context.tenantId)
       throw new BadRequestException('Tenant context is required');
 
@@ -47,7 +49,11 @@ export class WorkflowPreviewService {
     );
     const start = graph.nodes.find((node) => node.type === 'start')!;
     let id: string = start.id;
-    let references: Array<{ documentId: string; title: string; score: number }> = [];
+    let references: Array<{
+      documentId: string;
+      title: string;
+      score: number;
+    }> = [];
     const trace: TraceItem[] = [];
     for (let step = 0; step < graph.nodes.length; step += 1) {
       const node = nodes.get(id)!;
@@ -83,7 +89,12 @@ export class WorkflowPreviewService {
         case 'end':
           break;
       }
-      trace.push({ nodeId: node.id, type: node.type, status, durationMs: Date.now() - started });
+      trace.push({
+        nodeId: node.id,
+        type: node.type,
+        status,
+        durationMs: Date.now() - started,
+      });
       if (node.type === 'human_review') {
         return {
           mode: 'preview' as const,
@@ -106,6 +117,8 @@ export class WorkflowPreviewService {
       id = next!;
     }
     // A validated acyclic graph must terminate within N nodes.
-    throw new BadRequestException('Workflow failed to terminate within its step budget');
+    throw new BadRequestException(
+      'Workflow failed to terminate within its step budget',
+    );
   }
 }
