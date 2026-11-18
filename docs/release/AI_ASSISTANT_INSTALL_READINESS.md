@@ -27,7 +27,7 @@ Health: both APIs `database: up`, `redis: up`. Production reports **`llm: missin
 | 1 | Staging deploy of backend `main` | **FAIL** | Deploy runs `44296005232` … `44397745247` (11 consecutive) fail at "Sync missing worker boot vars": `could not read Railway variables`. Last green: `39097551581` (2026-10-18). |
 | 2 | Root cause of #1 known | **BLOCKED** | Script discards the error. PR #52 (CI green, unmerged) prints a category. Facts: one repo secret `RAILWAY_API_TOKEN`, last set 2026-08-10, no environment override; `railway variables` flags identical in CLI 5.70/5.75; an invalid token fails the same way in similar time. A rejected token is the leading explanation, **not proven**. |
 | 3 | Railway read access for verification | **BLOCKED** | Connected Railway account returns "You don't have the required role (viewer)" on project `3bca40b6…`. Deployment IDs, worker state, variable names, pgvector: unverified. |
-| 4 | Backend CI on `main` | PASS | CI success on `a7dd1da`; run for `e36b94c` was in progress at time of writing. |
+| 4 | Backend CI on `main` | PASS | CI success on `e36b94c` (all jobs). |
 | 5 | Widget CI on `main` | PASS (as of #21) | lint, vitest, build. Playwright job `staging-e2e` is skipped on PRs. |
 | 6 | Production origin allowlists | **BLOCKED (owner)** | `POST /api/public/widget-token` → 403 for all six tenants for every origin tried: no tenant has any allowed origin. Correct fail-closed state; nothing can be installed until origins are approved. |
 | 7 | Production API CORS for dealer sites | **BLOCKED (owner)** | Provisioning script sets `CORS_ORIGINS` to the widget host only; value not readable (#3). |
