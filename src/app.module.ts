@@ -50,6 +50,7 @@ import { ReviewsModule } from './reviews/reviews.module';
 import { DocumentsModule } from './documents/documents.module';
 import { SurveysModule } from './surveys/surveys.module';
 import { WorkflowLabModule } from './workflow-lab/workflow-lab.module';
+import { ToolRegistryModule } from './tool-registry/tool-registry.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -125,6 +126,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     DocumentsModule,
     SurveysModule,
     WorkflowLabModule,
+    ToolRegistryModule,
   ],
 
   providers: [
