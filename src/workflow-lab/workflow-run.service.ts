@@ -310,16 +310,22 @@ export class WorkflowRunService {
       throw new ConflictException('Run is not awaiting review');
     if (run.startedByUserId === actor.userId)
       throw new ForbiddenException('Reviewer must differ from the run starter');
+    const decisionAt = new Date();
     if (
-      run.suspendedExpiresAt &&
-      run.suspendedExpiresAt.getTime() <= Date.now()
+      !run.suspendedExpiresAt ||
+      run.suspendedExpiresAt.getTime() <= decisionAt.getTime()
     ) {
-      // Expiry is a denial, never an approval.
+      // Missing or elapsed deadline fails closed; claim expiry without
+      // overwriting a concurrent decision or cancellation.
       await this.prisma.workflowRun.updateMany({
         where: {
           id: run.id,
           tenantId: actor.tenantId,
           status: WorkflowRunStatus.SUSPENDED,
+          OR: [
+            { suspendedExpiresAt: null },
+            { suspendedExpiresAt: { lte: decisionAt } },
+          ],
         },
         data: { status: WorkflowRunStatus.CANCELLED, outcome: 'expired' },
       });
@@ -331,6 +337,9 @@ export class WorkflowRunService {
         id: run.id,
         tenantId: actor.tenantId,
         status: WorkflowRunStatus.SUSPENDED,
+        // Enforce the deadline in the SAME atomic DB update as the decision.
+        // A review that expires between our read and write cannot be approved.
+        suspendedExpiresAt: { gt: decisionAt },
       },
       data: {
         status: approved
@@ -338,7 +347,7 @@ export class WorkflowRunService {
           : WorkflowRunStatus.CANCELLED,
         outcome: approved ? 'human_approved' : 'human_denied',
         decidedByUserId: actor.userId,
-        decidedAt: new Date(),
+        decidedAt: decisionAt,
       },
     });
     if (claimed.count !== 1)
