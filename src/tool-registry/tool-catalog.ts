@@ -20,6 +20,12 @@ export type ToolDefinition = {
   access: 'WRITE';
   risk: 'LOW' | 'MEDIUM' | 'HIGH';
   requiresCustomerConsent: boolean;
+  /** Required when requiresCustomerConsent: which ConsentRecord must back the action. */
+  consent?: {
+    purpose: 'TRANSACTIONAL' | 'CONVERSATIONAL' | 'MARKETING';
+    /** FROM_INPUT: the record's channel must equal input.channel; ANY: any channel. */
+    channel: 'FROM_INPUT' | 'ANY';
+  };
   proposerRoles: readonly ToolRole[];
   approverRoles: readonly ToolRole[];
   fields: Record<string, StringField>;
@@ -50,6 +56,7 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     access: 'WRITE',
     risk: 'MEDIUM',
     requiresCustomerConsent: true,
+    consent: { purpose: 'TRANSACTIONAL', channel: 'ANY' },
     proposerRoles: ALL,
     approverRoles: ALL,
     fields: {
@@ -65,6 +72,7 @@ export const TOOL_CATALOG: readonly ToolDefinition[] = [
     access: 'WRITE',
     risk: 'HIGH',
     requiresCustomerConsent: true,
+    consent: { purpose: 'CONVERSATIONAL', channel: 'FROM_INPUT' },
     proposerRoles: ALL,
     approverRoles: ['SUPER_ADMIN', 'ADMIN'],
     fields: {

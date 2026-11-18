@@ -69,11 +69,14 @@ function setup(row: Record<string, unknown> | null = pending()) {
     $transaction: jest.fn().mockImplementation(async (fn) => fn(tx)),
   };
   const outbox = { enqueue: jest.fn().mockResolvedValue({ id: 'ob1' }) };
+  const consent = { verify: jest.fn().mockResolvedValue({ ok: true }) };
   return {
     svc: new ToolActionService(
       prisma as unknown as PrismaService,
       outbox as unknown as OutboxService,
+      consent as never,
     ),
+    consent,
     prisma,
     tx,
     outbox,
@@ -290,5 +293,39 @@ describe('ToolActionService', () => {
     );
     prisma.toolActionRequest.updateMany.mockResolvedValue({ count: 0 });
     await expect(svc.cancel(admin, 'a1')).rejects.toThrow(ConflictException);
+  });
+
+  it('refuses to create a consent-gated action whose consent does not verify', async () => {
+    const { svc, tx, consent } = setup();
+    consent.verify.mockResolvedValue({
+      ok: false,
+      reason: 'consent_not_granted',
+    });
+    await expect(
+      svc.propose(admin, {
+        tool: 'message.send',
+        input: { leadId: 'l', channel: 'SMS', body: 'b' },
+        consentRef: 'rec1',
+      }),
+    ).rejects.toThrow(/consent_not_granted/);
+    expect(tx.toolActionRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('blocks approval (but not denial) when consent is no longer valid', async () => {
+    const row = pending({
+      toolName: 'appointment.request',
+      input: { leadId: 'l', startsAt: '2026-12-01T10:00:00Z' },
+      consentRef: 'rec1',
+    });
+    const s = setup(row);
+    s.consent.verify.mockResolvedValue({
+      ok: false,
+      reason: 'consent_opted_out',
+    });
+    await expect(
+      s.svc.decide(other, 'a1', 'APPROVE', { reviewedChecksum: row.checksum }),
+    ).rejects.toThrow(/no longer valid: consent_opted_out/);
+    expect(s.tx.toolActionRequest.updateMany).not.toHaveBeenCalled();
+    await expect(s.svc.decide(other, 'a1', 'DENY')).resolves.toBeDefined();
   });
 });

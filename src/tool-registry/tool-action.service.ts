@@ -1,3 +1,4 @@
+import { ToolConsentService } from './tool-consent.service';
 import {
   BadRequestException,
   ConflictException,
@@ -42,6 +43,7 @@ export class ToolActionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxService,
+    private readonly consent: ToolConsentService,
   ) {}
 
   catalog() {
@@ -121,6 +123,16 @@ export class ToolActionService {
     const consentRef = dto.consentRef?.trim() || null;
     if (tool.requiresCustomerConsent && !consentRef)
       throw new BadRequestException('Customer consent reference is required');
+    const verdict = await this.consent.verify(tool, {
+      tenantId: actor.tenantId,
+      locationId,
+      input,
+      consentRef,
+    });
+    if (!verdict.ok)
+      throw new BadRequestException(
+        `Customer consent is not valid: ${verdict.reason}`,
+      );
     const checksum = actionChecksum({
       toolName: tool.name,
       toolVersion: tool.version,
@@ -255,6 +267,16 @@ export class ToolActionService {
       });
       if (current !== row.checksum || opts.reviewedChecksum !== current)
         throw new ConflictException('Action differs from what was reviewed');
+      const verdict = await this.consent.verify(tool, {
+        tenantId: actor.tenantId,
+        locationId: row.locationId,
+        input: row.input as Record<string, unknown>,
+        consentRef: row.consentRef,
+      });
+      if (!verdict.ok)
+        throw new ConflictException(
+          `Customer consent is no longer valid: ${verdict.reason}`,
+        );
     }
     const dispatch = approved && toolDispatchEnabled();
     await this.prisma.$transaction(async (tx) => {

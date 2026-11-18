@@ -13,8 +13,13 @@ function setup(row: Record<string, unknown> | null) {
     $transaction: jest.fn().mockImplementation(async (fn) => fn(tx)),
   };
   const processor = { registerHandler: jest.fn() };
-  const ex = new ToolActionExecutor(prisma as never, processor as never);
-  return { ex, tx, prisma, processor };
+  const consent = { verify: jest.fn().mockResolvedValue({ ok: true }) };
+  const ex = new ToolActionExecutor(
+    prisma as never,
+    processor as never,
+    consent as never,
+  );
+  return { ex, tx, prisma, processor, consent };
 }
 
 describe('ToolActionExecutor (mock provider)', () => {
@@ -68,6 +73,36 @@ describe('ToolActionExecutor (mock provider)', () => {
     ).rejects.toThrow(PermanentOutboxError);
     await expect(missing.ex.execute({}, 't1')).rejects.toThrow(
       PermanentOutboxError,
+    );
+  });
+
+  it('fails closed (FAILED + audit, never executed) when consent was revoked after approval', async () => {
+    const { ex, tx, consent } = setup({
+      id: 'a1',
+      status: 'APPROVED',
+      toolName: 'message.send',
+      locationId: null,
+      input: { leadId: 'l', channel: 'SMS', body: 'b' },
+      consentRef: 'rec1',
+    });
+    consent.verify.mockResolvedValue({
+      ok: false,
+      reason: 'consent_opted_out',
+    });
+    await expect(ex.execute({ actionId: 'a1' }, 't1')).rejects.toThrow(
+      PermanentOutboxError,
+    );
+    expect(tx.toolActionRequest.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: 'FAILED', failureReason: 'consent_opted_out' },
+      }),
+    );
+    expect(tx.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'tool.action.blocked.consent',
+        }),
+      }),
     );
   });
 });
