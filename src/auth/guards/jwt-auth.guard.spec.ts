@@ -143,4 +143,78 @@ describe('JwtAuthGuard widget-secret selection', () => {
       guard(WIDGET_SECRET).canActivate(contextFor(undefined)),
     ).rejects.toBeInstanceOf(UnauthorizedException);
   });
+
+  describe('widget token origin binding', () => {
+    const ORIGIN = 'https://www.example-dealer.com';
+
+    function ctx(token: string, origin?: string) {
+      return {
+        getHandler: () => ({}),
+        getClass: () => ({}),
+        switchToHttp: () => ({
+          getRequest: () => ({
+            headers: {
+              authorization: `Bearer ${token}`,
+              ...(origin ? { origin } : {}),
+            },
+          }),
+        }),
+      } as never;
+    }
+
+    const bound = () =>
+      jwt.sign({
+        sub: 'widget',
+        role: 'widget',
+        typ: 'widget',
+        tenantId: 't1',
+        origin: ORIGIN,
+      });
+
+    it('accepts the token from the origin it was issued for', async () => {
+      await expect(guard().canActivate(ctx(bound(), ORIGIN))).resolves.toBe(
+        true,
+      );
+      await expect(
+        guard().canActivate(ctx(bound(), 'HTTPS://WWW.EXAMPLE-DEALER.COM')),
+      ).resolves.toBe(true);
+    });
+
+    it('refuses the token when a browser presents it from another origin', async () => {
+      for (const other of [
+        'https://evil.example',
+        'https://example-dealer.com',
+        'http://www.example-dealer.com',
+        'https://www.example-dealer.com.evil.example',
+      ]) {
+        await expect(
+          guard().canActivate(ctx(bound(), other)),
+        ).rejects.toBeInstanceOf(UnauthorizedException);
+      }
+    });
+
+    it('still accepts tokens issued before the origin claim existed', async () => {
+      const legacy = jwt.sign({
+        sub: 'widget',
+        role: 'widget',
+        typ: 'widget',
+        tenantId: 't1',
+      });
+      await expect(
+        guard().canActivate(ctx(legacy, 'https://anything.example')),
+      ).resolves.toBe(true);
+    });
+
+    it('does not apply origin binding to staff access tokens', async () => {
+      const staff = jwt.sign({
+        sub: 'u1',
+        role: 'STAFF',
+        typ: 'access',
+        origin: ORIGIN,
+      });
+      await expect(
+        guard().canActivate(ctx(staff, 'https://command.example')),
+      ).resolves.toBe(true);
+    });
+  });
 });
