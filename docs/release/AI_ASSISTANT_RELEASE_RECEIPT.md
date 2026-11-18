@@ -21,5 +21,6 @@ state so the next real release has a baseline. It is not signed off by anyone.
 - Advertising, CRM writes, customer messages sent: none.
 - Dashboards: Railway project `dial-us-now-platform`; GitHub Actions `Deploy` in each repo.
 
-Open PRs from this session: backend #52 (deploy diagnostics), #53 (widget
-token hardening), this docs PR; widget #28 (install kit, draft).
+Merged to backend `main` on 2026-11-18, **not deployed**: #52 (`c030bdb`,
+deploy diagnostics), #53 (`1f4652d`, widget token hardening), this docs PR.
+Open: widget #28 (install kit, draft).

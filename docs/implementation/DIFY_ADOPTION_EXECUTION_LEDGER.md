@@ -86,3 +86,4 @@ PR #39 is additive (new module + `app.module.ts` import + composer logging chang
 - Not built (verified by code read): SSE streaming, group store selector, ADF/XML builder, customer voice/uploads, token revocation.
 - Next action: owner merges #52 → read `category=` in the Deploy log → fix the secret if `UNAUTHORIZED`.
 - Rollback: all four PRs are independent reverts; no migrations.
+- Update (same day): owner approved merges. #52 merged `c030bdb`; Deploy run `44400831191` printed `category=UNAUTHORIZED` — the `RAILWAY_API_TOKEN` secret is rejected by Railway (proven, no longer a hypothesis). #53 merged `1f4652d`; CI run `44401117805` green on all six jobs; its Deploy run failed at the same step. Neither change is on staging or production. Next action: owner replaces the secret in both repositories and re-runs Deploy.
