@@ -83,7 +83,7 @@ describe('destination helpers', () => {
     ])
       expect(isReservedTestDomain(d)).toBe(true);
     for (const d of [
-      'dialchevy.net',
+      'dealer-crm-not-reserved.net',
       'invalid.com',
       'testdealer.com',
       'example.co',

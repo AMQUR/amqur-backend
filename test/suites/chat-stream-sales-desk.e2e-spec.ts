@@ -301,7 +301,9 @@ describe('chat stream + sales-desk cards', () => {
     });
 
     it('a client that disconnects mid-stream still gets a fully persisted turn', async () => {
-      const address = ctx.app.getHttpServer().address() as AddressInfo;
+      const address = (
+        ctx.app.getHttpServer() as import('http').Server
+      ).address() as AddressInfo;
       const token = await tokenFor(on);
       const svc = ctx.app.get(ChatService);
       const original = svc.chat.bind(svc);
