@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Query, Post } from '@nestjs/common';
 import { DealerGroupsService } from './dealer-groups.service';
+import { GroupOverviewService } from './overview/group-overview.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthUser } from '../common/decorators/current-user.decorator';
@@ -16,7 +17,10 @@ class AddMembershipDto {
 
 @Controller('dealer-groups')
 export class DealerGroupsController {
-  constructor(private readonly groups: DealerGroupsService) {}
+  constructor(
+    private readonly groups: DealerGroupsService,
+    private readonly overviews: GroupOverviewService,
+  ) {}
 
   @Get()
   @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
@@ -56,6 +60,25 @@ export class DealerGroupsController {
       actorUserId: user.sub,
       isSuperAdmin: user.role === 'SUPER_ADMIN',
       days: Number(days ?? 7),
+    });
+  }
+
+  /**
+   * Group overview: each member rooftop's lead/appointment funnel and integration capability
+   * matrix. Counts and status words only; group members and SUPER_ADMIN.
+   */
+  @Get(':id/overview')
+  @Roles('SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF')
+  overview(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Query('days') days?: string,
+  ) {
+    return this.overviews.overview({
+      dealerGroupId: id,
+      actorUserId: user.sub,
+      isSuperAdmin: user.role === 'SUPER_ADMIN',
+      days,
     });
   }
 

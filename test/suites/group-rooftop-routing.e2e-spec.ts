@@ -1592,6 +1592,104 @@ describe('group-site rooftop routing', () => {
       groupConversationId = (await groupConversation(v.id())).id;
     });
 
+    it('group overview: members see every store’s funnel and capability matrix as counts and status words only; non-members and widget tokens are refused', async () => {
+      type Overview = {
+        statuses: string[];
+        stores: Array<{
+          tenant: { id: string; name: string };
+          isGroupSite: boolean;
+          funnel: {
+            stages: Array<{ stage: string; count: number }>;
+            notProven: { appointmentsSandboxConfirmed: number };
+          };
+          capabilities: Record<string, { status: string; reason: string }>;
+        }>;
+        totals: { stages: Array<{ stage: string; count: number }> };
+      };
+      const groupAdmin = await ctx.prisma.user.findFirstOrThrow({
+        where: { tenantId: tenantOf('group'), role: Role.ADMIN },
+      });
+      await ctx.prisma.dealerGroupMembership.upsert({
+        where: {
+          dealerGroupId_userId: {
+            dealerGroupId: seeded.dealerGroupId,
+            userId: groupAdmin.id,
+          },
+        },
+        create: {
+          dealerGroupId: seeded.dealerGroupId,
+          userId: groupAdmin.id,
+          role: 'GROUP_VIEWER',
+        },
+        update: {},
+      });
+      const path = `/dealer-groups/${seeded.dealerGroupId}/overview?days=7`;
+      const r = await get('group', path);
+      expect(r.status).toBe(200);
+      const o = unwrap<Overview>(r.body);
+      expect(o.statuses).toEqual([
+        'LIVE VERIFIED',
+        'SANDBOX VERIFIED',
+        'DEMO',
+        'BLOCKED',
+        'NOT TESTED',
+      ]);
+      // five rooftops + the group's own site; the rival tenant is not in the group
+      expect(o.stores).toHaveLength(6);
+      expect(o.stores.filter((x) => x.isGroupSite)).toHaveLength(1);
+      expect(o.stores.map((x) => x.tenant.id)).not.toContain(rivalTenantId);
+
+      const north = o.stores.find((x) => x.tenant.id === tenantOf('north'))!;
+      const south = o.stores.find((x) => x.tenant.id === tenantOf('south'))!;
+      const stage = (x: typeof north, name: string) =>
+        x.funnel.stages.find((y) => y.stage === name)!.count;
+      // North has the one lead and booking made in beforeAll; South has none of it.
+      expect(stage(north, 'LEAD_CREATED')).toBe(1);
+      expect(stage(north, 'APPOINTMENT_REQUESTED')).toBe(1);
+      // A demo-scheduler confirmation is a request, not a confirmed booking.
+      expect(stage(north, 'APPOINTMENT_CONFIRMED')).toBe(0);
+      expect(north.funnel.notProven.appointmentsSandboxConfirmed).toBe(1);
+      expect(stage(south, 'LEAD_CREATED')).toBe(0);
+      expect(stage(south, 'APPOINTMENT_REQUESTED')).toBe(0);
+      expect(
+        o.totals.stages.find((x) => x.stage === 'LEAD_CREATED')!.count,
+      ).toBe(1);
+      expect(
+        o.totals.stages.find((x) => x.stage === 'APPOINTMENT_CONFIRMED')!.count,
+      ).toBe(0);
+
+      // Synthetic seed: demo where it works, blocked where a real prerequisite is missing,
+      // and nothing is ever reported as verified.
+      for (const x of o.stores.filter((y) => !y.isGroupSite)) {
+        expect(x.capabilities.inventory.status).toBe('DEMO');
+        expect(x.capabilities.leadDelivery.status).toBe('DEMO');
+        expect(x.capabilities.appointmentBooking.status).toBe('DEMO');
+        expect(x.capabilities.tekion.status).toBe('BLOCKED');
+        expect(x.capabilities.crmConfirmation.status).toBe('BLOCKED');
+        expect(x.capabilities.textMessaging.status).toBe('BLOCKED');
+      }
+      const dump = JSON.stringify(o);
+      for (const x of o.stores)
+        for (const c of Object.values(x.capabilities))
+          expect(c.status).not.toMatch(/VERIFIED/);
+      // No customer data, addresses or record ids of a rooftop.
+      expect(dump).not.toContain(EMAIL);
+      expect(dump).not.toContain('Rivera');
+      expect(dump).not.toContain('555-01');
+      expect(dump).not.toContain('example.invalid');
+      expect(dump).not.toContain(leadId);
+      expect(dump).not.toContain(appointmentId);
+
+      // A rooftop admin who is not a group member, a widget token and no token at all.
+      expect((await get('chevy', path)).status).toBe(403);
+      expect((await get('group', path, widget.group)).status).toBe(403);
+      expect((await http().get(`/api${path}`)).status).toBe(401);
+      // Another group's id is not readable through membership of this one.
+      expect(
+        (await get('group', '/dealer-groups/does-not-exist/overview')).status,
+      ).toBe(403);
+    });
+
     it('a group widget token cannot read any staff or ops endpoint', async () => {
       for (const path of [
         '/leads',

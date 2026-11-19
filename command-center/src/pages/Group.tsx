@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api';
 import { useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote } from '../ui';
+import { GroupOverview } from './GroupOverview';
 
 type GroupSummary = { id: string; name: string };
 
@@ -90,7 +91,7 @@ export function Group() {
 
   return (
     <div className="page">
-      <h1>Group comparison</h1>
+      <h1>Group overview</h1>
       <ErrorNote error={groups.error ?? cmp.error} />
       {readiness.data && readiness.data.stores?.length > 0 && (
         <Card title="Five-rooftop readiness">
@@ -130,6 +131,7 @@ export function Group() {
           </div>
         </Card>
       )}
+      {gid && <GroupOverview groupId={gid} days={days} />}
       {loading && <p className="muted">Loading…</p>}
       {!loading && !gid && groups.data && <Empty>You are not a member of a dealer group.</Empty>}
       {!loading && gid && groups.data && groups.data.length > 1 && (

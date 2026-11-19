@@ -60,7 +60,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'funnel', label: 'Lead and appointment funnel' },
   { id: 'lead-deliveries', label: 'Lead deliveries (CRM)' },
   { id: 'ops', label: 'Delivery failures', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
-  { id: 'group', label: 'Group comparison' },
+  { id: 'group', label: 'Group overview' },
   { id: 'security', label: 'Security' },
 ];
 
