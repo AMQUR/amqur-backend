@@ -55,7 +55,8 @@ const NOTHING: Prisma.VehicleWhereInput = { tenantId: '__no_listed_rooftop__' };
 
 /**
  * Vehicles of the given listed rooftops: each rooftop's own tenant AND its own listed
- * locations (plus that tenant's location-less rows, exactly as its own search includes them).
+ * locations. A rooftop's location-less rows are included only when every one of its locations
+ * is listed — otherwise they could belong to a location that did not opt in.
  */
 export function groupVehicleScope(
   members: readonly GroupMember[],
@@ -64,7 +65,10 @@ export function groupVehicleScope(
   return {
     OR: members.map((m) => ({
       tenantId: m.tenantId,
-      OR: [{ locationId: { in: [...m.locationIds] } }, { locationId: null }],
+      OR: [
+        { locationId: { in: [...m.locationIds] } },
+        ...(m.allLocationsListed ? [{ locationId: null }] : []),
+      ],
     })),
   };
 }

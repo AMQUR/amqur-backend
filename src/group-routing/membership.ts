@@ -99,6 +99,7 @@ export function resolveGroupGrant(input: {
       tenantId: t.id,
       tenantSlug: t.slug,
       locationIds: listed.map((l) => l.id),
+      allLocationsListed: listed.length === t.locations.length,
       primaryLocationId: listed[0].id,
       name: (listed[0].name || t.name).trim(),
       side: readSide(t.publicConfig),

@@ -64,6 +64,7 @@ import {
 } from './transports/lead-delivery-transport';
 import { HANDSET_CONSENT_SOURCES } from '../../messaging/handset-opt-out';
 import { SandboxSinkTransport } from './transports/sandbox-sink.transport';
+import { redactForLog } from '../../common/security/sensitive-data';
 import { SmtpLeadTransport } from './transports/smtp.transport';
 
 export const LEAD_DELIVERY_TOPIC = 'lead.delivery.adf';
@@ -1325,7 +1326,9 @@ export class LeadDeliveryService implements OnModuleInit {
             applied: moved,
             fromStatus: d.status,
             crmRecordRef: ref ?? null,
-            note: input.note?.slice(0, 300) ?? null,
+            // Free text typed by staff: contact details are redacted before the audit row is
+            // written (audit rows are append-only).
+            note: input.note ? redactForLog(input.note).slice(0, 300) : null,
           },
         },
       });
