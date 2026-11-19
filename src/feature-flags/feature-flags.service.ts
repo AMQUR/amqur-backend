@@ -83,6 +83,22 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
    * Also needs an enabled + liveReady `appointments` IntegrationConnection (provider MOCK).
    */
   sandboxScheduler: false,
+  /**
+   * Group-site shopping across member rooftops (docs/GROUP_ROOFTOP_ROUTING.md). Has an effect
+   * ONLY on the tenant a DealerGroup designates as its group site (`groupSiteTenantId`); on
+   * any other tenant it does nothing. Default off. `crossStoreInventory` stays reserved.
+   */
+  groupSiteShopping: false,
+  /**
+   * A rooftop's own opt-in to appear in its group site's search. Default off: a rooftop that
+   * has not opted in is never read by a group conversation.
+   */
+  groupInventoryListed: false,
+  /**
+   * Group site only: a handoff with no store chosen goes to the group tenant's own queue
+   * instead of asking which store. Default off (ask which store; never guess a rooftop).
+   */
+  groupHandoffQueue: false,
 };
 
 @Injectable()

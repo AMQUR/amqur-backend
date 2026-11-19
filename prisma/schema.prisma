@@ -15,8 +15,15 @@ model DealerGroup {
   slug String @unique
   name String
 
-  tenants     Tenant[]
+  tenants     Tenant[]                @relation("DealerGroupTenants")
   memberships DealerGroupMembership[]
+
+  /// The ONE tenant that is this group's own website ("group site"). Only a conversation in
+  /// this tenant can ever shop across the group's rooftops, and only with the
+  /// `groupSiteShopping` flag on it and `groupInventoryListed` on each rooftop. Null = no
+  /// group shopping at all. See docs/GROUP_ROOFTOP_ROUTING.md.
+  groupSiteTenantId String? @unique
+  groupSiteTenant   Tenant? @relation("DealerGroupSite", fields: [groupSiteTenantId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -52,7 +59,9 @@ model Tenant {
   name String
 
   dealerGroupId String?
-  dealerGroup   DealerGroup? @relation(fields: [dealerGroupId], references: [id], onDelete: SetNull)
+  dealerGroup   DealerGroup? @relation("DealerGroupTenants", fields: [dealerGroupId], references: [id], onDelete: SetNull)
+  /// Set when this tenant is the designated group website of a DealerGroup.
+  groupSiteOf   DealerGroup? @relation("DealerGroupSite")
 
   /// Optional comma-separated allowlist of widget origins (e.g. https://dealer.com)
   allowedOrigins String?
