@@ -747,4 +747,84 @@ describe('sales desk + sandbox scheduler — review findings (R5–R7, R10, R12,
       expect(await activeAppointments(sbx, j.conversationId)).toHaveLength(0);
     });
   });
+
+  describe('cancelling a provider-confirmed booking releases it at the provider', () => {
+    it('sandbox booking cancelled ⇒ the outbox job cancels it at the scheduler, records a CANCELLED receipt, and the time is offered again', async () => {
+      const j = await toSlotPicker(sbx);
+      const slot = j.picker.slots[4] ?? j.picker.slots[0];
+      const booked = await select(sbx, j.conversationId, j.picker.id, slot.id);
+      const a = card<Record<string, string>>(booked, 'appointment')!;
+      expect(a).toMatchObject({ status: 'CONFIRMED', outcome: 'confirmed' });
+      // While it is booked nobody else is offered that time.
+      const during = await toSlotPicker(sbx);
+      expect(during.picker.slots.map((x) => x.start)).not.toContain(slot.start);
+
+      await ctx.app.get(AppointmentService).cancel({
+        tenantId: sbx.tenantId,
+        appointmentId: a.id,
+        source: 'staff',
+        reason: 'e2e cancel',
+      });
+      const event = await ctx.prisma.outboxEvent.findFirstOrThrow({
+        where: {
+          tenantId: sbx.tenantId,
+          idempotencyKey: `appointment.provider.cancel:${a.id}`,
+        },
+      });
+      await ctx.app.get(OutboxProcessorService).processBatch(500, 'sdr-e2e');
+      const done = await ctx.prisma.outboxEvent.findUniqueOrThrow({
+        where: { id: event.id },
+      });
+      expect(done.status).toBe('PUBLISHED');
+
+      const receipts = await ctx.prisma.appointmentProviderReceipt.findMany({
+        where: { tenantId: sbx.tenantId, appointmentId: a.id },
+        orderBy: { receivedAt: 'asc' },
+      });
+      expect(receipts.map((r) => r.status)).toEqual(['CONFIRMED', 'CANCELLED']);
+      expect(receipts[1]).toMatchObject({ sandbox: true, providerRef: null });
+      // The appointment itself stays cancelled; only the provider's hold is gone.
+      expect(
+        (
+          await ctx.prisma.appointment.findUniqueOrThrow({
+            where: { id: a.id },
+          })
+        ).status,
+      ).toBe('CANCELLED');
+      const after = await toSlotPicker(sbx);
+      expect(after.picker.slots.map((x) => x.start)).toContain(slot.start);
+    });
+
+    it('a rooftop with no scheduler that can cancel still dead-letters the job for staff (unchanged behaviour)', async () => {
+      const appt = await ctx.prisma.appointment.create({
+        data: {
+          tenantId: sbx.tenantId,
+          type: 'TEST_DRIVE',
+          status: 'CANCELLED',
+          provider: 'TEKION',
+          externalProviderId: 'not-a-real-reference',
+          canceledAt: new Date(),
+        },
+      });
+      const event = await ctx.prisma.outboxEvent.create({
+        data: {
+          tenantId: sbx.tenantId,
+          topic: 'appointment.provider.cancel',
+          idempotencyKey: `appointment.provider.cancel:${appt.id}`,
+          payload: { appointmentId: appt.id },
+        },
+      });
+      await ctx.app.get(OutboxProcessorService).processBatch(500, 'sdr-e2e');
+      const done = await ctx.prisma.outboxEvent.findUniqueOrThrow({
+        where: { id: event.id },
+      });
+      expect(done.status).toBe('DEAD');
+      expect(done.lastError).toContain('no_authorized_scheduler');
+      expect(
+        await ctx.prisma.appointmentProviderReceipt.count({
+          where: { appointmentId: appt.id },
+        }),
+      ).toBe(0);
+    });
+  });
 });

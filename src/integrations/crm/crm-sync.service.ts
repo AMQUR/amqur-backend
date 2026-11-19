@@ -68,10 +68,6 @@ export class CrmSyncService implements OnModuleInit {
       });
       return { note: 'forwarded_to_crm_webhook' };
     });
-    this.processor.registerHandler('appointment.provider.cancel', async () => {
-      // No scheduling adapter is authorized today; a provider-owned booking cannot exist.
-      throw new PermanentOutboxError('no_authorized_scheduler');
-    });
   }
 
   async tekionGate(

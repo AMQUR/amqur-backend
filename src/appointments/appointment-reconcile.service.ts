@@ -28,6 +28,32 @@ export class AppointmentReconcileService implements OnModuleInit {
     this.processor.registerHandler(APPOINTMENT_RECONCILE_TOPIC, (p, m) =>
       this.handle(p, m),
     );
+    this.processor.registerHandler('appointment.provider.cancel', (p, m) =>
+      this.handleCancel(p, m),
+    );
+  }
+
+  /**
+   * Releases the provider's booking for a cancelled or rescheduled appointment. With no
+   * scheduler that can cancel (every real rooftop today) the event is dead-lettered with
+   * `no_authorized_scheduler`, exactly as before, so staff release the slot by hand.
+   */
+  async handleCancel(
+    p: Record<string, unknown>,
+    meta: { tenantId: string },
+  ): Promise<OutboxHandlerResult> {
+    const appointmentId =
+      typeof p.appointmentId === 'string' && p.appointmentId
+        ? p.appointmentId
+        : null;
+    if (!appointmentId) throw new PermanentOutboxError('bad_payload');
+    const result = await this.appointments.cancelProviderBooking({
+      tenantId: meta.tenantId,
+      appointmentId,
+    });
+    if (result === 'no_authorized_scheduler')
+      throw new PermanentOutboxError('no_authorized_scheduler');
+    return { note: result };
   }
 
   async handle(

@@ -716,7 +716,9 @@ export class AppointmentService {
         | 'UNKNOWN'
         /** Compensation results (see reconcileProviderBooking). */
         | 'NOT_FOUND'
-        | 'ORPHAN_CANCELLED';
+        | 'ORPHAN_CANCELLED'
+        /** The provider released a booking after the appointment was cancelled or moved. */
+        | 'CANCELLED';
       providerRef?: string | null;
       confirmedStart?: Date | null;
       rawStatus?: string | null;
@@ -1521,6 +1523,69 @@ export class AppointmentService {
       },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * Releases a provider-owned booking after its appointment was cancelled or rescheduled
+   * (outbox topic `appointment.provider.cancel`). Never changes the appointment's own status:
+   * that was decided by whoever cancelled it.
+   *
+   *  - no adapter that can cancel, or the rooftop's scheduler is no longer this provider
+   *        → `no_authorized_scheduler` (the caller dead-letters; staff release it by hand);
+   *  - the appointment is active again under the same reference → nothing is cancelled;
+   *  - otherwise the adapter is asked to cancel and a `CANCELLED` receipt records the result.
+   *
+   * Throws to retry (outbox backoff) when the provider cannot be asked right now.
+   */
+  async cancelProviderBooking(p: {
+    tenantId: string;
+    appointmentId: string;
+  }): Promise<
+    | 'provider_cancelled'
+    | 'nothing_to_cancel'
+    | 'still_active'
+    | 'no_authorized_scheduler'
+  > {
+    const appt = await this.prisma.appointment.findFirst({
+      where: { id: p.appointmentId, tenantId: p.tenantId },
+    });
+    if (!appt || !appt.externalProviderId || appt.provider === 'NONE')
+      return 'nothing_to_cancel';
+    if (
+      appt.status !== AppointmentStatus.CANCELLED &&
+      appt.status !== AppointmentStatus.RESCHEDULED
+    )
+      return 'still_active';
+    const scheduler = await this.registry.resolve(
+      appt.tenantId,
+      appt.locationId,
+      appt.type as SchedulingDepartment,
+    );
+    if (
+      !scheduler ||
+      scheduler.provider !== appt.provider ||
+      typeof scheduler.adapter.cancel !== 'function'
+    )
+      return 'no_authorized_scheduler';
+    const idempotencyKey = `provider-cancel:${appt.id}`;
+    const ctx = this.registry.context(
+      scheduler,
+      appt.tenantId,
+      appt.locationId,
+      idempotencyKey,
+      appt.id,
+    );
+    await withTimeout(
+      scheduler.adapter.cancel(ctx, appt.externalProviderId),
+      ctx.timeoutMs,
+    );
+    await this.writeReceipt(this.prisma, appt, scheduler, {
+      status: 'CANCELLED',
+      rawStatus: 'provider_cancelled',
+      idempotencyKey,
+    });
+    this.metrics.increment('appointments.provider_cancelled');
+    return 'provider_cancelled';
   }
 
   private async enqueueProviderOp(appt: Appointment, topic: string) {
