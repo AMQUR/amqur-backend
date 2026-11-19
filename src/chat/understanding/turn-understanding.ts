@@ -1288,7 +1288,7 @@ export function understandTurn(
 
   // ── SAFETY: urgent vehicle-safety language gets safety-first handling (no diagnosis)
   if (
-    /\b(smoke|on fire|fire|flames|smell(?:s|ing)? (?:gas|fuel)|fuel leak|brakes? (?:failed|failing|went out|don'?t work|not working|gave out)|no brakes|steering (?:locked|failed|went out)|(?:car|truck|engine) (?:died|stalled|shut off) (?:on|in) (?:the )?(?:highway|freeway|interstate|traffic)|airbag deployed|(?:i was|we were|i(?:'ve| have) been|just got) in an? (?:accident|crash)|(?:i|we) (?:just )?crashed)\b/.test(
+    /\b(smoke|on fire|fire|flames|smell(?:s|ing)? (?:gas|fuel)|fuel leak|brakes? (?:failed|failing|went out|don'?t work|not working|gave out)|no brakes|steering(?: wheel)? (?:locked(?: up)?|locks? up|failed|went out|seized|froze|stopped working)|lost (?:my |the |all )?(?:steering|power steering|brakes)|brake pedal (?:went|goes|sinks?|sank) to the floor|wheels? (?:fell|came|is coming|are coming) off|can(?:'?t|not) (?:steer|stop the (?:car|truck|vehicle))|(?:car|truck|engine) (?:died|stalled|shut off) (?:on|in) (?:the )?(?:highway|freeway|interstate|traffic)|airbag deployed|(?:i was|we were|i(?:'ve| have) been|just got) in an? (?:accident|crash)|(?:i|we) (?:just )?crashed)\b/.test(
       t,
     )
   ) {
@@ -1297,7 +1297,7 @@ export function understandTurn(
   // Spanish safety language. Checked on its own so "frenos" / "humo" never fall through to a
   // parts or service-booking flow: a failed brake is an emergency, not a parts inquiry.
   if (
-    /(?:se me fueron|me fallaron|fallaron|no (?:me )?(?:sirven|funcionan|responden|agarran)|me qued[eé] sin|no tengo|sin) (?:los )?frenos|frenos (?:fallaron|no (?:sirven|funcionan|responden))|sale humo|est[aá] (?:saliendo|echando) humo|echa humo|humo del (?:motor|cap[oó]|carro|auto|coche)|se (?:est[aá] )?(?:incendi|quem)|en llamas|huele a (?:gasolina|quemado)|fuga de (?:gasolina|combustible)|(?:se )?(?:trab[oó]|bloque[oó]) (?:la direcci[oó]n|el volante)|se (?:me )?apag[oó] (?:el (?:carro|auto|coche|motor) )?en (?:la )?(?:carretera|autopista|v[ií]a|medio del tr[aá]fico)|(?:tuve|acabo de tener|estuve en) un (?:accidente|choque)|(?:acabo de |me )?choqu[eé]|se (?:activ[oó]|abri[oó]|dispar[oó]) (?:la bolsa de aire|el airbag)/.test(
+    /(?:se me fueron|me fallaron|fallaron|no (?:me )?(?:sirven|funcionan|responden|agarran)|me qued[eé] sin|no tengo|sin) (?:los )?frenos|frenos (?:fallaron|no (?:sirven|funcionan|responden))|se (?:me )?(?:trab[oó]|bloque[oó]|puso dur[oa]) (?:el volante|la direcci[oó]n)|(?:perd[ií]|me qued[eé] sin) (?:la )?direcci[oó]n (?:del (?:carro|auto|coche|veh[ií]culo|cami[oó]n)|hidr[aá]ulica|asistida)|no puedo (?:frenar|girar el volante)|sale humo|est[aá] (?:saliendo|echando) humo|echa humo|humo del (?:motor|cap[oó]|carro|auto|coche)|se (?:est[aá] )?(?:incendi|quem)|en llamas|huele a (?:gasolina|quemado)|fuga de (?:gasolina|combustible)|(?:se )?(?:trab[oó]|bloque[oó]) (?:la direcci[oó]n|el volante)|se (?:me )?apag[oó] (?:el (?:carro|auto|coche|motor) )?en (?:la )?(?:carretera|autopista|v[ií]a|medio del tr[aá]fico)|(?:tuve|acabo de tener|estuve en) un (?:accidente|choque)|(?:acabo de |me )?choqu[eé]|se (?:activ[oó]|abri[oó]|dispar[oó]) (?:la bolsa de aire|el airbag)/.test(
       t,
     )
   ) {

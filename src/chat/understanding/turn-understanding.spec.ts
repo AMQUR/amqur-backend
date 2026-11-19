@@ -298,3 +298,27 @@ describe('understandTurn — Spanish safety, handoff and complaint (golden-eval 
     );
   });
 });
+
+describe('understandTurn — holdout-eval regressions (steering and loss of control)', () => {
+  it.each([
+    'The steering wheel locked up for a second on the highway and now the wheel shakes. Can I drive it to you tomorrow?',
+    'My steering locks up when I turn left',
+    'I lost my power steering on the expressway',
+    'The brake pedal went to the floor this morning',
+    'I think a wheel is coming off',
+    "I can't steer",
+    'Se me trabó el volante en la autopista',
+    'No puedo frenar',
+    'Perdí la dirección hidráulica',
+  ])('treats "%s" as urgent safety', (m) => {
+    expect(ids(m)).toContain('SAFETY_URGENT');
+  });
+
+  it.each([
+    'Perdí la dirección de la agencia, ¿me la manda?',
+    'Do you sell steering wheel covers?',
+    'How much is a wheel alignment?',
+  ])('does not raise a safety alarm for "%s"', (m) => {
+    expect(ids(m)).not.toContain('SAFETY_URGENT');
+  });
+});
