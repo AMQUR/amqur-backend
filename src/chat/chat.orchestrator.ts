@@ -130,6 +130,8 @@ import {
   buildPicker,
   departmentLabel,
   rememberPicker,
+  settlePickersAfterBooking,
+  bookingFamily,
   requestOnlyDays,
   resolveSelection,
   selectionRefusalText,
@@ -6999,6 +7001,13 @@ export class ChatOrchestrator {
     };
     if (!r.ok) {
       this.metrics.increment(`chat.appointment_picker.refused.${r.reason}`);
+      // A spent card: say what is already booked instead of booking a second appointment.
+      if (
+        r.reason === 'already_booked' &&
+        r.type &&
+        (await this.answerExistingBooking(t, r.type, null))
+      )
+        return;
       t.answers.push(selectionRefusalText(r.reason, t.lang));
       if (on && r.type && r.reason !== 'wrong_location')
         reoffer(
@@ -7035,6 +7044,10 @@ export class ChatOrchestrator {
       };
       return this.handleAppointment(t, type);
     }
+    const slotKey = `slot:${t.s.conversationId}:${r.picker.id}:${r.slot.id}`;
+    // One active appointment per kind: a different slot never books a second one. (The same
+    // slot again is an idempotent replay of the saved booking and goes through.)
+    if (await this.answerExistingBooking(t, type, slotKey)) return;
     this.emitStatus(
       t,
       'checking',
@@ -7048,7 +7061,7 @@ export class ChatOrchestrator {
       inferred: false,
     };
     t.slotBooking = {
-      idempotencyKey: `slot:${t.s.conversationId}:${r.picker.id}:${r.slot.id}`,
+      idempotencyKey: slotKey,
       startUtc: r.slot.startUtc,
       providerSlotId: r.slot.providerSlotId,
     };
@@ -7081,7 +7094,89 @@ export class ChatOrchestrator {
         'Which other time works for you?',
         '¿Qué otro horario le funciona?',
       );
+      return;
     }
+    // A booking was saved: the card (and any other remembered slot card of this kind) is spent.
+    if (st.appointment && this.activeAppointmentOfType(t, st.appointment.type))
+      st.salesDesk = settlePickersAfterBooking(st.salesDesk, {
+        pickerId: r.picker.id,
+        slotId: r.slot.id,
+        type,
+      });
+  }
+
+  /**
+   * When this conversation already has an active appointment of the same kind (and the
+   * selection is not a replay of that very booking), tell the customer the truth — what exists,
+   * that nothing new was booked — and offer the existing change flow. Returns true when it
+   * answered. Reads the row, so a booking staff have since cancelled does not block a new one.
+   */
+  private async answerExistingBooking(
+    t: Turn,
+    type: PickerAppointmentType,
+    replayKey: string | null,
+  ): Promise<boolean> {
+    const st = t.st;
+    const cur = st.appointment;
+    if (
+      !cur ||
+      !this.activeAppointmentOfType(t, cur.type) ||
+      bookingFamily(cur.type) !== bookingFamily(type)
+    )
+      return false;
+    const row = await this.prisma.appointment.findFirst({
+      where: { id: cur.id, tenantId: t.tenantId },
+      select: {
+        status: true,
+        type: true,
+        requestedDate: true,
+        requestedTime: true,
+        idempotencyKey: true,
+      },
+    });
+    if (!row) return false;
+    if (
+      !['REQUESTED', 'PENDING_CONFIRMATION', 'CONFIRMED'].includes(row.status)
+    ) {
+      st.appointment = { ...cur, status: row.status };
+      return false;
+    }
+    if (replayKey && row.idempotencyKey === replayKey) return false;
+    st.appointment = { ...cur, status: row.status };
+    const what =
+      row.type === 'SERVICE'
+        ? tr(t.lang, 'service visit', 'cita de servicio')
+        : row.type === 'TEST_DRIVE'
+          ? tr(t.lang, 'test drive', 'prueba de manejo')
+          : tr(t.lang, 'visit', 'visita');
+    const label = this.apptLabel(t, row);
+    this.metrics.increment('chat.appointment_picker.already_booked');
+    t.answers.push(
+      row.status === 'CONFIRMED'
+        ? tr(
+            t.lang,
+            `You already have a ${what} booked for ${label}, so nothing new was booked.`,
+            `Ya tiene una ${what} reservada para el ${label}, así que no se reservó nada nuevo.`,
+          )
+        : tr(
+            t.lang,
+            `You already have a ${what} request in for ${label}, so nothing new was booked.`,
+            `Ya tiene una solicitud de ${what} para el ${label}, así que no se reservó nada nuevo.`,
+          ),
+    );
+    st.draftAppointment = undefined;
+    this.ask(
+      t,
+      'appointment_date',
+      tr(
+        t.lang,
+        'Do you want to change it? If so, which day works better?',
+        '¿Quiere cambiarla? Si es así, ¿qué día le funciona mejor?',
+      ),
+      1,
+      'date',
+    );
+    return true;
   }
 
   /**

@@ -85,7 +85,13 @@ export type OfferedPicker = {
     endUtc: string | null;
     expiresAt: string;
     providerSlotId?: string;
-  }>;
+  }>; /**
+   * Set once a booking was saved from a provider-slot picker of this kind: the card is spent.
+   * Only `bookedSlotId` (when the booking came from THIS card) may be submitted again — as an
+   * idempotent replay of the same booking — and every other slot is refused.
+   */
+  settled?: boolean;
+  bookedSlotId?: string;
 };
 
 export type OfferedLeadForm = {

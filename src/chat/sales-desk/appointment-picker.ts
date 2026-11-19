@@ -224,7 +224,43 @@ export function rememberPicker(
   };
 }
 
+/** SALES and TEST_DRIVE are one visit to the showroom; SERVICE is its own. */
+export function bookingFamily(type: string): 'service' | 'sales' {
+  return type === 'SERVICE' ? 'service' : 'sales';
+}
+
+/**
+ * A booking was saved: every provider-slot picker of the same kind is spent. The picker the
+ * booking came from keeps only the booked slot (so re-submitting it stays an idempotent replay);
+ * no other remembered slot can ever book a second appointment.
+ */
+export function settlePickersAfterBooking(
+  state: SalesDeskState | undefined,
+  booked: { pickerId: string; slotId: string; type: string },
+): SalesDeskState {
+  return {
+    ...state,
+    pickers: (state?.pickers ?? []).map((p) => {
+      if (
+        p.mode !== 'provider_slots' ||
+        bookingFamily(p.type) !== bookingFamily(booked.type)
+      )
+        return p;
+      const mine = p.id === booked.pickerId;
+      return {
+        ...p,
+        settled: true,
+        ...(mine ? { bookedSlotId: booked.slotId } : {}),
+        slots: mine
+          ? (p.slots ?? []).filter((x) => x.id === booked.slotId)
+          : [],
+      };
+    }),
+  };
+}
+
 export type SelectionRefusal =
+  | 'already_booked'
   | 'unknown_picker'
   | 'wrong_location'
   | 'invalid_selection'
@@ -284,11 +320,16 @@ export function resolveSelection(p: {
   if (slotId) {
     if (requestedDate || requestedWindow || picker.mode !== 'provider_slots')
       return fail('invalid_selection');
+    // A spent card can only replay the booking it produced — never book another slot.
+    if (picker.settled && slotId !== picker.bookedSlotId)
+      return fail('already_booked');
     const slot = (picker.slots ?? []).find((s) => s.id === slotId);
     if (!slot) return fail('unknown_slot');
     if (
-      Date.parse(slot.expiresAt) <= p.now.getTime() ||
-      Date.parse(slot.startUtc) <= p.now.getTime()
+      // The booked slot of a spent card replays the saved booking; its offer window is moot.
+      !picker.settled &&
+      (Date.parse(slot.expiresAt) <= p.now.getTime() ||
+        Date.parse(slot.startUtc) <= p.now.getTime())
     )
       return fail('slot_expired');
     const z = toZoned(new Date(slot.startUtc), p.timezone);
@@ -331,6 +372,10 @@ export function selectionRefusalText(
   lang: SalesDeskLang,
 ) {
   const es = lang === 'es';
+  if (reason === 'already_booked')
+    return es
+      ? 'Esa tarjeta ya se usó para una reserva, así que no se reservó nada nuevo.'
+      : 'That card was already used for a booking, so nothing new was booked.';
   if (reason === 'slot_expired')
     return es
       ? 'Ese horario ya no está vigente, así que no se reservó nada.'

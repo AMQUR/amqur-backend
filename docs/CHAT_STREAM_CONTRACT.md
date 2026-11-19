@@ -124,6 +124,16 @@ days?, slots?: [{ id, start, end, expiresAt }], vehicleLabel, vin, sandbox? }`
 - A slot selection is verified against what **this conversation** was offered, for **this**
   rooftop, within the 15-minute offer window; anything else is refused ("…nothing was
   booked") with a fresh picker. Booking is idempotent per (conversation, picker, slot).
+- **One active appointment per kind and conversation** (sales visit / test drive are one kind,
+  service another). Once a slot booking is saved, every remembered `provider_slots` picker of
+  that kind is spent: only the booked slot stays in conversation state, and submitting it again
+  is an idempotent replay that returns the same `appointment` card. Any **other** slot — from
+  the same card or an older one — books nothing: the reply says what already exists ("You
+  already have a test drive booked for …, so nothing new was booked. Do you want to change
+  it?") and the existing change flow is offered (a `request_only` picker; choosing a day moves
+  the request and is confirmed by staff). The same guard applies when the earlier appointment
+  was made by typing. If the existing appointment has since been cancelled, the spent card is
+  refused ("…nothing new was booked") and a fresh picker is offered.
 
 ### `appointment` — extended (new fields only with the flag on)
 
@@ -163,7 +173,7 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
 - New card kinds and fields are optional; older widgets ignore unknown card kinds.
 - `POST /api/chat` response shape, status code (201) and envelope are unchanged.
 - State lives server-side (`Conversation.state.salesDesk`): offered form, last three pickers
-  and their slots. Slot ids are opaque; the provider's own slot id never reaches the client.
+  and their slots (after a booking: only the booked slot, marked `settled`). Slot ids are opaque; the provider's own slot id never reaches the client.
 
 ## 5. What is sandbox-only
 
