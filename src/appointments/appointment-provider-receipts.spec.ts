@@ -1,11 +1,20 @@
 import { Prisma } from '@prisma/client';
-import { AppointmentService } from './appointment.service';
+import {
+  APPOINTMENT_RECONCILE_TOPIC,
+  AppointmentService,
+  providerErrorCode,
+} from './appointment.service';
+import { AppointmentReconcileService } from './appointment-reconcile.service';
+import { PermanentOutboxError } from '../integrations/core/outbox-processor.service';
 import {
   SandboxSchedulingAdapter,
   sandboxSlots,
   sandboxTakenSlotStart,
 } from './sandbox-scheduling.adapter';
-import type { ResolvedScheduler } from './scheduling-provider.registry';
+import {
+  ResolvedScheduler,
+  SchedulingProviderRegistry,
+} from './scheduling-provider.registry';
 import type {
   SchedulingOutcome,
   ServiceSchedulingProviderAdapter,
@@ -49,7 +58,15 @@ function fakeDb() {
       Object.assign(row, data);
       return row;
     }),
+    findFirst: jest.fn(async ({ where }: any) => {
+      return (
+        appointments.find(
+          (a) => a.id === where.id && a.tenantId === where.tenantId,
+        ) ?? null
+      );
+    }),
   };
+  const outbox: Array<Record<string, any>> = [];
   const appointmentProviderReceipt = {
     create: jest.fn(async ({ data }: any) => {
       if (
@@ -83,7 +100,12 @@ function fakeDb() {
   const db: any = {
     appointment,
     appointmentProviderReceipt,
-    outboxEvent: { create: jest.fn().mockResolvedValue({}) },
+    outboxEvent: {
+      create: jest.fn(async ({ data }: any) => {
+        outbox.push(data);
+        return data;
+      }),
+    },
     escalation: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn(),
@@ -95,16 +117,18 @@ function fakeDb() {
     const snapshot = {
       a: appointments.map((x) => ({ ...x })),
       r: receipts.length,
+      o: outbox.length,
     };
     try {
       return await fn(db);
     } catch (e) {
       appointments.splice(0, appointments.length, ...snapshot.a);
       receipts.length = snapshot.r;
+      outbox.length = snapshot.o;
       throw e;
     }
   });
-  return { db, appointments, receipts };
+  return { db, appointments, receipts, outbox };
 }
 
 const now = new Date('2026-10-13T15:00:00.000Z');
@@ -268,7 +292,26 @@ describe('AppointmentService — provider receipts', () => {
     expect(m.receipts).toHaveLength(3);
   });
 
-  it('a provider failure/timeout keeps the request REQUESTED with a FAILED receipt', async () => {
+  it('a provider-REPORTED failure keeps the request REQUESTED with a FAILED receipt', async () => {
+    const m = make(
+      stub({ kind: 'failed', errorCode: 'slot_service_down', retryable: true }),
+    );
+    const r = await m.book();
+    expect(r).toMatchObject({
+      status: 'saved',
+      outcome: 'requested',
+      providerFailure: 'slot_service_down',
+    });
+    expect(r).not.toHaveProperty('provider');
+    expect(m.appointments[0].status).toBe('REQUESTED');
+    expect(m.receipts.map((x) => [x.status, x.rawStatus, x.sandbox])).toEqual([
+      ['FAILED', 'slot_service_down', true],
+    ]);
+    expect(m.outbox.map((o) => o.topic)).toEqual(['appointment.requested']);
+  });
+
+  // R6: a timeout is NOT a provider failure — the provider may still have booked.
+  it('a provider timeout keeps the request REQUESTED with an UNKNOWN receipt and queues the compensation job', async () => {
     const m = make(stub(() => new Promise<SchedulingOutcome>(() => undefined)));
     const r = await m.book();
     expect(r).toMatchObject({
@@ -277,10 +320,58 @@ describe('AppointmentService — provider receipts', () => {
       providerFailure: 'provider_timeout',
     });
     expect(r).not.toHaveProperty('provider');
-    expect(m.appointments[0].status).toBe('REQUESTED');
+    expect(m.appointments[0]).toMatchObject({
+      status: 'REQUESTED',
+      providerStatus: 'UNKNOWN:provider_timeout',
+    });
     expect(m.receipts.map((x) => [x.status, x.rawStatus, x.sandbox])).toEqual([
-      ['FAILED', 'provider_timeout', true],
+      ['UNKNOWN', 'provider_timeout', true],
     ]);
+    const job = m.outbox.find((o) => o.topic === APPOINTMENT_RECONCILE_TOPIC)!;
+    expect(job).toMatchObject({
+      tenantId: 't1',
+      idempotencyKey: `${APPOINTMENT_RECONCILE_TOPIC}:slot:conv-1:pk_1:sl_1`,
+      payload: {
+        appointmentId: m.appointments[0].id,
+        provider: 'STUB',
+        connectionId: 'conn-1',
+        bookingIdempotencyKey: 'slot:conv-1:pk_1:sl_1',
+        reason: 'provider_timeout',
+      },
+    });
+  });
+
+  // R15: adapter exception text can echo customer data — only a short code is stored.
+  it('an adapter exception is stored as a short code, never its text', async () => {
+    const boom = Object.assign(
+      new Error(
+        '422 customer pat.rivera@example.invalid (312) 555-0142 rejected',
+      ),
+      { code: 'E_VALIDATION' },
+    );
+    const m = make(stub(() => Promise.reject(boom)));
+    const r = await m.book();
+    expect(r).toMatchObject({
+      outcome: 'requested',
+      providerFailure: 'provider_error_e_validation',
+    });
+    const stored = JSON.stringify([m.receipts, m.appointments, m.outbox]);
+    expect(stored).not.toContain('example.invalid');
+    expect(stored).not.toContain('555-0142');
+    expect(m.receipts[0]).toMatchObject({
+      status: 'UNKNOWN',
+      rawStatus: 'provider_error_e_validation',
+    });
+    expect(m.appointments[0].providerStatus).toBe(
+      'UNKNOWN:provider_error_e_validation',
+    );
+    expect(providerErrorCode(new Error('free text with a name'))).toBe(
+      'provider_error',
+    );
+    expect(providerErrorCode({ code: 'has spaces & <tags>' })).toBe(
+      'provider_error',
+    );
+    expect(providerErrorCode({ code: 503 })).toBe('provider_error_503');
   });
 
   it('a pending provider answer is PENDING_CONFIRMATION, not confirmed', async () => {
@@ -377,5 +468,205 @@ describe('AppointmentService — provider receipts', () => {
       connectionId: 'conn-1',
     });
     expect(offer!.slots).toHaveLength(16);
+  });
+});
+
+describe('R6 — an unknown booking outcome is compensated (cancel-or-reconcile by idempotency key)', () => {
+  /** A sandbox adapter whose answer arrives only after the caller has timed out. */
+  const lateSandbox = () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const adapter = new SandboxSchedulingAdapter(async () => {
+      await gate;
+      return false;
+    });
+    const create = jest.spyOn(adapter, 'create');
+    return { adapter, create, release };
+  };
+  const reconcileJob = (m: ReturnType<typeof make>) =>
+    m.outbox.find((o) => o.topic === APPOINTMENT_RECONCILE_TOPIC)!;
+  const runJob = (m: ReturnType<typeof make>) =>
+    new AppointmentReconcileService(
+      { registerHandler: jest.fn() } as never,
+      m.svc,
+    ).handle(reconcileJob(m).payload, { tenantId: 't1' });
+  const ctx = {
+    tenantId: 't1',
+    locationId: 'l1',
+    connectionId: 'conn-1',
+    mode: 'sandbox' as const,
+    timeoutMs: 200,
+    idempotencyKey: 'slot:conv-1:pk_1:sl_1',
+    correlationId: 'x',
+    now,
+  };
+
+  it('late success after a timeout: the retry books nothing new, and the orphan is reconciled to exactly one appointment', async () => {
+    const { adapter, create, release } = lateSandbox();
+    const m = make(adapter);
+    const first = await m.book(); // times out after 200 ms
+    expect(first).toMatchObject({
+      status: 'saved',
+      outcome: 'requested',
+      providerFailure: 'provider_timeout',
+    });
+    expect(m.receipts.map((r) => r.status)).toEqual(['UNKNOWN']);
+    // …and now the provider's success arrives, too late for the caller.
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(await adapter.findByIdempotencyKey(ctx)).toMatchObject({
+      kind: 'confirmed',
+      scheduledAtUtc: slotStart,
+    });
+
+    // The customer (or the client) retries the very same selection: no second provider call,
+    // no second appointment.
+    const retry = await m.book();
+    expect(retry).toMatchObject({ status: 'saved', outcome: 'requested' });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(m.appointments).toHaveLength(1);
+
+    // The compensation job reconciles the orphan booking to that one appointment.
+    await expect(runJob(m)).resolves.toEqual({ note: 'reconciled_confirmed' });
+    expect(m.appointments).toHaveLength(1);
+    expect(m.appointments[0]).toMatchObject({
+      status: 'CONFIRMED',
+      provider: 'MOCK',
+      availabilityVerified: true,
+    });
+    expect(m.appointments[0].externalProviderId).toMatch(/^SBX-/);
+    expect(m.receipts.map((r) => r.status)).toEqual(['UNKNOWN', 'CONFIRMED']);
+    expect(m.receipts[1]).toMatchObject({
+      providerRef: m.appointments[0].externalProviderId,
+      sandbox: true,
+      idempotencyKey: 'slot:conv-1:pk_1:sl_1',
+    });
+    // At-least-once: running the job again changes nothing.
+    await expect(runJob(m)).resolves.toEqual({ note: 'already_confirmed' });
+    expect(m.receipts.filter((r) => r.status === 'CONFIRMED')).toHaveLength(1);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('late success for a request the customer has since cancelled: the orphan is cancelled at the provider', async () => {
+    const { adapter, release } = lateSandbox();
+    const m = make(adapter);
+    await m.book();
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    m.appointments[0].status = 'CANCELLED';
+    await expect(runJob(m)).resolves.toEqual({ note: 'orphan_cancelled' });
+    expect(await adapter.findByIdempotencyKey(ctx)).toBeNull();
+    expect(m.appointments[0].status).toBe('CANCELLED');
+    expect(m.receipts.map((r) => [r.status, r.rawStatus])).toEqual([
+      ['UNKNOWN', 'provider_timeout'],
+      ['ORPHAN_CANCELLED', 'orphan_cancelled'],
+    ]);
+    // The slot is free again for another customer.
+    const other = await adapter.create(
+      { ...ctx, idempotencyKey: 'slot:conv-2:pk_9:sl_9' },
+      { department: 'TEST_DRIVE', startUtc: slotStart },
+    );
+    expect(other.kind).toBe('confirmed');
+  });
+
+  it('timeout and the provider never booked: NOT_FOUND receipt, the request stays for staff', async () => {
+    const m = make(new SandboxSchedulingAdapter());
+    // Force the unknown outcome without the provider holding anything.
+    jest
+      .spyOn(m.registry.adapterFor() as SandboxSchedulingAdapter, 'create')
+      .mockImplementation(
+        () => new Promise<SchedulingOutcome>(() => undefined),
+      );
+    await m.book();
+    await expect(runJob(m)).resolves.toEqual({ note: 'no_provider_booking' });
+    expect(m.appointments[0]).toMatchObject({
+      status: 'REQUESTED',
+      providerStatus: 'RECONCILED:no_provider_booking',
+    });
+    expect(m.receipts.map((r) => r.status)).toEqual(['UNKNOWN', 'NOT_FOUND']);
+  });
+
+  it('the provider confirmed but the CONFIRMED receipt could not be persisted: never reported confirmed, compensation queued, then reconciled once', async () => {
+    const adapter = new SandboxSchedulingAdapter();
+    const m = make(adapter);
+    // The first receipt insert (the CONFIRMED one) fails with a non-unique database error.
+    const realCreate =
+      m.db.appointmentProviderReceipt.create.getMockImplementation();
+    m.db.appointmentProviderReceipt.create
+      .mockImplementationOnce(async () => {
+        throw new Error('connection reset');
+      })
+      .mockImplementation(realCreate);
+    const r = await m.book();
+    expect(r).toMatchObject({
+      status: 'saved',
+      outcome: 'requested',
+      providerFailure: 'confirm_persist_failed',
+    });
+    expect(r).not.toHaveProperty('provider');
+    expect(m.appointments[0]).toMatchObject({
+      status: 'REQUESTED',
+      providerStatus: 'UNKNOWN:confirm_persist_failed',
+    });
+    expect(m.receipts.map((x) => [x.status, x.rawStatus])).toEqual([
+      ['UNKNOWN', 'confirm_persist_failed'],
+    ]);
+    expect(reconcileJob(m).payload).toMatchObject({
+      reason: 'confirm_persist_failed',
+    });
+    await expect(runJob(m)).resolves.toEqual({ note: 'reconciled_confirmed' });
+    expect(m.appointments[0].status).toBe('CONFIRMED');
+    expect(m.receipts.filter((x) => x.status === 'CONFIRMED')).toHaveLength(1);
+  });
+
+  it('when not even the compensation job can be stored the booking is cancelled at the provider at once', async () => {
+    const adapter = new SandboxSchedulingAdapter();
+    const m = make(adapter);
+    m.db.appointmentProviderReceipt.create.mockImplementation(async () => {
+      throw new Error('database unavailable');
+    });
+    await expect(m.book()).rejects.toThrow('database unavailable');
+    expect(await adapter.findByIdempotencyKey(ctx)).toBeNull();
+    expect(m.appointments[0].status).toBe('REQUESTED');
+  });
+
+  it('an adapter that cannot look up by idempotency key is dead-lettered for staff, and cannot be registered at all', async () => {
+    const m = make(stub(() => new Promise<SchedulingOutcome>(() => undefined)));
+    await m.book();
+    await expect(runJob(m)).rejects.toBeInstanceOf(PermanentOutboxError);
+    const registry = new SchedulingProviderRegistry(
+      {} as never,
+      { isOpen: () => false } as never,
+    );
+    expect(() => registry.register('STUB', stub({} as never))).toThrow(
+      'scheduler_adapter_missing_idempotent_lookup',
+    );
+    expect(() =>
+      registry.register('MOCK', new SandboxSchedulingAdapter()),
+    ).not.toThrow();
+  });
+
+  it('sandbox adapter honours the idempotency key: same key ⇒ same booking; lookup and cancel are scoped to tenant + location', async () => {
+    const adapter = new SandboxSchedulingAdapter();
+    const req = { department: 'TEST_DRIVE' as const, startUtc: slotStart };
+    const a = await adapter.create(ctx, req);
+    const b = await adapter.create(ctx, req);
+    expect(a).toEqual(b);
+    expect(await adapter.findByIdempotencyKey(ctx)).toMatchObject({
+      externalId: (a as { externalId: string }).externalId,
+    });
+    expect(
+      await adapter.findByIdempotencyKey({ ...ctx, tenantId: 't2' }),
+    ).toBeNull();
+    expect(
+      await adapter.cancelByIdempotencyKey({ ...ctx, locationId: 'l2' }),
+    ).toEqual({ cancelled: false });
+    expect(await adapter.cancelByIdempotencyKey(ctx)).toEqual({
+      cancelled: true,
+      externalId: (a as { externalId: string }).externalId,
+    });
+    expect(await adapter.cancelByIdempotencyKey(ctx)).toEqual({
+      cancelled: false,
+    });
   });
 });

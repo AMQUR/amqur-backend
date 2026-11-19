@@ -197,6 +197,42 @@ export class SandboxSchedulingAdapter implements ServiceSchedulingProviderAdapte
     };
   }
 
+  private heldByKey(ctx: SchedulingContext) {
+    const prefix = `${ctx.tenantId}:${ctx.locationId ?? ''}:`;
+    return [...this.held].filter(
+      ([k, v]) => k.startsWith(prefix) && v.key === ctx.idempotencyKey,
+    );
+  }
+
+  /** The booking made under this idempotency key, if the sandbox holds one. Creates nothing. */
+  findByIdempotencyKey(
+    ctx: SchedulingContext,
+  ): Promise<Extract<SchedulingOutcome, { kind: 'confirmed' }> | null> {
+    assertSandboxSchedulerAllowed();
+    const hit = this.heldByKey(ctx)[0];
+    if (!hit) return Promise.resolve(null);
+    return Promise.resolve({
+      kind: 'confirmed',
+      externalId: hit[1].ref,
+      providerStatus: 'CONFIRMED',
+      rawStatus: 'SANDBOX_CONFIRMED',
+      scheduledAtUtc: new Date(hit[1].start).toISOString(),
+      providerRequestId: ctx.correlationId,
+    });
+  }
+
+  cancelByIdempotencyKey(
+    ctx: SchedulingContext,
+  ): Promise<{ cancelled: boolean; externalId?: string }> {
+    assertSandboxSchedulerAllowed();
+    const hits = this.heldByKey(ctx);
+    for (const [k] of hits) this.held.delete(k);
+    return Promise.resolve({
+      cancelled: hits.length > 0,
+      ...(hits[0] ? { externalId: hits[0][1].ref } : {}),
+    });
+  }
+
   cancel(
     _ctx: SchedulingContext,
     externalId: string,

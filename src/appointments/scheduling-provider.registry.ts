@@ -53,6 +53,15 @@ export class SchedulingProviderRegistry {
     if (adapter.sandbox && process.env.NODE_ENV === 'production') {
       throw new Error('sandbox_scheduler_forbidden_in_production');
     }
+    // An adapter that can book must be able to find and cancel a booking by idempotency key,
+    // otherwise a lost response would leave an orphan booking nobody can compensate.
+    if (
+      adapter.capabilities().create &&
+      (typeof adapter.findByIdempotencyKey !== 'function' ||
+        typeof adapter.cancelByIdempotencyKey !== 'function')
+    ) {
+      throw new Error('scheduler_adapter_missing_idempotent_lookup');
+    }
     this.adapters.set(provider, adapter);
     if (gate) this.gates.set(provider, gate);
     else this.gates.delete(provider);

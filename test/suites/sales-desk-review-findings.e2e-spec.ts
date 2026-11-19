@@ -2,6 +2,9 @@ import request from 'supertest';
 import { createE2eApp, E2eCtx, unwrap } from '../helpers/e2e-app';
 import { DemoDealer, seedDemoDealer, SIM_ORIGIN } from '../helpers/demo-dealer';
 import { LEAD_FORM_CONSENT_VERSION } from '../../src/chat/sales-desk/consent-wording';
+import { SchedulingProviderRegistry } from '../../src/appointments/scheduling-provider.registry';
+import { APPOINTMENT_RECONCILE_TOPIC } from '../../src/appointments/appointment.service';
+import { OutboxProcessorService } from '../../src/integrations/core/outbox-processor.service';
 
 /**
  * Regression tests for the PR #55 review findings on the sales-desk cards and the sandbox
@@ -133,6 +136,115 @@ describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)'
     });
   }, 120_000);
   afterAll(async () => ctx.app.close());
+
+  // ───────────────────────────────────────── R6: no orphan provider booking
+
+  describe('R6 — a late provider success after a timeout is compensated through the outbox', () => {
+    it('timeout ⇒ REQUESTED + UNKNOWN receipt + reconcile job; retry books nothing new; the job reconciles to exactly one CONFIRMED appointment', async () => {
+      const registry = ctx.app.get(SchedulingProviderRegistry);
+      const processor = ctx.app.get(OutboxProcessorService);
+      const adapter = registry.adapterFor('MOCK')!;
+      const j = await toSlotPicker(sbx);
+      const slot = j.picker.slots[4];
+
+      // The scheduler answers after 700 ms; AMQUR gives up after 150 ms.
+      const realCreate = adapter.create!.bind(adapter);
+      const create = jest
+        .spyOn(adapter, 'create')
+        .mockImplementation(async (c, req) => {
+          await new Promise((r) => setTimeout(r, 700));
+          return realCreate(c, req);
+        });
+      const realContext = registry.context.bind(registry);
+      jest
+        .spyOn(registry, 'context')
+        .mockImplementation((...a: Parameters<typeof realContext>) => ({
+          ...realContext(...a),
+          timeoutMs: 150,
+        }));
+      const prevOutbox = process.env.OUTBOX_PROCESSOR_ENABLED;
+      process.env.OUTBOX_PROCESSOR_ENABLED = 'false'; // drive the worker by hand
+      try {
+        const first = await select(sbx, j.conversationId, j.picker.id, slot.id);
+        const c1 = card<Record<string, unknown>>(first, 'appointment')!;
+        expect(c1).toMatchObject({
+          status: 'REQUESTED',
+          outcome: 'requested',
+          verified: false,
+        });
+        expect(c1).not.toHaveProperty('providerRef');
+        expect(first.reply).not.toMatch(/confirmed/i);
+
+        const row = () =>
+          ctx.prisma.appointment.findUniqueOrThrow({
+            where: { id: c1.id as string },
+            include: { providerReceipts: { orderBy: { receivedAt: 'asc' } } },
+          });
+        const before = await row();
+        expect(before).toMatchObject({
+          status: 'REQUESTED',
+          providerStatus: 'UNKNOWN:provider_timeout',
+        });
+        expect(before.providerReceipts.map((r) => r.status)).toEqual([
+          'UNKNOWN',
+        ]);
+        const job = await ctx.prisma.outboxEvent.findFirstOrThrow({
+          where: {
+            tenantId: sbx.tenantId,
+            topic: APPOINTMENT_RECONCILE_TOPIC,
+            idempotencyKey: `${APPOINTMENT_RECONCILE_TOPIC}:${before.idempotencyKey}`,
+          },
+        });
+        expect(job.status).toBe('PENDING');
+        // The job payload is references only — no customer data.
+        expect(JSON.stringify(job.payload)).not.toMatch(/Robin|Vale|555|@/);
+
+        // The late success lands at the provider.
+        await new Promise((r) => setTimeout(r, 800));
+        // Retry of the same selection: no second provider call, no second appointment.
+        await select(sbx, j.conversationId, j.picker.id, slot.id);
+        expect(create).toHaveBeenCalledTimes(1);
+        expect(await activeAppointments(sbx, j.conversationId)).toHaveLength(1);
+
+        // The compensation job runs on the normal outbox worker.
+        await ctx.prisma.outboxEvent.update({
+          where: { id: job.id },
+          data: { nextAttemptAt: new Date(0) },
+        });
+        await processor.processBatch(500, 'sdr-e2e');
+        expect(
+          await ctx.prisma.outboxEvent.findUniqueOrThrow({
+            where: { id: job.id },
+          }),
+        ).toMatchObject({
+          status: 'PUBLISHED',
+          lastError: 'reconciled_confirmed',
+        });
+        const after = await row();
+        expect(after).toMatchObject({
+          status: 'CONFIRMED',
+          provider: 'MOCK',
+          availabilityVerified: true,
+        });
+        expect(after.scheduledAt!.toISOString()).toBe(slot.start);
+        expect(after.providerReceipts.map((r) => r.status)).toEqual([
+          'UNKNOWN',
+          'CONFIRMED',
+        ]);
+        expect(after.providerReceipts[1]).toMatchObject({
+          providerRef: after.externalProviderId,
+          sandbox: true,
+        });
+        expect(await activeAppointments(sbx, j.conversationId)).toHaveLength(1);
+        expect(create).toHaveBeenCalledTimes(1);
+      } finally {
+        if (prevOutbox === undefined)
+          delete process.env.OUTBOX_PROCESSOR_ENABLED;
+        else process.env.OUTBOX_PROCESSOR_ENABLED = prevOutbox;
+        jest.restoreAllMocks();
+      }
+    });
+  });
 
   // ───────────────────────────────────────── R5: no double booking from a remembered card
 

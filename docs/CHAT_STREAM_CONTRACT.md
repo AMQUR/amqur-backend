@@ -145,12 +145,27 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
   from an adapter receipt: the appointment is confirmed in the same transaction that inserts
   a `CONFIRMED` `AppointmentProviderReceipt` (`providerRef` unique per tenant + provider).
   Every provider response writes one receipt row (`CONFIRMED`, `PENDING`, `UNAVAILABLE`,
-  `FAILED`, `CONFLICT`). (Staff can still confirm a request by hand in the Command Center;
+  `FAILED`, `CONFLICT`; plus `UNKNOWN`, `NOT_FOUND`, `ORPHAN_CANCELLED` for the compensation
+  path below). (Staff can still confirm a request by hand in the Command Center;
   that path is unchanged and writes no provider receipt.)
 - Provider says no / lost race → "That time was just taken, so nothing was booked." plus a
   fresh picker; the attempt is recorded `CANCELLED` + `UNAVAILABLE` receipt.
-- Provider error / timeout → the request stays `REQUESTED` (`outcome: 'requested'`,
+- Provider **reports** a failure → the request stays `REQUESTED` (`outcome: 'requested'`,
   `FAILED` receipt) for staff to confirm. Never a confirmation.
+- Provider outcome **unknown** — `create()` timed out (8 s) or threw, or it confirmed but the
+  `CONFIRMED` receipt could not be persisted → the request stays `REQUESTED`
+  (`outcome: 'requested'`, never confirmed), an `UNKNOWN` receipt is written (`rawStatus`:
+  `provider_timeout`, `provider_error[_<code>]` or `confirm_persist_failed` — a short code,
+  never the adapter's exception text) and a compensation job is queued on the outbox
+  (`appointment.provider.reconcile`, keyed by the booking idempotency key) in the same
+  transaction. The job asks the provider for the booking made under that key and then either
+  **reconciles** it (request still open → the normal `CONFIRMED` receipt and `CONFIRMED`
+  appointment, exactly one), **cancels** it at the provider (request cancelled / rescheduled /
+  gone → `ORPHAN_CANCELLED` receipt) or records that none exists (`NOT_FOUND` receipt). A retry
+  of the same selection never calls the provider again (same idempotency key → the saved row).
+  If the job itself cannot be stored the booking is cancelled at the provider immediately.
+  The customer is not messaged when a request is reconciled to confirmed later; the next card
+  or recap shows the confirmed state.
 
 ### `Vehicle` — additive fields (same flag)
 

@@ -34,6 +34,7 @@ import {
 } from './scheduling-provider.registry';
 import type {
   AvailabilitySlot,
+  SchedulingContext,
   SchedulingDepartment,
   SchedulingOutcome,
 } from './scheduling-provider';
@@ -100,6 +101,29 @@ export type AppointmentRequestResult =
       timezone: string;
     }
   | { status: 'incomplete'; missing: 'date' | 'time' };
+
+/** Outbox topic of the cancel-or-reconcile compensation job for an UNKNOWN booking outcome. */
+export const APPOINTMENT_RECONCILE_TOPIC = 'appointment.provider.reconcile';
+
+export class ProviderTimeoutError extends Error {
+  constructor() {
+    super('provider_timeout');
+  }
+}
+
+/**
+ * A short, PII-free code for an adapter exception. The exception TEXT is never stored: a vendor
+ * error can echo a name, phone or email back.
+ */
+export function providerErrorCode(e: unknown): string {
+  if (e instanceof ProviderTimeoutError) return 'provider_timeout';
+  const code = (e as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && /^[A-Za-z0-9_]{2,40}$/.test(code))
+    return `provider_error_${code.toLowerCase()}`;
+  if (typeof code === 'number' && Number.isInteger(code))
+    return `provider_error_${code}`;
+  return 'provider_error';
+}
 
 const DURATION: Record<AppointmentType, number> = {
   SALES: 45,
@@ -374,6 +398,8 @@ export class AppointmentService {
           input.now,
         );
         let res: SchedulingOutcome;
+        // create() threw or timed out: the provider may STILL have booked (a late success).
+        let unknownOutcome: string | null = null;
         try {
           res = await withTimeout(
             scheduler.adapter.create(ctx, {
@@ -391,18 +417,44 @@ export class AppointmentService {
           this.breaker.recordSuccess(`scheduler:${scheduler.connectionId}`);
         } catch (e) {
           this.breaker.recordFailure(`scheduler:${scheduler.connectionId}`);
-          res = {
-            kind: 'failed',
-            errorCode: e instanceof Error ? e.message.slice(0, 80) : 'error',
-            retryable: true,
-          };
+          // A short code only — never the adapter's exception text (it can echo customer data).
+          unknownOutcome = providerErrorCode(e);
+          res = { kind: 'failed', errorCode: unknownOutcome, retryable: true };
         }
-        const applied = await this.applyProviderOutcome(
-          appointment,
-          scheduler,
-          res,
-          idempotencyKey,
-        );
+        let applied: { appointment: Appointment; conflict?: boolean };
+        if (unknownOutcome) {
+          applied = await this.recordUnknownOutcome(
+            appointment,
+            scheduler,
+            unknownOutcome,
+            idempotencyKey,
+          );
+        } else {
+          try {
+            applied = await this.applyProviderOutcome(
+              appointment,
+              scheduler,
+              res,
+              idempotencyKey,
+            );
+          } catch (e) {
+            if (res.kind !== 'confirmed' && res.kind !== 'pending') throw e;
+            // The provider HOLDS a booking that could not be recorded. Never report it as
+            // confirmed, never leave it orphaned: queue the compensation (or cancel right now).
+            applied = await this.compensateUnrecordedBooking(
+              appointment,
+              scheduler,
+              ctx,
+              idempotencyKey,
+              e,
+            );
+            res = {
+              kind: 'failed',
+              errorCode: 'confirm_persist_failed',
+              retryable: true,
+            };
+          }
+        }
         final = applied.appointment;
         // The provider reference already backs another appointment: not ours to confirm.
         if (applied.conflict)
@@ -653,7 +705,17 @@ export class AppointmentService {
     appt: Appointment,
     scheduler: Pick<ResolvedScheduler, 'provider' | 'sandbox' | 'mode'>,
     r: {
-      status: 'CONFIRMED' | 'PENDING' | 'UNAVAILABLE' | 'FAILED' | 'CONFLICT';
+      status:
+        | 'CONFIRMED'
+        | 'PENDING'
+        | 'UNAVAILABLE'
+        | 'FAILED'
+        | 'CONFLICT'
+        /** create() threw / timed out, or its confirmation could not be persisted. */
+        | 'UNKNOWN'
+        /** Compensation results (see reconcileProviderBooking). */
+        | 'NOT_FOUND'
+        | 'ORPHAN_CANCELLED';
       providerRef?: string | null;
       confirmedStart?: Date | null;
       rawStatus?: string | null;
@@ -804,6 +866,213 @@ export class AppointmentService {
           })
           .then((appointment) => ({ appointment }));
     }
+  }
+
+  /**
+   * The provider's answer to create() is UNKNOWN (timeout / thrown error / a confirmation that
+   * could not be persisted). One transaction: a receipt with the distinct status `UNKNOWN`, the
+   * appointment marked `UNKNOWN:<code>` (it stays REQUESTED — never confirmed), and a
+   * compensation job keyed by the booking idempotency key on the existing outbox.
+   */
+  private async recordUnknownOutcome(
+    appt: Appointment,
+    scheduler: ResolvedScheduler,
+    code: string,
+    idempotencyKey: string,
+  ): Promise<{ appointment: Appointment }> {
+    this.metrics.increment('appointments.provider_outcome_unknown');
+    const appointment = await this.prisma.$transaction(async (tx) => {
+      await this.writeReceipt(tx, appt, scheduler, {
+        status: 'UNKNOWN',
+        rawStatus: code,
+        idempotencyKey,
+      });
+      await tx.outboxEvent.create({
+        data: {
+          tenantId: appt.tenantId,
+          topic: APPOINTMENT_RECONCILE_TOPIC,
+          idempotencyKey: `${APPOINTMENT_RECONCILE_TOPIC}:${idempotencyKey}`,
+          payload: {
+            appointmentId: appt.id,
+            locationId: appt.locationId,
+            provider: scheduler.provider,
+            connectionId: scheduler.connectionId,
+            mode: scheduler.mode,
+            bookingIdempotencyKey: idempotencyKey,
+            reason: code,
+          } as Prisma.InputJsonValue,
+        },
+      });
+      return tx.appointment.update({
+        where: { id: appt.id },
+        data: {
+          provider: scheduler.provider,
+          providerStatus: `UNKNOWN:${code}`.slice(0, 120),
+        },
+      });
+    });
+    return { appointment };
+  }
+
+  private async compensateUnrecordedBooking(
+    appt: Appointment,
+    scheduler: ResolvedScheduler,
+    ctx: SchedulingContext,
+    idempotencyKey: string,
+    cause: unknown,
+  ): Promise<{ appointment: Appointment }> {
+    this.metrics.increment('appointments.confirm_persist_failed');
+    for (let i = 0; i < 3; i += 1) {
+      try {
+        return await this.recordUnknownOutcome(
+          appt,
+          scheduler,
+          'confirm_persist_failed',
+          idempotencyKey,
+        );
+      } catch {
+        await new Promise((r) => setTimeout(r, 50 * (i + 1)));
+      }
+    }
+    // The database will not take the compensation job either: cancel at the provider NOW so no
+    // booking outlives a request we cannot even record, then surface the original failure.
+    try {
+      await scheduler.adapter.cancelByIdempotencyKey?.(
+        ctx,
+        'confirm_persist_failed',
+      );
+    } catch {
+      this.logger.error(
+        `appointment ${appt.id}: provider booking could not be recorded or cancelled (key kept in logs for manual reconcile)`,
+      );
+    }
+    throw cause;
+  }
+
+  /**
+   * Compensation for an UNKNOWN create() outcome — cancel-or-reconcile, keyed by the booking
+   * idempotency key (outbox topic `appointment.provider.reconcile`, at-least-once, idempotent):
+   *
+   *  - provider holds no booking under the key  → `NOT_FOUND` receipt; the request stays for staff;
+   *  - provider holds one and the appointment is still REQUESTED / PENDING_CONFIRMATION
+   *        → reconciled: the normal CONFIRMED receipt + CONFIRMED appointment (exactly one);
+   *  - provider holds one and the appointment is already CONFIRMED under that reference → no-op;
+   *  - otherwise (appointment cancelled / rescheduled / gone / confirmed elsewhere)
+   *        → the orphan is cancelled at the provider and an `ORPHAN_CANCELLED` receipt is written.
+   *
+   * Throws to retry (outbox backoff) when the provider cannot be asked right now.
+   */
+  async reconcileProviderBooking(p: {
+    tenantId: string;
+    appointmentId: string;
+    provider: string;
+    connectionId: string;
+    mode: 'sandbox' | 'production';
+    bookingIdempotencyKey: string;
+    locationId?: string | null;
+  }): Promise<
+    | 'no_provider_booking'
+    | 'reconciled_confirmed'
+    | 'already_confirmed'
+    | 'orphan_cancelled'
+    | 'adapter_cannot_reconcile'
+  > {
+    const adapter = this.registry.adapterFor(p.provider);
+    if (
+      !adapter ||
+      typeof adapter.findByIdempotencyKey !== 'function' ||
+      typeof adapter.cancelByIdempotencyKey !== 'function'
+    )
+      return 'adapter_cannot_reconcile';
+    const appt = await this.prisma.appointment.findFirst({
+      where: { id: p.appointmentId, tenantId: p.tenantId },
+    });
+    const scheduler: ResolvedScheduler = {
+      adapter,
+      connectionId: p.connectionId,
+      provider: p.provider,
+      mode: p.mode,
+      sandbox: adapter.sandbox === true,
+      displayName: adapter.displayName ?? p.provider,
+    };
+    const ctx = this.registry.context(
+      scheduler,
+      p.tenantId,
+      appt?.locationId ?? p.locationId ?? null,
+      p.bookingIdempotencyKey,
+      p.appointmentId,
+    );
+    const found = await withTimeout(
+      adapter.findByIdempotencyKey(ctx),
+      ctx.timeoutMs,
+    );
+    if (!found) {
+      if (appt) {
+        await this.writeReceipt(this.prisma, appt, scheduler, {
+          status: 'NOT_FOUND',
+          rawStatus: 'reconcile_no_provider_booking',
+          idempotencyKey: p.bookingIdempotencyKey,
+        });
+        if (appt.providerStatus?.startsWith('UNKNOWN:'))
+          await this.prisma.appointment.update({
+            where: { id: appt.id },
+            data: { providerStatus: 'RECONCILED:no_provider_booking' },
+          });
+      }
+      this.metrics.increment('appointments.reconcile.no_provider_booking');
+      return 'no_provider_booking';
+    }
+    if (
+      appt &&
+      found.kind === 'confirmed' &&
+      appt.status === 'CONFIRMED' &&
+      appt.externalProviderId === found.externalId
+    )
+      return 'already_confirmed';
+    if (
+      appt &&
+      found.kind === 'confirmed' &&
+      (appt.status === 'REQUESTED' || appt.status === 'PENDING_CONFIRMATION')
+    ) {
+      const applied = await this.applyProviderOutcome(
+        appt,
+        scheduler,
+        found,
+        p.bookingIdempotencyKey,
+      );
+      if (!applied.conflict) {
+        if (!scheduler.sandbox)
+          await this.enrollAppointmentReminder(p.tenantId, applied.appointment);
+        this.metrics.increment('appointments.reconcile.confirmed');
+        return 'reconciled_confirmed';
+      }
+      // The reference already backs another appointment: it is not an orphan — nothing to cancel.
+      return 'already_confirmed';
+    }
+    if (appt && found.kind === 'pending' && appt.status === 'REQUESTED') {
+      await this.applyProviderOutcome(
+        appt,
+        scheduler,
+        found,
+        p.bookingIdempotencyKey,
+      );
+      return 'reconciled_confirmed';
+    }
+    // Nobody is waiting for this booking any more: cancel the orphan at the provider.
+    const cancelled = await withTimeout(
+      adapter.cancelByIdempotencyKey(ctx, 'orphan_after_unknown_outcome'),
+      ctx.timeoutMs,
+    );
+    if (appt)
+      await this.writeReceipt(this.prisma, appt, scheduler, {
+        status: 'ORPHAN_CANCELLED',
+        rawStatus: cancelled.cancelled
+          ? 'orphan_cancelled'
+          : 'orphan_already_gone',
+        idempotencyKey: p.bookingIdempotencyKey,
+      });
+    this.metrics.increment('appointments.reconcile.orphan_cancelled');
+    return 'orphan_cancelled';
   }
 
   /** Customer- or staff-initiated reschedule. Old row → RESCHEDULED, new row linked. */
@@ -1294,7 +1563,7 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
     return await Promise.race([
       p,
       new Promise<T>((_, rej) => {
-        t = setTimeout(() => rej(new Error('provider_timeout')), ms);
+        t = setTimeout(() => rej(new ProviderTimeoutError()), ms);
       }),
     ]);
   } finally {
