@@ -28,6 +28,12 @@ import { validateAdfRoundTrip } from './adf-validator';
 import { mapLeadToAdf } from './adf-lead-mapper';
 import { destinationDomain, UnsafeHeaderValueError } from './destination';
 import {
+  leadConsentEndpoints,
+  LeadConsentStanding,
+  resolveLeadConsentStanding,
+  StandingLead,
+} from './lead-consent-standing';
+import {
   ADF_FEATURE_FLAG,
   checkDestinationForMode,
   departmentForLeadSource,
@@ -337,6 +343,41 @@ export class LeadDeliveryService implements OnModuleInit {
     throw new PermanentOutboxError(code);
   }
 
+  /**
+   * Resolve the customer's standing from the consent ledger for the lead's own email / phone
+   * within the lead's own tenant. Endpoints are PII: queried, never logged.
+   */
+  private async consentStanding(
+    lead: StandingLead & { tenantId: string },
+  ): Promise<LeadConsentStanding> {
+    const ep = leadConsentEndpoints(lead);
+    const endpoints = [ep.email, ep.phone].filter(
+      (e): e is string => e !== null,
+    );
+    const rows = endpoints.length
+      ? await this.prisma.consentRecord.findMany({
+          where: {
+            tenantId: lead.tenantId,
+            endpoint: { in: endpoints },
+            revokedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 200,
+          select: {
+            channel: true,
+            endpoint: true,
+            granted: true,
+            createdAt: true,
+            evidence: true,
+          },
+        })
+      : [];
+    const standing = resolveLeadConsentStanding(lead, rows);
+    if (standing.doNotContact)
+      this.metrics.increment(`adf.delivery.consent.${standing.reason}`);
+    return standing;
+  }
+
   // ───────────────────────────────────────── outbox handler
 
   async process(
@@ -374,6 +415,8 @@ export class LeadDeliveryService implements OnModuleInit {
       lead.locationId,
       d.department,
     );
+    // Consent standing comes from the append-only ledger at SEND time (and so on every replay).
+    const standing = await this.consentStanding(lead);
     const gate = evaluateSendGates({
       env,
       flagEnabled: flags[ADF_FEATURE_FLAG] === true,
@@ -381,7 +424,7 @@ export class LeadDeliveryService implements OnModuleInit {
         tenantId: lead.tenantId,
         locationId: lead.locationId,
         hasContactMethod: Boolean(lead.email || lead.phone),
-        optedOut: lead.optOutAt !== null,
+        optedOut: standing.doNotContact,
         spam: lead.status === 'SPAM',
       },
       route,
@@ -447,6 +490,11 @@ export class LeadDeliveryService implements OnModuleInit {
         providerName: env.providerName,
         vehicle,
         appointment,
+        consent: {
+          text: standing.text,
+          email: standing.email,
+          call: standing.call,
+        },
       });
       xml = serializeAdf(dto, { maxBytes: env.maxBytes });
       const valid = validateAdfRoundTrip(dto, xml, { maxBytes: env.maxBytes });

@@ -8,6 +8,7 @@ import {
 import { LeadDeliveryRouteService } from '../../src/integrations/adf/lead-delivery-route.service';
 import { SandboxSinkTransport } from '../../src/integrations/adf/transports/sandbox-sink.transport';
 import { seedSandboxRoutes } from '../../src/integrations/adf/sandbox-routes.seed';
+import { ConsentService } from '../../src/messaging/consent.service';
 
 /**
  * Regression tests for the PR #55 review findings on ADF lead delivery (R1–R4, R9, R11, R14).
@@ -41,6 +42,7 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
     Key,
     { tenantId: string; locationId: string; routeId: string; address: string }
   >;
+  let staffId = '';
   let seq = 0;
   const run = `${Date.now().toString(36)}`;
   const smtp = {
@@ -114,6 +116,16 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
       })
     ).map((h) => `${h.toStatus}:${h.reasonCode}`);
 
+  /** Never leave a due event behind for another suite's worker run (shared test database). */
+  const retireOutbox = () =>
+    ctx.prisma.outboxEvent.updateMany({
+      where: {
+        tenantId: { in: KEYS.map((k) => ids[k].tenantId) },
+        status: { in: ['PENDING', 'PROCESSING'] },
+      },
+      data: { status: 'DEAD', lastError: 'test_suite_cleanup' },
+    });
+
   beforeAll(async () => {
     for (const k of ENV_KEYS) prev[k] = process.env[k];
     process.env.OUTBOX_PROCESSOR_ENABLED = 'false';
@@ -166,11 +178,36 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
       ids[k].routeId = s.routeId;
       ids[k].address = s.address;
     }
+    staffId = (
+      await ctx.prisma.user.upsert({
+        where: {
+          tenantId_email: {
+            tenantId: ids.one.tenantId,
+            email: 'admin@adfr-one.test',
+          },
+        },
+        create: {
+          tenantId: ids.one.tenantId,
+          email: 'admin@adfr-one.test',
+          password: 'not-a-login',
+          firstName: 'Adfr',
+          lastName: 'Admin',
+          role: 'ADMIN',
+        },
+        update: {},
+      })
+    ).id;
+    await retireOutbox();
+    // Synthetic 555-01xx numbers repeat between runs: start from an empty ledger.
+    await ctx.prisma.consentRecord.deleteMany({
+      where: { tenantId: { in: KEYS.map((k) => ids[k].tenantId) } },
+    });
     await smtp.mode('none');
     await smtp.clear();
   });
 
   afterAll(async () => {
+    await retireOutbox();
     await smtp.mode('none');
     for (const k of ENV_KEYS) {
       if (prev[k] === undefined) delete process.env[k];
@@ -190,6 +227,99 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  // ───────────────────────────────────────── R1: consent comes from the ledger
+
+  describe('R1 — the consent gate and the ADF consent summary follow the consent ledger', () => {
+    const scope = (k: Key) => ({ tenantId: ids[k].tenantId, locationId: null });
+    const ledger = (
+      k: Key,
+      channel: 'SMS' | 'EMAIL' | 'CALL',
+      endpoint: string,
+      granted: boolean,
+      evidence: object = {},
+    ) =>
+      ctx.app.get(ConsentService).record({
+        tenantId: ids[k].tenantId,
+        channel,
+        endpoint,
+        purpose: 'CONVERSATIONAL',
+        granted,
+        source: granted ? 'WIDGET' : 'SMS_KEYWORD',
+        evidence,
+      });
+    const consentLine = (deliveryId: string) =>
+      /Consent: [^;\n<]*/.exec(sinkFor(deliveryId)[0].xml)?.[0];
+
+    it('a customer opted out on every channel is BLOCKED no_consent_basis; nothing is sent; replay re-checks the ledger', async () => {
+      const lead = await newLead('one', { consentToText: true });
+      await ledger('one', 'EMAIL', lead.email!, false);
+      await ledger('one', 'SMS', lead.phone!, false, { keyword: 'STOP' });
+      await ledger('one', 'CALL', lead.phone!, false);
+      const d = await attempt((await submit('one', lead.id))!.id);
+      expect(d).toMatchObject({
+        status: 'BLOCKED',
+        blockedReason: 'no_consent_basis',
+        attempts: 0,
+      });
+      expect(sinkFor(d.id)).toHaveLength(0);
+
+      // Replay with the opt-outs still standing: blocked again, still nothing sent.
+      await deliveries.replay(scope('one'), d.id, staffId);
+      expect(await attempt(d.id)).toMatchObject({
+        status: 'BLOCKED',
+        blockedReason: 'no_consent_basis',
+      });
+      expect(sinkFor(d.id)).toHaveLength(0);
+
+      // The customer opts back in to calls: the next replay goes out, truthfully summarised.
+      await ledger('one', 'CALL', lead.phone!, true);
+      await deliveries.replay(scope('one'), d.id, staffId);
+      expect((await attempt(d.id)).status).toBe('ACCEPTED');
+      expect(consentLine(d.id)).toBe('Consent: text=no, email=no, call=yes');
+    });
+
+    it('an explicit do-not-contact on the ledger blocks even when another channel has no opt-out', async () => {
+      const lead = await newLead('one');
+      await ledger('one', 'SMS', lead.phone!, false, { scope: 'ALL' });
+      const d = await attempt((await submit('one', lead.id))!.id);
+      expect(d).toMatchObject({
+        status: 'BLOCKED',
+        blockedReason: 'no_consent_basis',
+      });
+      expect(sinkFor(d.id)).toHaveLength(0);
+    });
+
+    it('a text-only STOP does not block the CRM hand-off but is never reported as consent to text', async () => {
+      // Lead.consentToText is still true — the ledger STOP is newer and must win.
+      const lead = await newLead('one', { consentToText: true });
+      await ledger('one', 'SMS', lead.phone!, true);
+      await ledger('one', 'SMS', lead.phone!, false, { keyword: 'STOP' });
+      await ledger('one', 'EMAIL', lead.email!, true);
+      const d = await attempt((await submit('one', lead.id))!.id);
+      expect(d.status).toBe('ACCEPTED');
+      expect(consentLine(d.id)).toBe(
+        'Consent: text=no, email=yes, call=not recorded',
+      );
+      // …and the number is not labelled as a textable cellphone.
+      expect(sinkFor(d.id)[0].xml).not.toContain('type="cellphone"');
+    });
+
+    it("the ledger is tenant-scoped: another rooftop's opt-out for the same contact does not apply", async () => {
+      const lead = await newLead('two');
+      for (const [c, e] of [
+        ['EMAIL', lead.email!],
+        ['SMS', lead.phone!],
+        ['CALL', lead.phone!],
+      ] as const)
+        await ledger('one', c, e, false);
+      const d = await attempt((await submit('two', lead.id))!.id);
+      expect(d.status).toBe('ACCEPTED');
+      expect(consentLine(d.id)).toBe(
+        'Consent: text=not recorded, email=not recorded, call=not recorded',
+      );
+    });
   });
 
   // ───────────────────────────────────────── R2: no duplicate send after a DB error

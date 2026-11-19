@@ -31,7 +31,8 @@ The existing JSON `crm.webhook` path (`CRM_WEBHOOK_URL`) is unchanged and indepe
 | Hook | `CrmSyncService.onLeadChanged` (`src/integrations/crm/crm-sync.service.ts`) |
 | Migration | `prisma/migrations/20261118100000_lead_delivery_adf` |
 | Mock SMTP | `test-infra/mocks/mock-smtp.mjs` (compose service `mock-smtp`) |
-| Tests | `src/integrations/adf/*.spec.ts`, `test/suites/adf-lead-delivery.e2e-spec.ts` |
+| Consent standing from the ledger (pure) | `lead-consent-standing.ts` |
+| Tests | `src/integrations/adf/*.spec.ts`, `test/suites/adf-lead-delivery.e2e-spec.ts`, `test/suites/adf-review-findings.e2e-spec.ts` |
 
 ## Data model
 
@@ -106,7 +107,8 @@ A send happens only when every one of these is true:
 1. `ADF_SEND_ENABLED=true` (default `false`);
 2. the rooftop's feature flag `adfLeadDelivery` is on (default off; with it off no delivery row
    is created at all);
-3. the lead has a contact method, is not opted out and is not marked spam;
+3. the lead has a contact method, is not marked spam, and the customer has not opted out of
+   being contacted (resolved from the consent ledger at send time; see "Consent" below);
 4. a route exists for the lead's tenant + location + department, and it is `enabled`;
 5. the route is `verified`.
 
@@ -127,6 +129,42 @@ Block reasons an operator can see: `send_disabled`, `flag_off`, `no_consent_basi
 `route_tenant_mismatch`, `route_not_production_environment`, `route_not_production_enabled`,
 `destination_unavailable`, `reserved_destination_in_live`, `sandbox_recipient_not_reserved`,
 `smtp_host_not_loopback`.
+
+## Consent
+
+The handler resolves the customer's standing from the append-only consent ledger
+(`ConsentRecord`) every time it is about to send, including every operator replay
+(`lead-consent-standing.ts`, pure). It looks up the lead's own normalised email and phone inside
+the lead's own tenant; another rooftop's ledger never applies. Per channel (text = `SMS`,
+email = `EMAIL`, call = `CALL`) the latest non-revoked record for that endpoint wins, and on an
+exact timestamp tie the opt-out wins.
+
+Handing a lead to the rooftop's own CRM is not a marketing send, so it does not need a marketing
+grant. The hand-off is refused with `BLOCKED: no_consent_basis` only when the customer may not be
+contacted at all:
+
+1. `Lead.optOutAt` is set, or the lead is marked spam; or
+2. the ledger holds an explicit do-not-contact / all-channel opt-out for one of the lead's
+   endpoints (an opt-out record with `channel = ALL`, or evidence `doNotContact: true` /
+   `scope: ALL`) with no later grant on that endpoint; or
+3. every way the lead could be reached is opted out: the email, if the lead has one, has a
+   standing `EMAIL` opt-out **and** the phone, if the lead has one, has standing opt-outs for
+   **both** `SMS` and `CALL`.
+
+An opt-out on a single channel while another contact channel remains (for example a text `STOP`
+from a customer who also gave an email, or whose phone has no call opt-out) does **not** block
+the hand-off. It is reported truthfully instead: that channel is `no` in the consent summary, the
+phone is not typed `cellphone`, and it is never reported as consent whatever `Lead.consentTo*`
+says. The rooftop's CRM is then responsible for honouring the per-channel `no`.
+
+The consent summary in `<comments>` is `text=…, email=…, call=…` with `yes` (latest ledger record
+is a grant, or no ledger record and the lead flag is set), `no` (latest ledger record is an
+opt-out, or `Lead.optOutAt`), or `not recorded`.
+
+Limits: nothing writes an all-channel do-not-contact record today (no staff or privacy flow
+creates one), so rule 2 is exercised by tests only; `WHATSAPP` records are not summarised; the
+ledger is matched by exact normalised endpoint, so a customer who opted out under a different
+phone or email is not recognised.
 
 ## ADF document
 
