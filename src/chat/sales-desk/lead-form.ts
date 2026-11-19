@@ -26,6 +26,17 @@ export function leadFormChannels(smsAllowed: boolean): ContactChannel[] {
   return smsAllowed ? ['EMAIL', 'CALL', 'TEXT'] : ['EMAIL', 'CALL'];
 }
 
+/** How long an offered lead form (and the consent wording on it) stays submittable. */
+export const LEAD_FORM_TTL_MS = 60 * 60_000;
+
+export function leadFormExpired(
+  offered: Pick<OfferedLeadForm, 'issuedAt'>,
+  now: Date,
+): boolean {
+  const issued = Date.parse(offered.issuedAt);
+  return Number.isNaN(issued) || now.getTime() - issued > LEAD_FORM_TTL_MS;
+}
+
 export function buildLeadForm(p: {
   purpose: LeadFormPurpose;
   rooftopName: string;
@@ -37,7 +48,15 @@ export function buildLeadForm(p: {
   /** An unanswered form already offered to this conversation: keep its id. */
   reuse?: OfferedLeadForm;
 }): { card: LeadFormCard; offered: OfferedLeadForm } {
-  const id = p.reuse?.id ?? newCardId('lf');
+  // The id is kept only while the SAME form is still on offer: same language (so one id always
+  // means one wording) and not expired. Otherwise the customer gets a fresh form.
+  const reuse =
+    p.reuse &&
+    (p.reuse.language ?? p.lang) === p.lang &&
+    !leadFormExpired(p.reuse, p.now)
+      ? p.reuse
+      : undefined;
+  const id = reuse?.id ?? newCardId('lf');
   const es = p.lang === 'es';
   const reason =
     p.purpose === 'callback'
@@ -71,7 +90,9 @@ export function buildLeadForm(p: {
       purpose: p.purpose,
       channels: p.channels,
       consentVersion: LEAD_FORM_CONSENT_VERSION,
-      issuedAt: p.reuse?.issuedAt ?? p.now.toISOString(),
+      // Re-showing the form restarts its validity window.
+      issuedAt: p.now.toISOString(),
+      language: p.lang,
     },
   };
 }
@@ -92,6 +113,7 @@ export type LeadSubmissionInput = {
 
 export type LeadRefusal =
   | 'unknown_form'
+  | 'form_expired'
   | 'name_required'
   | 'invalid_email'
   | 'invalid_phone'
@@ -112,6 +134,8 @@ export type ValidatedLead =
         preferredContact: 'email' | 'phone' | 'sms';
         consentToText: boolean;
       };
+      /** Language the form was issued in — the language of every stored wording below. */
+      language: SalesDeskLang;
       /** One entry per channel the customer actually ticked (and that is usable). */
       grants: Array<{
         channel: ContactChannel;
@@ -145,10 +169,17 @@ function usPhone(raw: string | undefined): string | null {
 export function validateLeadSubmission(
   lead: LeadSubmissionInput,
   offered: OfferedLeadForm | undefined,
+  /** Fallback only, for a form offered before `language` was stored on it. */
   lang: SalesDeskLang,
+  /** When given, the form's validity window (LEAD_FORM_TTL_MS) is enforced. */
+  now?: Date,
 ): ValidatedLead {
   if (!offered || offered.id !== lead.formId)
     return { ok: false, reason: 'unknown_form' };
+  if (now && leadFormExpired(offered, now))
+    return { ok: false, reason: 'form_expired' };
+  // The wording the customer agreed to is the wording that was SHOWN: the form's own language.
+  const language = offered.language ?? lang;
   const firstName = lead.firstName?.trim() ?? '';
   const lastName = lead.lastName?.trim() ?? '';
   if (!NAME.test(firstName) || !NAME.test(lastName))
@@ -181,7 +212,7 @@ export function validateLeadSubmission(
   const grants: Extract<ValidatedLead, { ok: true }>['grants'] = [];
   for (const channel of offered.channels) {
     const endpoint = detailFor(channel);
-    const wording = consentWording(offered.consentVersion, lang, channel);
+    const wording = consentWording(offered.consentVersion, language, channel);
     if (!endpoint || !wording || !granted(channel)) continue;
     grants.push({
       channel,
@@ -203,6 +234,7 @@ export function validateLeadSubmission(
         pref === 'EMAIL' ? 'email' : pref === 'TEXT' ? 'sms' : 'phone',
       consentToText: has('TEXT'),
     },
+    language,
     grants,
   };
 }
@@ -231,6 +263,10 @@ export function leadRefusalText(reason: LeadRefusal, lang: SalesDeskLang) {
       return es
         ? 'Necesito su nombre y apellido, así que no guardé nada.'
         : 'I need your first and last name, so I haven’t saved anything.';
+    case 'form_expired':
+      return es
+        ? 'Ese formulario ya venció, así que no guardé nada.'
+        : 'That form has expired, so I haven’t saved anything.';
     case 'channel_not_offered':
       return es
         ? 'Ese medio de contacto no está disponible aquí, así que no guardé nada.'

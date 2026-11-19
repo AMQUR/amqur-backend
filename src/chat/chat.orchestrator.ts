@@ -6918,7 +6918,7 @@ export class ChatOrchestrator {
       );
       return;
     }
-    const v = validateLeadSubmission(lead, offered, t.lang);
+    const v = validateLeadSubmission(lead, offered, t.lang, referenceNow());
     if (!v.ok) {
       this.metrics.increment(`chat.lead_form.refused.${v.reason}`);
       t.answers.push(leadRefusalText(v.reason, t.lang));
@@ -6956,7 +6956,9 @@ export class ChatOrchestrator {
           formPurpose: offered!.purpose,
           formChannel: g.channel,
           preferredChannel: lead.preferredChannel,
-          language: t.lang,
+          // The language the form was ISSUED in (the wording shown), not the client's claim.
+          language: v.language,
+          formIssuedAt: offered!.issuedAt,
         },
       });
     }
@@ -7587,6 +7589,10 @@ export class ChatOrchestrator {
     });
     const isNewLead = !st.leadId;
     st.leadId = lead.id;
+    // Consent captured before the lead existed (lead form, text consent) is linked to it now.
+    await this.consent
+      .linkLead(t.tenantId, t.s.externalKey, lead.id)
+      .catch(() => undefined);
     if (st.appointment?.id) {
       await this.prisma.appointment.updateMany({
         where: { id: st.appointment.id, tenantId: t.tenantId, leadId: null },

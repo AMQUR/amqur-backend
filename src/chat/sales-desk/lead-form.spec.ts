@@ -6,6 +6,7 @@ import {
 } from './consent-wording';
 import {
   buildLeadForm,
+  LEAD_FORM_TTL_MS,
   leadFormChannels,
   leadRefusalText,
   LeadSubmissionInput,
@@ -67,18 +68,30 @@ describe('lead form card', () => {
       expect(w).not.toMatch(/TCPA|compliant|legally|safe harbo/i);
   });
 
-  it('keeps the id of a form that is still waiting for an answer', () => {
+  it('keeps the id of a form that is still waiting for an answer (same language, not expired)', () => {
     const a = offer();
-    const b = buildLeadForm({
-      purpose: 'test_drive',
-      rooftopName: 'Fixture Motors',
-      channels: a.offered.channels,
-      lang: 'es',
-      now: new Date(now.getTime() + 60_000),
-      reuse: a.offered,
-    });
+    const again = (lang: 'en' | 'es', at: Date) =>
+      buildLeadForm({
+        purpose: 'test_drive',
+        rooftopName: 'Fixture Motors',
+        channels: a.offered.channels,
+        lang,
+        now: at,
+        reuse: a.offered,
+      });
+    const later = new Date(now.getTime() + 60_000);
+    const b = again('en', later);
     expect(b.card.id).toBe(a.card.id);
-    expect(b.offered.issuedAt).toBe(a.offered.issuedAt);
+    // Re-showing the form restarts its validity window (R12).
+    expect(b.offered.issuedAt).toBe(later.toISOString());
+    expect(b.offered.language).toBe('en');
+    // R12: a different language is a different form — one id never means two wordings.
+    const es = again('es', later);
+    expect(es.card.id).not.toBe(a.card.id);
+    expect(es.offered.language).toBe('es');
+    // R12: an expired form is not kept alive.
+    const stale = again('en', new Date(now.getTime() + LEAD_FORM_TTL_MS + 1));
+    expect(stale.card.id).not.toBe(a.card.id);
   });
 
   it('recognises only published consent versions', () => {
@@ -104,6 +117,7 @@ describe('validateLeadSubmission', () => {
         preferredContact: 'email',
         consentToText: false,
       },
+      language: 'en',
       grants: [
         {
           channel: 'EMAIL',
@@ -136,7 +150,10 @@ describe('validateLeadSubmission', () => {
       ['CALL', 'CALL', '3125550142'],
       ['TEXT', 'SMS', '3125550142'],
     ]);
-    expect(r.grants[1].wording).toBe(consentWording(V, 'es', 'TEXT'));
+    // R12: the stored wording is the one that was SHOWN (the form was issued in English), not
+    // the language the client claims at submit time. (This used to assert the Spanish text.)
+    expect(r.language).toBe('en');
+    expect(r.grants[1].wording).toBe(consentWording(V, 'en', 'TEXT'));
     expect(r.contact).toEqual({
       firstName: 'Pat',
       lastName: 'Rivera',
@@ -237,5 +254,66 @@ describe('validateLeadSubmission', () => {
         expect(text.length).toBeLessThan(140);
         expect(text).not.toMatch(/@|\d{3}/);
       }
+  });
+});
+
+describe('R12 — the form carries its own language and expires', () => {
+  const spanish = buildLeadForm({
+    purpose: 'sales',
+    rooftopName: 'Fixture Motors',
+    channels: leadFormChannels(false),
+    lang: 'es',
+    now,
+  }).offered;
+
+  it('wording comes from the language the form was issued in, whatever the submit language', () => {
+    const r = validateLeadSubmission(
+      submission(spanish.id),
+      spanish,
+      'en',
+      now,
+    );
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.language).toBe('es');
+    expect(r.grants[0].wording).toBe(consentWording(V, 'es', 'EMAIL'));
+  });
+
+  it('a form offered before the language was stored falls back to the turn language', () => {
+    const legacy = { ...spanish, language: undefined };
+    const r = validateLeadSubmission(submission(legacy.id), legacy, 'en', now);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.language).toBe('en');
+  });
+
+  it('a submission after the validity window is refused and stores nothing', () => {
+    const at = (ms: number) => new Date(now.getTime() + ms);
+    expect(
+      validateLeadSubmission(
+        submission(spanish.id),
+        spanish,
+        'es',
+        at(LEAD_FORM_TTL_MS),
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateLeadSubmission(
+        submission(spanish.id),
+        spanish,
+        'es',
+        at(LEAD_FORM_TTL_MS + 1),
+      ),
+    ).toEqual({ ok: false, reason: 'form_expired' });
+    expect(
+      validateLeadSubmission(
+        submission(spanish.id),
+        { ...spanish, issuedAt: 'not-a-date' },
+        'es',
+        now,
+      ),
+    ).toEqual({ ok: false, reason: 'form_expired' });
+    expect(leadRefusalText('form_expired', 'en')).toMatch(
+      /expired, so I haven’t saved anything/,
+    );
+    expect(leadRefusalText('form_expired', 'es')).toMatch(/venció/);
   });
 });

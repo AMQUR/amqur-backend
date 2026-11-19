@@ -87,22 +87,33 @@ vehicleLabel, vin, channels, consent: { version, text: { EMAIL?, CALL?, TEXT? } 
   `sms` capability is on for that tenant/location.
 - `consent`: server-side constant `lead-form-consent-v1` (EN/ES) in
   `src/chat/sales-desk/consent-wording.ts`. Changing wording requires a new version.
-- An unanswered form keeps its `id` when re-offered.
+- An unanswered form keeps its `id` when re-offered **in the same language and within its
+  validity window**; re-showing it restarts the window. A language change or an expired form
+  gets a new `id`, so one `id` always means one wording.
+- A form is submittable for 60 minutes after the server last showed it (`LEAD_FORM_TTL_MS`).
 
 Submission rules (server-side; the client is never trusted):
 
 - The form must be the one this conversation was offered; names required; email format; US
   phone = 10 digits; the preferred channel must be offered, have its contact detail, and be
-  `granted: true` against a recognised version.
+  `granted: true` against a recognised version; and the form must not have expired
+  ("That form has expired, so I haven’t saved anything." + a fresh form).
 - Otherwise **nothing is stored** (no contact, no consent row, no lead), a one-line reason is
   given and the form is offered again.
 - On success: one append-only `ConsentRecord` per channel the customer ticked (purpose
   `CONVERSATIONAL`, source `WIDGET`, exact wording + version, evidence
-  `{capturedVia:'lead_form', formId, …}`, tenant + location scoped). Nothing is recorded as
+  `{capturedVia:'lead_form', formId, language, formIssuedAt, …}`, tenant + location scoped).
+  The stored wording and `language` are those of the form **as issued** (kept on
+  `Conversation.state.salesDesk.leadForm`), never the `language` a client sends with the
+  submission. The records are written before the lead exists; lead sync then sets their
+  `leadId` (`ConsentService.linkLead`, only the reference — nothing else is edited). Nothing is recorded as
   granted that was not ticked, and an un-ticked box is **not** recorded as an opt-out. A
   contact detail is kept only when a granted channel covers it. Contact then goes through
   the same state, propagation (`handleContact`) and lead sync as the conversational path, so
   the existing outbox/CRM hooks fire. A repeat submit of the same form is a no-op.
+- Only the text consent has a column on `Lead`. Email and call consent live on the ledger, and
+  the ADF consent summary reads the ledger (see `docs/ADF_LEAD_DELIVERY.md`, "Consent"), so a
+  ticked email / call box is reported as `yes` there.
 
 ### `appointment_picker` — attached when the engine asks for a day / time
 

@@ -1,7 +1,14 @@
 import request from 'supertest';
 import { createE2eApp, E2eCtx, unwrap } from '../helpers/e2e-app';
 import { DemoDealer, seedDemoDealer, SIM_ORIGIN } from '../helpers/demo-dealer';
-import { LEAD_FORM_CONSENT_VERSION } from '../../src/chat/sales-desk/consent-wording';
+import {
+  consentWording,
+  LEAD_FORM_CONSENT_VERSION,
+} from '../../src/chat/sales-desk/consent-wording';
+import { LEAD_FORM_TTL_MS } from '../../src/chat/sales-desk/lead-form';
+import { SandboxSinkTransport } from '../../src/integrations/adf/transports/sandbox-sink.transport';
+import { LeadDeliveryRouteService } from '../../src/integrations/adf/lead-delivery-route.service';
+import { seedSandboxRoutes } from '../../src/integrations/adf/sandbox-routes.seed';
 import { referenceNow } from '../../src/common/time/reference-now';
 import { sandboxTakenSlotStart } from '../../src/appointments/sandbox-scheduling.adapter';
 import { SchedulingProviderRegistry } from '../../src/appointments/scheduling-provider.registry';
@@ -148,6 +155,184 @@ describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)'
     });
   }, 120_000);
   afterAll(async () => ctx.app.close());
+
+  // ───────────────────────────────────────── R12: lead-form consent evidence
+
+  describe('R12 — lead-form consent evidence is bound to the form that was shown', () => {
+    const consentRows = (conversationId: string) =>
+      ctx.prisma.consentRecord.findMany({
+        where: {
+          tenantId: sbx.tenantId,
+          conversationExternalKey: conversationId,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+    it('wording + language come from the form as ISSUED (Spanish) even when the submit claims English; consent rows are linked to the lead', async () => {
+      const a = await chat(sbx, {
+        action: 'test_drive',
+        vin: sbx.vehicles[0].vin,
+        language: 'es',
+      });
+      const form = card<{
+        id: string;
+        consent: { text: Record<string, string> };
+      }>(a, 'lead_form')!;
+      expect(form.consent.text.EMAIL).toBe(
+        consentWording(LEAD_FORM_CONSENT_VERSION, 'es', 'EMAIL'),
+      );
+      await chat(sbx, {
+        action: 'lead_capture',
+        conversationId: a.conversationId,
+        language: 'en', // the client now claims English
+        lead: lead(form.id, { email: 'r12.es@example.invalid' }),
+      });
+      const rows = await consentRows(a.conversationId);
+      expect(rows.map((r) => r.channel).sort()).toEqual(['CALL', 'EMAIL']);
+      for (const r of rows) {
+        expect(r.wording).toBe(
+          consentWording(
+            LEAD_FORM_CONSENT_VERSION,
+            'es',
+            r.channel as 'EMAIL' | 'CALL',
+          ),
+        );
+        expect(r.evidence).toMatchObject({
+          capturedVia: 'lead_form',
+          formId: form.id,
+          language: 'es',
+        });
+        expect(
+          Date.parse((r.evidence as { formIssuedAt: string }).formIssuedAt),
+        ).not.toBeNaN();
+      }
+      // Back-filled: written before the lead existed, linked once it does.
+      const conv = await ctx.prisma.conversation.findUniqueOrThrow({
+        where: {
+          tenantId_externalKey: {
+            tenantId: sbx.tenantId,
+            externalKey: a.conversationId,
+          },
+        },
+      });
+      const leadId = (conv.state as { leadId?: string }).leadId;
+      expect(leadId).toBeTruthy();
+      expect(rows.map((r) => r.leadId)).toEqual([leadId, leadId]);
+    });
+
+    it('an offered form expires: a late submission stores nothing and a fresh form is offered', async () => {
+      const a = await chat(sbx, {
+        action: 'test_drive',
+        vin: sbx.vehicles[0].vin,
+      });
+      const form = card<{ id: string }>(a, 'lead_form')!;
+      const lateEmail = `r12.late.${Date.now()}@example.invalid`;
+      const pinned = process.env.CHAT_REFERENCE_NOW;
+      process.env.CHAT_REFERENCE_NOW = new Date(
+        referenceNow().getTime() + LEAD_FORM_TTL_MS + 60_000,
+      ).toISOString();
+      try {
+        const late = await chat(sbx, {
+          action: 'lead_capture',
+          conversationId: a.conversationId,
+          lead: lead(form.id, { email: lateEmail }),
+        });
+        expect(late.reply).toMatch(
+          /form has expired, so I haven’t saved anything/,
+        );
+        expect(await consentRows(a.conversationId)).toHaveLength(0);
+        expect(
+          await ctx.prisma.lead.count({
+            where: {
+              tenantId: sbx.tenantId,
+              email: lateEmail,
+            },
+          }),
+        ).toBe(0);
+        const fresh = card<{ id: string }>(late, 'lead_form')!;
+        expect(fresh.id).not.toBe(form.id);
+        // The fresh form works.
+        const ok = await chat(sbx, {
+          action: 'lead_capture',
+          conversationId: a.conversationId,
+          lead: lead(fresh.id, { email: lateEmail }),
+        });
+        expect(ok.reply).not.toMatch(/expired/);
+        expect(await consentRows(a.conversationId)).toHaveLength(2);
+      } finally {
+        if (pinned === undefined) delete process.env.CHAT_REFERENCE_NOW;
+        else process.env.CHAT_REFERENCE_NOW = pinned;
+      }
+    });
+
+    it('email / call consent ticked on the form reach the ADF consent summary (via the ledger)', async () => {
+      const keys = ['ADF_SEND_ENABLED', 'OUTBOX_PROCESSOR_ENABLED'] as const;
+      const prev = keys.map((k) => process.env[k]);
+      process.env.ADF_SEND_ENABLED = 'true';
+      process.env.OUTBOX_PROCESSOR_ENABLED = 'false';
+      const sink = ctx.app.get(SandboxSinkTransport);
+      const flagsBefore = (
+        await ctx.prisma.tenant.findUniqueOrThrow({
+          where: { id: sbx.tenantId },
+        })
+      ).featureFlags as Record<string, boolean>;
+      try {
+        await ctx.prisma.tenant.update({
+          where: { id: sbx.tenantId },
+          data: { featureFlags: { ...flagsBefore, adfLeadDelivery: true } },
+        });
+        await seedSandboxRoutes(
+          ctx.app.get(LeadDeliveryRouteService),
+          [
+            {
+              tenantId: sbx.tenantId,
+              locationId: sbx.locationId,
+              slug: sbx.slug,
+            },
+          ],
+          'cli:sdr-e2e',
+        );
+        const a = await chat(sbx, {
+          action: 'test_drive',
+          vin: sbx.vehicles[0].vin,
+        });
+        const form = card<{ id: string }>(a, 'lead_form')!;
+        const email = `r12.adf.${Date.now()}@example.invalid`;
+        await chat(sbx, {
+          action: 'lead_capture',
+          conversationId: a.conversationId,
+          lead: lead(form.id, { email, phone: '(312) 555-0148' }),
+        });
+        const created = await ctx.prisma.lead.findFirstOrThrow({
+          where: { tenantId: sbx.tenantId, email },
+        });
+        // Only the text flag exists on the lead row; email / call live on the ledger.
+        expect(created.consentToText).toBe(false);
+        const d = await ctx.prisma.leadDelivery.findFirstOrThrow({
+          where: { leadId: created.id },
+        });
+        await ctx.prisma.outboxEvent.update({
+          where: { id: d.outboxEventId as string },
+          data: { nextAttemptAt: new Date(0) },
+        });
+        await ctx.app.get(OutboxProcessorService).processBatch(500, 'sdr-e2e');
+        const sent = sink.messages().filter((m) => m.deliveryId === d.id);
+        expect(sent).toHaveLength(1);
+        expect(/Consent: [^;<]*/.exec(sent[0].xml)?.[0]).toBe(
+          'Consent: text=not recorded, email=yes, call=yes',
+        );
+      } finally {
+        keys.forEach((k, i) => {
+          if (prev[i] === undefined) delete process.env[k];
+          else process.env[k] = prev[i];
+        });
+        await ctx.prisma.tenant.update({
+          where: { id: sbx.tenantId },
+          data: { featureFlags: flagsBefore },
+        });
+      }
+    });
+  });
 
   // ───────────────────────────────────────── R10: staff-confirmed is not provider-confirmed
 

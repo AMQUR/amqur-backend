@@ -99,7 +99,17 @@ export type OfferedLeadForm = {
   purpose: LeadFormPurpose;
   channels: ContactChannel[];
   consentVersion: string;
+  /**
+   * When the server last showed this form. A submission is accepted only within
+   * LEAD_FORM_TTL_MS of it.
+   */
   issuedAt: string;
+  /**
+   * Language the form (and its consent wording) was ISSUED in. The stored consent wording is
+   * taken from here, never from the language a client claims at submit time. Absent on forms
+   * offered before this field existed.
+   */
+  language?: SalesDeskLang;
   /** Set once a valid submission was stored — a repeat submit is a no-op. */
   submittedAt?: string;
 };
