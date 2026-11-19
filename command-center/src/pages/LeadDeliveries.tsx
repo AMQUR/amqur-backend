@@ -20,6 +20,8 @@ import {
   type LeadDeliveryRow,
   type LeadDeliveryStatus,
   deliveryModeLabel,
+  appointmentUpdateText,
+  type AppointmentUpdate,
 } from '../deliveries/leadDeliveries';
 
 /**
@@ -40,7 +42,7 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
     () => (canSeeRoutes ? api<LeadDeliveryRoute[]>(`/ops/lead-delivery-routes${locationId ? `?locationId=${encodeURIComponent(locationId)}` : ''}`) : Promise.resolve([])),
     [locationId, canSeeRoutes],
   );
-  const detail = useAsync(() => (openId ? api<LeadDeliveryRow & { events: LeadDeliveryEvent[] }>(`${DELIVERIES_BASE}/${openId}`) : Promise.resolve(null)), [openId]);
+  const detail = useAsync(() => (openId ? api<LeadDeliveryRow & { events: LeadDeliveryEvent[]; appointmentUpdates?: AppointmentUpdate[] }>(`${DELIVERIES_BASE}/${openId}`) : Promise.resolve(null)), [openId]);
   const rows = list.data ?? [];
   const counts = tally(rows);
 
@@ -191,6 +193,21 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                           </li>
                         ))}
                       </ol>
+                    )}
+                    {(detail.data?.appointmentUpdates?.length ?? 0) > 0 && (
+                      <>
+                        <h3 className="small">Appointment updates for this lead</h3>
+                        <ul className="small">
+                          {detail.data!.appointmentUpdates!.map((u) => {
+                            const t = appointmentUpdateText(u);
+                            return (
+                              <li key={u.id}>
+                                {fmtDate(u.createdAt)} — {t.what}. <span className="muted">{t.delivery}</span>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </>
                     )}
                     {r.correlationId && <p className="muted small">Trace <code>{r.correlationId}</code></p>}
                   </div>

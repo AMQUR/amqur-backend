@@ -144,6 +144,48 @@ export function deliveryModeLabel(mode: LeadDeliveryRow['deliveryMode']): string
   return null;
 }
 
+/** R8: an appointment event that follows a lead (ids, states and codes only). */
+export type AppointmentUpdate = {
+  id: string;
+  appointmentId: string;
+  state: 'REQUESTED' | 'SCHEDULED' | 'CONFIRMED' | 'CANCELLED' | 'RESCHEDULED' | 'FAILED';
+  status: string;
+  reason: string | null;
+  sandboxReceipt: boolean;
+  deliveryMode: 'sandbox' | 'live' | null;
+  sentAt: string | null;
+  acceptedAt: string | null;
+  createdAt: string;
+};
+
+const UPDATE_STATE: Record<AppointmentUpdate['state'], string> = {
+  REQUESTED: 'Appointment requested by the customer',
+  SCHEDULED: 'Time set by staff (no scheduler confirmation)',
+  CONFIRMED: 'Confirmed by the scheduling provider',
+  CANCELLED: 'Appointment cancelled',
+  RESCHEDULED: 'Appointment moved',
+  FAILED: 'Booking did not go through',
+};
+const UPDATE_STATUS: Record<string, string> = {
+  NOT_SENT: 'Not sent — this store’s CRM is not set up to receive appointment updates. Staff see it here only.',
+  WAITING_FOR_LEAD: 'Waiting — the lead itself has not been accepted yet.',
+  QUEUED: 'Queued to send.',
+  SENT: 'Sent, waiting for the mail server.',
+  ACCEPTED: 'Accepted by the mail server — not confirmed in the CRM.',
+  FAILED: 'Sending failed; it will be retried.',
+  DEAD: 'Stopped retrying.',
+  BLOCKED: 'Blocked, not sent.',
+};
+
+/** What happened to the appointment, and what happened to telling the CRM about it — never merged. */
+export function appointmentUpdateText(u: AppointmentUpdate): { what: string; delivery: string } {
+  const demo = u.state === 'CONFIRMED' && u.sandboxReceipt;
+  const what = demo ? 'Demo scheduler booking (not a real appointment)' : (UPDATE_STATE[u.state] ?? u.state);
+  const base = UPDATE_STATUS[u.status] ?? `Status: ${u.status}`;
+  const mode = u.status === 'ACCEPTED' || u.status === 'SENT' ? deliveryModeLabel(u.deliveryMode) : null;
+  return { what, delivery: [base, mode, u.reason && u.status !== 'NOT_SENT' ? `Reason code: ${u.reason}` : null].filter(Boolean).join(' ') };
+}
+
 export type Capability = { canReplay: boolean; canReconcile: boolean };
 /** Mirrors the server's role rules; the server is still the authority. */
 export function capability(row: Pick<LeadDeliveryRow, 'status'>, role: string): Capability {

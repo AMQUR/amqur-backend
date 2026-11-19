@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LADDER, deliveryModeLabel, actorLabel, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
+import { LADDER, appointmentUpdateText, type AppointmentUpdate, deliveryModeLabel, actorLabel, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
 
 const ALL: LeadDeliveryStatus[] = ['QUEUED', 'SENT', 'ACCEPTED', 'DELIVERED', 'CRM_PARSED', 'CRM_MATCHED', 'CRM_REJECTED', 'FAILED', 'DEAD', 'BLOCKED'];
 
@@ -69,5 +69,15 @@ describe('lead delivery ledger helpers', () => {
     expect(deliveryModeLabel(undefined)).toBeNull();
     expect(blockedReasonText('sandbox_in_production')).toMatch(/Nothing was sent/);
     expect(blockedReasonText('lead_location_changed')).toMatch(/another rooftop/);
+  });
+  it('appointment updates keep what happened apart from whether the CRM was told, and never call a demo booking real', () => {
+    const base: AppointmentUpdate = { id: 'u', appointmentId: 'a', state: 'CONFIRMED', status: 'NOT_SENT', reason: 'destination_does_not_accept_updates', sandboxReceipt: false, deliveryMode: null, sentAt: null, acceptedAt: null, createdAt: '2026-11-19T00:00:00Z' };
+    expect(appointmentUpdateText(base)).toEqual({ what: 'Confirmed by the scheduling provider', delivery: expect.stringMatching(/^Not sent/) });
+    expect(appointmentUpdateText({ ...base, sandboxReceipt: true }).what).toMatch(/Demo scheduler booking \(not a real appointment\)/);
+    expect(appointmentUpdateText({ ...base, state: 'SCHEDULED' }).what).toMatch(/no scheduler confirmation/);
+    const accepted = appointmentUpdateText({ ...base, status: 'ACCEPTED', deliveryMode: 'sandbox', reason: null });
+    expect(accepted.delivery).toMatch(/not confirmed in the CRM/);
+    expect(accepted.delivery).toMatch(/Test delivery/);
+    expect(appointmentUpdateText({ ...base, status: 'BLOCKED', reason: 'no_consent_basis' }).delivery).toMatch(/no_consent_basis/);
   });
 });
