@@ -88,6 +88,22 @@ export const envValidationSchema = Joi.object({
 
   WIDGET_TOKEN_EXPIRES_IN: Joi.string().optional().default('4h'),
 
+  /** Concurrent open POST /chat/stream turns (docs/operations/rate-limits.md). */
+  CHAT_STREAM_MAX_CONCURRENT_PER_IP: Joi.number()
+    .integer()
+    .min(1)
+    .max(1000)
+    .optional()
+    .default(10),
+  CHAT_STREAM_MAX_CONCURRENT_PER_TOKEN: Joi.number()
+    .integer()
+    .min(1)
+    .max(1000)
+    .optional()
+    .default(4),
+  /** Test stacks only: `production` applies the production rate-limit numbers under NODE_ENV=test. */
+  RATE_LIMIT_PROFILE: Joi.string().valid('production', 'test').optional(),
+
   /**
    * Dedicated signing secret for public widget tokens; falls back to
    * JWT_SECRET when unset. Rotating it invalidates outstanding widget

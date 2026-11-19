@@ -2,6 +2,8 @@ import {
   Body,
   Controller,
   HttpCode,
+  HttpException,
+  HttpStatus,
   Logger,
   Post,
   Req,
@@ -26,8 +28,19 @@ import {
   streamErrorEvent,
   streamHeartbeatMs,
 } from './stream/chat-stream';
+import {
+  chatStreamLimiter,
+  STREAM_BUSY_RETRY_AFTER_SECONDS,
+  streamCaps,
+  tokenKey,
+} from './stream/stream-concurrency';
+import { rateLimit } from '../common/rate-limits';
+import { clientIp } from '../common/guards/throttle-tracker';
 
 type ChatRequest = {
+  ip?: string;
+  ips?: string[];
+  headers?: { authorization?: string };
   user?: {
     role?: string;
     sub?: string;
@@ -38,7 +51,7 @@ type ChatRequest = {
 
 const CHAT_THROTTLE = {
   default: {
-    limit: process.env.NODE_ENV === 'test' ? 10_000 : 40,
+    limit: rateLimit(40, 10_000),
     ttl: 60_000,
   },
 };
@@ -118,7 +131,12 @@ export class ChatController {
    * server-sent events. Auth/validation failures happen before this handler and stay plain
    * HTTP JSON errors. Once the stream has started, a failure is reported as `turn.error`.
    * The turn always runs to completion and is persisted identically whether or not the client
-   * is still connected.
+   * is still connected. That is a deliberate choice: a turn may carry an already-accepted lead
+   * or appointment submission, and aborting it on disconnect could lose it or leave it half
+   * written. The cost of "open, then drop" is bounded instead: every stream counts against the
+   * per-minute throttle, and it holds a concurrency slot (per IP and per bearer token) until the
+   * TURN finishes, so dropping the socket frees nothing. Over the cap the caller gets a plain
+   * JSON 429 with Retry-After before any stream starts.
    */
   @Throttle(CHAT_THROTTLE)
   @Post('stream')
@@ -130,6 +148,25 @@ export class ChatController {
     @Res() res: Response,
   ): Promise<void> {
     const turn = this.resolveTurn(req, body);
+
+    const caps = streamCaps();
+    const token = tokenKey(req.headers?.authorization);
+    const release = chatStreamLimiter.acquire([
+      { key: `ip:${clientIp(req)}`, max: caps.perIp },
+      ...(token ? [{ key: `tok:${token}`, max: caps.perToken }] : []),
+    ]);
+    if (!release) {
+      this.metrics.increment('chat.stream.rejected_concurrency');
+      res.setHeader('Retry-After', String(STREAM_BUSY_RETRY_AFTER_SECONDS));
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          error: 'Too Many Requests',
+          message: 'Too many chat streams are open. Try again shortly.',
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
 
     let open = true;
     res.on('close', () => {
@@ -190,6 +227,7 @@ export class ChatController {
       send(streamErrorEvent(body.language));
     } finally {
       clearInterval(heartbeat);
+      release();
       if (!res.writableEnded) res.end();
     }
   }
