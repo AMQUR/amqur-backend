@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LADDER, appointmentUpdateText, type AppointmentUpdate, deliveryModeLabel, actorLabel, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
+import { LADDER, appointmentUpdateText, type AppointmentUpdate, assertAcceptedBody, deliveryModeLabel, actorLabel, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
 
 const ALL: LeadDeliveryStatus[] = ['QUEUED', 'SENT', 'ACCEPTED', 'DELIVERED', 'CRM_PARSED', 'CRM_MATCHED', 'CRM_REJECTED', 'FAILED', 'DEAD', 'BLOCKED'];
 
@@ -30,16 +30,54 @@ describe('lead delivery ledger helpers', () => {
     expect(blockedReasonText(null)).toBe('No reason recorded.');
   });
   it('mirrors the server role rules', () => {
-    expect(capability({ status: 'FAILED' }, 'ADMIN')).toEqual({ canReplay: true, canReconcile: false });
+    expect(capability({ status: 'FAILED' }, 'ADMIN')).toEqual({
+      canReplay: true,
+      canReconcile: false,
+      canAssertAccepted: false,
+    });
     expect(capability({ status: 'FAILED' }, 'MANAGER').canReplay).toBe(false);
-    expect(capability({ status: 'ACCEPTED' }, 'MANAGER')).toEqual({ canReplay: false, canReconcile: true });
+    expect(capability({ status: 'ACCEPTED' }, 'MANAGER')).toEqual({
+      canReplay: false,
+      canReconcile: true,
+      canAssertAccepted: false,
+    });
     expect(capability({ status: 'ACCEPTED' }, 'STAFF').canReconcile).toBe(false);
-    expect(capability({ status: 'CRM_MATCHED' }, 'SUPER_ADMIN')).toEqual({ canReplay: false, canReconcile: false });
+    expect(capability({ status: 'CRM_MATCHED' }, 'SUPER_ADMIN')).toEqual({
+      canReplay: false,
+      canReconcile: false,
+      canAssertAccepted: false,
+    });
+    expect(
+      capability(
+        {
+          status: 'SENT',
+          providerMessageId: '<lead-delivery.d1@amqur.example.invalid>',
+          lastErrorCode: 'send_dispatched',
+        },
+        'ADMIN',
+      ).canAssertAccepted,
+    ).toBe(true);
+    expect(
+      capability(
+        {
+          status: 'SENT',
+          providerMessageId: '<lead-delivery.d1@amqur.example.invalid>',
+          lastErrorCode: 'send_dispatched',
+        },
+        'MANAGER',
+      ).canAssertAccepted,
+    ).toBe(false);
   });
   it('requires a CRM record reference to mark a lead as in the CRM', () => {
     expect(() => reconcileBody('CRM_MATCHED', '  ')).toThrow(/record reference/);
     expect(reconcileBody('CRM_MATCHED', ' OPP-1 ', ' checked ')).toEqual({ result: 'CRM_MATCHED', crmRecordRef: 'OPP-1', note: 'checked' });
     expect(reconcileBody('CRM_REJECTED')).toEqual({ result: 'CRM_REJECTED' });
+  });
+  it('requires a verification note to assert acceptance without resending', () => {
+    expect(() => assertAcceptedBody('short')).toThrow(/8 characters/);
+    expect(assertAcceptedBody('  Seen in sandbox mailbox capture  ')).toEqual({
+      note: 'Seen in sandbox mailbox capture',
+    });
   });
   it('builds list paths', () => {
     expect(listPath('ALL')).toBe('/ops/lead-deliveries');

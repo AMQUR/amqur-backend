@@ -187,14 +187,30 @@ export function appointmentUpdateText(u: AppointmentUpdate): { what: string; del
   return { what, delivery: [base, mode, u.reason && u.status !== 'NOT_SENT' ? `Reason code: ${u.reason}` : null].filter(Boolean).join(' ') };
 }
 
-export type Capability = { canReplay: boolean; canReconcile: boolean };
+export type Capability = {
+  canReplay: boolean;
+  canReconcile: boolean;
+  /** SENT with a durable Message-ID — assert relay acceptance without a second send. */
+  canAssertAccepted: boolean;
+};
 /** Mirrors the server's role rules; the server is still the authority. */
-export function capability(row: Pick<LeadDeliveryRow, 'status'>, role: string): Capability {
+export function capability(
+  row: Pick<LeadDeliveryRow, 'status' | 'providerMessageId' | 'lastErrorCode'>,
+  role: string,
+): Capability {
   const replayable = ['FAILED', 'DEAD', 'BLOCKED'].includes(row.status);
   const reconcilable = ['ACCEPTED', 'DELIVERED', 'CRM_PARSED'].includes(row.status);
+  const durableId = (row.providerMessageId ?? '').startsWith('<lead-delivery.');
+  const assertable =
+    row.status === 'SENT' &&
+    durableId &&
+    (row.lastErrorCode === 'send_dispatched' ||
+      row.lastErrorCode === 'accepted_record_pending' ||
+      row.lastErrorCode == null);
   return {
     canReplay: replayable && ['SUPER_ADMIN', 'ADMIN'].includes(role),
     canReconcile: reconcilable && ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(role),
+    canAssertAccepted: assertable && ['SUPER_ADMIN', 'ADMIN'].includes(role),
   };
 }
 
@@ -203,6 +219,13 @@ export function reconcileBody(result: 'CRM_PARSED' | 'CRM_MATCHED' | 'CRM_REJECT
   const n = (note ?? '').trim().slice(0, 300);
   if (result === 'CRM_MATCHED' && !ref) throw new Error('A CRM record reference is required to mark a lead as in the CRM.');
   return { result, ...(ref ? { crmRecordRef: ref } : {}), ...(n ? { note: n } : {}) };
+}
+
+/** Body for assert-accepted. Note must explain how acceptance was verified (server min 8 chars). */
+export function assertAcceptedBody(note: string) {
+  const n = note.trim().slice(0, 300);
+  if (n.length < 8) throw new Error('Explain how you verified acceptance (at least 8 characters).');
+  return { note: n };
 }
 
 export function routeReadiness(r: LeadDeliveryRoute): { label: string; tone: 'ok' | 'warn' | 'neutral' } {

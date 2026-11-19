@@ -8,6 +8,7 @@ import {
   actorLabel,
   STATUS_FILTERS,
   blockedReasonText,
+  assertAcceptedBody,
   capability,
   listPath,
   reconcileBody,
@@ -32,6 +33,7 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
   const [filter, setFilter] = useState<LeadDeliveryStatus | 'ALL'>('ALL');
   const [openId, setOpenId] = useState<string | null>(null);
   const [crmRef, setCrmRef] = useState<Record<string, string>>({});
+  const [assertNote, setAssertNote] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -158,6 +160,40 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                     </button>
                   )}
                 </span>
+
+                {cap.canAssertAccepted && (
+                  <div className="stack">
+                    <p className="small">
+                      Mail may already have been accepted (durable Message-ID on file). Asserting
+                      acceptance records that fact without sending again. It is not a CRM match.
+                    </p>
+                    <label className="small">
+                      How you verified acceptance
+                      <input
+                        maxLength={300}
+                        value={assertNote[r.id] ?? ''}
+                        onChange={(e) => setAssertNote({ ...assertNote, [r.id]: e.target.value })}
+                      />
+                    </label>
+                    <button
+                      className="btn"
+                      disabled={busyHere || (assertNote[r.id] ?? '').trim().length < 8}
+                      onClick={() =>
+                        void act(
+                          r.id,
+                          () =>
+                            api(`${DELIVERIES_BASE}/${r.id}/assert-accepted`, {
+                              method: 'POST',
+                              body: JSON.stringify(assertAcceptedBody(assertNote[r.id] ?? '')),
+                            }),
+                          'Marked accepted (no resend)',
+                        )
+                      }
+                    >
+                      Mark accepted without resending
+                    </button>
+                  </div>
+                )}
 
                 {cap.canReconcile && (
                   <div className="stack">
