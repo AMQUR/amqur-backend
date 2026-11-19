@@ -17,6 +17,7 @@ import { TradeModule } from '../trade/trade.module';
 import { PartsModule } from '../parts/parts.module';
 import { KnowledgeModule } from '../knowledge/knowledge.module';
 import { IntegrationsModule } from '../integrations/integrations.module';
+import { SpotlightsModule } from '../spotlights/spotlights.module';
 import { ConversationIdService } from './conversation-id.service';
 import { PlaybookService } from './playbooks/playbook.service';
 import { PlaybooksController } from './playbooks/playbooks.controller';
@@ -32,6 +33,7 @@ import { PlaybooksController } from './playbooks/playbooks.controller';
     PartsModule,
     KnowledgeModule,
     IntegrationsModule,
+    SpotlightsModule,
   ],
   controllers: [ChatController, PlaybooksController],
   providers: [

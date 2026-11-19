@@ -95,7 +95,7 @@ const CLAIM_PATTERNS: ClaimPattern[] = [
   {
     claimType: ClaimType.INCENTIVES,
     pattern:
-      /\b(rebate|incentive|cash back|special offer|manufacturer (?:offer|bonus)|\$\d+\s*(?:off|rebate))\b/i,
+      /\b(rebate|incentive|cash back|special offer|specials?(?:\s+this\s+(?:week|month))?|manufacturer (?:offer|bonus)|\$\d+\s*(?:off|rebate)|0\s*%\s*(?:apr\s+)?(?:special|offer))\b/i,
   },
   {
     claimType: ClaimType.HOURS,
