@@ -3,6 +3,9 @@ import {
   SSE_HEADERS,
   sseFrame,
   streamErrorEvent,
+  SSE_HEARTBEAT_FRAME,
+  STREAM_HEARTBEAT_DEFAULT_MS,
+  streamHeartbeatMs,
 } from './chat-stream';
 
 describe('chat stream envelope', () => {
@@ -64,5 +67,18 @@ describe('chat stream envelope', () => {
     expect((streamErrorEvent('es') as { message: string }).message).toMatch(
       /Inténtelo/,
     );
+  });
+
+  it('R15: the heartbeat is an SSE comment frame and its interval is bounded', () => {
+    // A comment line (":" first) followed by a blank line — no event, no data.
+    expect(SSE_HEARTBEAT_FRAME).toBe(': hb\n\n');
+    expect(SSE_HEARTBEAT_FRAME).not.toMatch(/^(data|event|id|retry):/m);
+    expect(streamHeartbeatMs({})).toBe(STREAM_HEARTBEAT_DEFAULT_MS);
+    expect(STREAM_HEARTBEAT_DEFAULT_MS).toBe(15_000);
+    expect(streamHeartbeatMs({ CHAT_STREAM_HEARTBEAT_MS: '50' })).toBe(50);
+    for (const v of ['0', '-5', '1', '999999', 'abc', '10.5'])
+      expect(streamHeartbeatMs({ CHAT_STREAM_HEARTBEAT_MS: v })).toBe(
+        STREAM_HEARTBEAT_DEFAULT_MS,
+      );
   });
 });

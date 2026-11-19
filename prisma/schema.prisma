@@ -623,6 +623,8 @@ model Appointment {
   @@index([tenantId, scheduledAt])
   @@index([tenantId, locationId, requestedAt])
   @@index([conversationId])
+  /// Latest appointment of a lead (ADF lead delivery).
+  @@index([tenantId, leadId, createdAt])
 }
 
 /// One row per scheduling-provider response for an appointment (append-only). An appointment

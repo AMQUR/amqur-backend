@@ -18,10 +18,11 @@ import {
 } from '../../src/appointments/appointment.service';
 import { OutboxProcessorService } from '../../src/integrations/core/outbox-processor.service';
 import { ConversationComposerService } from '../../src/chat/compose/conversation-composer.service';
+import { ChatService } from '../../src/chat/chat.service';
 
 /**
  * Regression tests for the PR #55 review findings on the sales-desk cards and the sandbox
- * scheduler (R5, R7, R10, R12). Real API, Postgres, the in-process SANDBOX scheduler.
+ * scheduler (R5–R7, R10, R12, R15). Real API, Postgres, the in-process SANDBOX scheduler.
  * Synthetic data only: example.invalid addresses and 555-01xx numbers.
  */
 type Card = Record<string, unknown> & { kind: string };
@@ -35,7 +36,7 @@ type Chat = {
 const EMAIL = 'robin.vale@example.invalid';
 const PHONE = '(312) 555-0147';
 
-describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)', () => {
+describe('sales desk + sandbox scheduler — review findings (R5–R7, R10, R12, R15)', () => {
   let ctx: E2eCtx;
   let sbx: DemoDealer; // salesDeskCards + sandbox scheduler
   let plain: DemoDealer; // salesDeskCards, no scheduler (request-only)
@@ -155,6 +156,63 @@ describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)'
     });
   }, 120_000);
   afterAll(async () => ctx.app.close());
+
+  // ───────────────────────────────────────── R15: SSE heartbeat
+
+  describe('R15 — POST /chat/stream sends a comment heartbeat while a turn is running', () => {
+    it('a slow turn gets ": hb" comment frames between turn.started and the reply; events are unchanged', async () => {
+      const svc = ctx.app.get(ChatService);
+      const real = svc.chat.bind(svc);
+      const spy = jest.spyOn(svc, 'chat').mockImplementation(async (...a) => {
+        await new Promise((r) => setTimeout(r, 400)); // a slow model / tool call
+        return real(...(a as Parameters<typeof real>));
+      });
+      const prev = process.env.CHAT_STREAM_HEARTBEAT_MS;
+      process.env.CHAT_STREAM_HEARTBEAT_MS = '50';
+      try {
+        const r = await srv()
+          .post('/api/chat/stream')
+          .set('Authorization', `Bearer ${await tokenFor(plain)}`)
+          .set('Origin', SIM_ORIGIN)
+          .send({ message: 'hello' });
+        expect(r.status).toBe(200);
+        const frames = r.text.split('\n\n').filter(Boolean);
+        const beats = frames.filter((f) => f === ': hb');
+        expect(beats.length).toBeGreaterThanOrEqual(3);
+        // Heartbeats sit between the first event and the reply — and stop with the turn.
+        expect(frames[0]).toMatch(/^event: turn\.started/);
+        expect(frames[1]).toBe(': hb');
+        expect(frames[frames.length - 1]).toMatch(/^event: turn\.completed/);
+        // A parser that only reads `data:` lines sees exactly the documented events.
+        const events = frames
+          .map((f) =>
+            f
+              .split('\n')
+              .filter((l) => l.startsWith('data:'))
+              .map((l) => l.slice(5).trim())
+              .join('\n'),
+          )
+          .filter(Boolean)
+          .map((d) => (JSON.parse(d) as { type: string }).type);
+        expect(events[0]).toBe('turn.started');
+        expect(events[events.length - 1]).toBe('turn.completed');
+        expect(events).not.toContain('hb');
+      } finally {
+        spy.mockRestore();
+        if (prev === undefined) delete process.env.CHAT_STREAM_HEARTBEAT_MS;
+        else process.env.CHAT_STREAM_HEARTBEAT_MS = prev;
+      }
+    });
+
+    it('a fast turn (default 15 s interval) carries no heartbeat at all', async () => {
+      const r = await srv()
+        .post('/api/chat/stream')
+        .set('Authorization', `Bearer ${await tokenFor(plain)}`)
+        .set('Origin', SIM_ORIGIN)
+        .send({ message: 'hello' });
+      expect(r.text).not.toContain(': hb');
+    });
+  });
 
   // ───────────────────────────────────────── R12: lead-form consent evidence
 

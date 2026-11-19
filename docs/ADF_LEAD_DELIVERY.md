@@ -29,7 +29,7 @@ The existing JSON `crm.webhook` path (`CRM_WEBHOOK_URL`) is unchanged and indepe
 | Enqueue, outbox handler, replay, reconciliation | `lead-delivery.service.ts` |
 | Operator API | `lead-delivery-ops.controller.ts` |
 | Hook | `CrmSyncService.onLeadChanged` (`src/integrations/crm/crm-sync.service.ts`) |
-| Migrations | `prisma/migrations/20261118100000_lead_delivery_adf`, `20261118120000_lead_delivery_mode` |
+| Migrations | `prisma/migrations/20261118100000_lead_delivery_adf`, `20261118120000_lead_delivery_mode`, `20261118120100_appointment_lead_index` (index for the latest-appointment-of-a-lead lookup) |
 | Mock SMTP | `test-infra/mocks/mock-smtp.mjs` (compose service `mock-smtp`; failure modes `tempfail`, `reject`, `drop`, `slow`) |
 | Consent standing from the ledger (pure) | `lead-consent-standing.ts` |
 | Tests | `src/integrations/adf/*.spec.ts`, `test/suites/adf-lead-delivery.e2e-spec.ts`, `test/suites/adf-review-findings.e2e-spec.ts` |

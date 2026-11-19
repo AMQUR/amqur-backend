@@ -21,8 +21,10 @@ import {
   ChatStreamEvent,
   replyEvents,
   SSE_HEADERS,
+  SSE_HEARTBEAT_FRAME,
   sseFrame,
   streamErrorEvent,
+  streamHeartbeatMs,
 } from './stream/chat-stream';
 
 type ChatRequest = {
@@ -156,10 +158,22 @@ export class ChatController {
       conversationIdIssued: turn.conversationIdIssued,
     });
 
+    // Comment-frame heartbeat for as long as the turn is running (ignored by SSE parsers).
+    const heartbeat = setInterval(() => {
+      if (!open || res.writableEnded || res.destroyed) return;
+      try {
+        res.write(SSE_HEARTBEAT_FRAME);
+      } catch {
+        open = false;
+      }
+    }, streamHeartbeatMs());
+    heartbeat.unref?.();
+
     try {
       const response = await turn.run((status) =>
         send({ type: 'status', ...status }),
       );
+      clearInterval(heartbeat);
       for (const event of replyEvents(response)) send(event);
       this.metrics.increment(
         open ? 'chat.stream.completed' : 'chat.stream.client_gone',
@@ -174,6 +188,7 @@ export class ChatController {
       this.metrics.increment('chat.stream.failed');
       send(streamErrorEvent(body.language));
     } finally {
+      clearInterval(heartbeat);
       if (!res.writableEnded) res.end();
     }
   }

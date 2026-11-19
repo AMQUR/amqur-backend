@@ -21,6 +21,15 @@ differs.
   ordinary JSON error responses. A client should treat `404`/`405` or a non-SSE `200` as "no
   stream support" and fall back to `POST /api/chat`.
 - Frames: `event: <type>\ndata: <one JSON object>\n\n`. Unknown `type`s must be ignored.
+- **Heartbeat:** while a turn is running the server writes the SSE comment frame `: hb\n\n`
+  every 15 s (`CHAT_STREAM_HEARTBEAT_MS`, 25–60000 ms). It starts after `turn.started` and
+  stops when the turn finishes, so a turn that completes sooner carries none. A comment frame
+  has no `event:` or `data:` line: a spec-compliant SSE parser (and `EventSource`) ignores it,
+  and a hand-rolled parser **must** skip any frame without a `data:` line. It exists so proxies
+  and mobile networks do not drop an idle connection during a slow turn; a client may also use
+  it as a liveness signal (no event and no heartbeat for well over the interval ⇒ treat the
+  connection as dead and fall back to `POST /api/chat`). It carries no information about the
+  turn.
 
 | Order | Event | Fields |
 |---|---|---|

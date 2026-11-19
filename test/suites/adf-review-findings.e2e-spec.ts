@@ -13,7 +13,7 @@ import { ConsentService } from '../../src/messaging/consent.service';
 import { SmtpLeadTransport } from '../../src/integrations/adf/transports/smtp.transport';
 
 /**
- * Regression tests for the PR #55 review findings on ADF lead delivery (R1–R4, R9, R11, R14).
+ * Regression tests for the PR #55 review findings on ADF lead delivery (R1–R4, R9, R11, R14, R15).
  * Real API module, Postgres, durable outbox, in-process sandbox sink and the loopback mock SMTP.
  * Two SIMULATED rooftops; every address is a reserved *.example.invalid mailbox and every
  * customer is synthetic (555-01xx phones).
@@ -33,7 +33,7 @@ const ENV_KEYS = [
 const KEYS = ['one', 'two'] as const;
 type Key = (typeof KEYS)[number];
 
-describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => {
+describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14, R15)', () => {
   let ctx: E2eCtx;
   let deliveries: LeadDeliveryService;
   let routes: LeadDeliveryRouteService;
@@ -841,6 +841,27 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
       // second rooftop's inbox under the first rooftop's delivery row.
       expect(sinkFor(d.id)).toHaveLength(0);
       expect(sink.messages().filter((m) => m.to === ADDR_A)).toHaveLength(0);
+    });
+  });
+
+  // ───────────────────────────────────────── R15: index for the appointment-by-lead lookup
+
+  describe('R15 — the appointment-by-lead lookup is indexed', () => {
+    it('Appointment has an index on (tenantId, leadId, createdAt) and the schema is in sync with the migrations', async () => {
+      const rows = await ctx.prisma.$queryRaw<
+        Array<{ indexname: string; indexdef: string }>
+      >`SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'Appointment'`;
+      const idx = rows.find(
+        (r) => r.indexname === 'Appointment_tenantId_leadId_createdAt_idx',
+      );
+      expect(idx?.indexdef).toMatch(/\("tenantId", "leadId", "createdAt"\)/);
+      // …and the new column from R3 is there too (additive migrations applied).
+      const cols = await ctx.prisma.$queryRaw<
+        Array<{ column_name: string; is_nullable: string }>
+      >`SELECT column_name, is_nullable FROM information_schema.columns WHERE table_name = 'LeadDelivery' AND column_name = 'deliveryMode'`;
+      expect(cols).toEqual([
+        { column_name: 'deliveryMode', is_nullable: 'YES' },
+      ]);
     });
   });
 

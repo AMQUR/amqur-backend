@@ -205,6 +205,13 @@ export const envValidationSchema = Joi.object({
     .optional()
     .allow('')
     .default('AMQUR AI'),
+  /** Interval of the SSE comment heartbeat on POST /chat/stream while a turn runs, ms. */
+  CHAT_STREAM_HEARTBEAT_MS: Joi.number()
+    .integer()
+    .min(25)
+    .max(60000)
+    .optional()
+    .default(15000),
   /**
    * Explicit opt-in for the SANDBOX (demo) scheduler. Default off. It is additionally refused
    * outright in production — setting it to `true` there fails validation at boot.
