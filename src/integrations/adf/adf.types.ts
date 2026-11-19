@@ -31,7 +31,11 @@ export type AdfCustomer = {
   phoneType?: AdfPhoneType;
 };
 
-/** Mirrors Appointment.status; only CONFIRMED + verified availability is ever worded as confirmed. */
+/**
+ * Mirrors Appointment.status. R8: the LEAD document never words an appointment as confirmed —
+ * a confirmation is a separate event, reported (if at all) by an appointment update that is
+ * backed by a scheduling-provider receipt.
+ */
 export type AdfAppointmentFacts = {
   status:
     | 'REQUESTED'
@@ -44,8 +48,22 @@ export type AdfAppointmentFacts = {
   /** True only when a human or a verified calendar confirmed the slot. */
   availabilityVerified: boolean;
   type?: string;
-  /** Customer-requested (or, when confirmed, scheduled) date/time as plain text. */
+  /** Customer-requested date/time as plain text. */
   when?: string;
+};
+
+/**
+ * R8 appointment update: marks the document as a FOLLOW-UP to a lead that was already sent.
+ * `text` is the complete, already-decided appointment wording (see lead-appointment-update.ts).
+ */
+export type AdfFollowUpFacts = {
+  /** The lead reference of the ORIGINAL delivery, repeated verbatim. */
+  leadRef: string;
+  appointmentRef: string;
+  state: string;
+  text: string;
+  /** ISO-8601 instant the update was recorded (stable across retries). */
+  recordedAt: string;
 };
 
 /** true = recorded opt-in, false = recorded opt-out, null = nothing recorded. */
@@ -60,6 +78,8 @@ export type AdfCommentFacts = {
   requestedAction?: string;
   preferredContact?: string;
   appointment?: AdfAppointmentFacts | null;
+  /** Present ONLY on an appointment update; replaces the lead's own appointment line. */
+  followUp?: AdfFollowUpFacts;
   consent: AdfConsentSummary;
   source?: string;
   utmSource?: string;
@@ -81,6 +101,12 @@ export type AdfLeadDto = {
   vendorName: string;
   /** `<provider><name>` */
   providerName: string;
+  /**
+   * `<prospect status="…">` per ADF 1.0 (`new` | `resend`). A lead document is always `new`
+   * (the default). Only an appointment update — the same lead reference sent again with a
+   * follow-up comment — is `resend`.
+   */
+  prospectStatus?: 'new' | 'resend';
 };
 
 export const ADF_VERSION = '1.0';

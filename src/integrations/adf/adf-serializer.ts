@@ -144,7 +144,12 @@ function vehicleXml(v: AdfVehicle): string[] {
 const yn = (v: boolean | null): string =>
   v === true ? 'yes' : v === false ? 'no' : 'not recorded';
 
-/** A REQUESTED appointment is never worded as confirmed. */
+/**
+ * The appointment line of a LEAD document. R8: it never claims a confirmation, whatever the
+ * appointment row says — the lead does not wait for, depend on, or vouch for an appointment.
+ * A booking that is already marked confirmed is carried as the customer's request with an
+ * explicit "status is not stated here" note, so it is not denied either.
+ */
 export function describeAppointment(
   a: AdfAppointmentFacts | null | undefined,
 ): string {
@@ -154,7 +159,7 @@ export function describeAppointment(
   const detail = [type, when].filter(Boolean).join(' ');
   const suffix = detail ? ` (${detail})` : '';
   if (a.status === 'CONFIRMED' && a.availabilityVerified === true)
-    return `CONFIRMED by dealership${suffix}`;
+    return `REQUESTED by customer${suffix} - booking status is NOT stated in this lead, see the appointment record`;
   if (
     a.status === 'REQUESTED' ||
     a.status === 'PENDING_CONFIRMATION' ||
@@ -169,6 +174,7 @@ export function describeAppointment(
 
 /** Short structured note — never the chat transcript. */
 export function buildAdfComments(c: AdfCommentFacts): string {
+  if (c.followUp) return buildFollowUpComments(c, c.followUp);
   const parts: string[] = [`Department: ${c.department}`];
   const action = sanitizeAdfText(c.requestedAction, MAX.commentField);
   if (action) parts.push(`Requested action: ${action}`);
@@ -188,6 +194,25 @@ export function buildAdfComments(c: AdfCommentFacts): string {
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}=${v}`);
   if (utm.length) parts.push(`Attribution: ${utm.join(', ')}`);
+  return sanitizeAdfText(parts.join('; '), MAX.comments);
+}
+
+/**
+ * R8 appointment update. The first words say what the document is and which lead it belongs
+ * to, so a person (or a parser rule) can attach it instead of opening a new lead.
+ */
+function buildFollowUpComments(
+  c: AdfCommentFacts,
+  f: NonNullable<AdfCommentFacts['followUp']>,
+): string {
+  const parts: string[] = [
+    `APPOINTMENT UPDATE for existing lead ${sanitizeAdfText(f.leadRef, MAX.ref)} - follow-up to a lead already sent, NOT a new lead`,
+    `Department: ${c.department}`,
+    `Appointment: ${sanitizeAdfText(f.text, 400)}`,
+    `Appointment reference: ${sanitizeAdfText(f.appointmentRef, MAX.ref)}`,
+    `Update: ${sanitizeAdfText(f.state, 20)} recorded ${sanitizeAdfText(f.recordedAt, 40)}`,
+    `Consent: text=${yn(c.consent.text)}, email=${yn(c.consent.email)}, call=${yn(c.consent.call)}`,
+  ];
   return sanitizeAdfText(parts.join('; '), MAX.comments);
 }
 
@@ -233,7 +258,7 @@ export function serializeAdf(
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<?adf version="${ADF_VERSION}"?>`,
     '<adf>',
-    '  <prospect status="new">',
+    `  <prospect status="${dto.prospectStatus === 'resend' ? 'resend' : 'new'}">`,
     el(
       '    ',
       'id',

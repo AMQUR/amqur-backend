@@ -383,7 +383,10 @@ describe('ADF 1.0 serializer', () => {
           status: 'CONFIRMED',
           availabilityVerified: true,
         }),
-      ).toBe('CONFIRMED by dealership');
+        // R8: was 'CONFIRMED by dealership'. The lead never vouches for a booking.
+      ).toBe(
+        'REQUESTED by customer - booking status is NOT stated in this lead, see the appointment record',
+      );
       expect(describeAppointment(null)).toBe('none requested');
     });
 

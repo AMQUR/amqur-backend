@@ -143,7 +143,14 @@ describe('lead → ADF DTO mapper', () => {
         },
       }),
     );
-    expect(confirmed).toContain('Appointment: CONFIRMED by dealership');
+    // R8: the lead document never claims a confirmation, even for a CONFIRMED appointment row
+    // — a confirmation is a separate, receipt-backed appointment update. (Before R8 this
+    // asserted 'Appointment: CONFIRMED by dealership'.) It carries the REQUESTED time only.
+    expect(confirmed).toContain(
+      'Appointment: REQUESTED by customer (SALES 2026-11-21 15:00) - booking status is NOT stated in this lead, see the appointment record',
+    );
+    expect(confirmed).not.toMatch(/CONFIRMED by/);
+    expect(confirmed).not.toContain('2026-11-21T21:00:00');
   });
 
   it('consent is reported as recorded / not recorded; opt-out wins; internal notes stay internal', () => {
