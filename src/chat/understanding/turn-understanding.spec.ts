@@ -248,3 +248,53 @@ describe('understandTurn — inventory filter criteria', () => {
     expect(r.entities.vehicle?.maxMileage).toBe(50000);
   });
 });
+
+describe('understandTurn — Spanish safety, handoff and complaint (golden-eval regressions)', () => {
+  it.each([
+    'Se me fueron los frenos mientras manejaba',
+    'Me fallaron los frenos en la autopista',
+    'Sale humo del motor de mi carro',
+    'Huele a gasolina dentro del carro',
+    'Acabo de tener un accidente',
+    'Se me apagó el carro en la autopista',
+  ])('treats "%s" as urgent safety, never as a parts or booking flow', (m) => {
+    const got = ids(m);
+    expect(got).toContain('SAFETY_URGENT');
+  });
+
+  it.each([
+    'Por favor comuníqueme con una persona',
+    'Quiero hablar con un asesor',
+    'Páseme con un vendedor',
+    'Necesito una persona real',
+    'Que me llame alguien por favor',
+  ])('hands off on "%s"', (m) => {
+    expect(ids(m)).toContain('HUMAN_HANDOFF');
+  });
+
+  it('does not treat a Spanish identity question as a transfer request', () => {
+    expect(ids('¿Usted es una persona?')).not.toContain('HUMAN_HANDOFF');
+    expect(ids('¿Estoy hablando con un robot?')).not.toContain('HUMAN_HANDOFF');
+  });
+
+  it('routes a customer who is already working with a named colleague to staff', () => {
+    expect(ids("I'm already talking with Richie")).toContain('HUMAN_HANDOFF');
+    expect(ids('Ya estoy hablando con Richie')).toContain('HUMAN_HANDOFF');
+    // talking with the assistant itself is not a staff relationship
+    expect(ids("I'm already talking with you about it")).not.toContain(
+      'HUMAN_HANDOFF',
+    );
+  });
+
+  it('recognises Spanish frustration as a complaint', () => {
+    expect(
+      ids('Es la tercera vez que pregunto y nadie me llama. Estoy furioso.'),
+    ).toContain('COMPLAINT');
+  });
+
+  it('keeps ordinary Spanish brake service as service, not an emergency', () => {
+    expect(ids('Quiero revisar los frenos el viernes')).not.toContain(
+      'SAFETY_URGENT',
+    );
+  });
+});

@@ -1294,6 +1294,15 @@ export function understandTurn(
   ) {
     add('SAFETY_URGENT', 0.95, 'urgent safety language');
   }
+  // Spanish safety language. Checked on its own so "frenos" / "humo" never fall through to a
+  // parts or service-booking flow: a failed brake is an emergency, not a parts inquiry.
+  if (
+    /(?:se me fueron|me fallaron|fallaron|no (?:me )?(?:sirven|funcionan|responden|agarran)|me qued[eé] sin|no tengo|sin) (?:los )?frenos|frenos (?:fallaron|no (?:sirven|funcionan|responden))|sale humo|est[aá] (?:saliendo|echando) humo|echa humo|humo del (?:motor|cap[oó]|carro|auto|coche)|se (?:est[aá] )?(?:incendi|quem)|en llamas|huele a (?:gasolina|quemado)|fuga de (?:gasolina|combustible)|(?:se )?(?:trab[oó]|bloque[oó]) (?:la direcci[oó]n|el volante)|se (?:me )?apag[oó] (?:el (?:carro|auto|coche|motor) )?en (?:la )?(?:carretera|autopista|v[ií]a|medio del tr[aá]fico)|(?:tuve|acabo de tener|estuve en) un (?:accidente|choque)|(?:acabo de |me )?choqu[eé]|se (?:activ[oó]|abri[oó]|dispar[oó]) (?:la bolsa de aire|el airbag)/.test(
+      t,
+    )
+  ) {
+    add('SAFETY_URGENT', 0.95, 'urgent safety language (es)');
+  }
 
   // ── HUMAN HANDOFF: "agent"/"person" only with request verbs; not "real estate agent", "personal"
   if (
@@ -1314,11 +1323,42 @@ export function understandTurn(
   ) {
     add('HUMAN_HANDOFF', 0.95, 'explicit human request');
   }
+  // Spanish requests for a person. "¿es usted una persona?" asks what the assistant is and is
+  // answered as an identity question, so it is excluded here.
+  if (
+    (/(?:comun[ií]quen?me|p[aá]s[ae]n?me|con[eé]cten?me|transfi[eé]ran?me|p[oó]ngan?me|(?:quiero|quisiera|necesito|puedo|podr[ií]a|me gustar[ií]a|d[eé]jeme|d[eé]jame) hablar) con (?:una? |el |la |alg[uú]n |alguna )?(?:persona|humano|alguien|asesor[a]?|agente|representante|vendedor[a]?|gerente|encargad[oa]|operador[a]?)|(?:quiero|necesito|prefiero) (?:a )?(?:una persona|un humano|un agente|un asesor|un representante)(?: real| de verdad)?|que me (?:llame|contacte|atienda) (?:alguien|una persona|un asesor)|ll[aá]men?me/.test(
+      t,
+    ) &&
+      !/(?:es usted|usted es|eres|estoy hablando con|hablo con) (?:un |una )?(?:persona|humano|robot|bot)/.test(
+        t,
+      )) ||
+    // "I'm already working with Richie" — a named colleague owns this customer; do not take over.
+    (/\b(?:i'?m|i am|i was|i'?ve been|i have been|we'?re|we are) (?:already |currently )?(?:talking|working|dealing|speaking|in touch|texting) (?:to|with) (?!you\b|the (?:ai|bot|assistant)\b|an? (?:ai|bot|assistant)\b)[a-z]/.test(
+      t,
+    ) &&
+      /\b(?:already|currently|been)\b/.test(t)) ||
+    /ya (?:estoy|estaba|he estado) (?:hablando|trabajando|tratando) con (?!usted|ustedes|el asistente|la ia)[a-z]/.test(
+      t,
+    )
+  ) {
+    add(
+      'HUMAN_HANDOFF',
+      0.95,
+      'explicit human request (es / existing staff contact)',
+    );
+  }
   if (
     sentiment === 'frustrated' &&
     /\b(nobody|no one|called|waiting|help|ignored|never)\b/.test(t)
   ) {
     add('COMPLAINT', 0.9, 'frustration + unresolved contact');
+  }
+  if (
+    /(?:estoy|ando|me tienen|estamos) (?:muy |bien |super |s[uú]per )?(?:furios[oa]|molest[oa]|enojad[oa]|hart[oa]|indignad[oa]|cansad[oa] de)|nadie me (?:llama|llam[oó]|contesta|contest[oó]|responde|respondi[oó]|atiende|ayuda)|(?:es|esto es|qu[eé]) (?:inaceptable|una verg[uü]enza|p[eé]simo)|p[eé]simo servicio|quiero (?:poner|presentar) una queja|tercera vez que (?:pregunto|llamo|escribo)/.test(
+      t,
+    )
+  ) {
+    add('COMPLAINT', 0.9, 'frustration + unresolved contact (es)');
   }
 
   // ── HOURS: "open"/"close" only with time/status context ("close to", "open to" excluded)
