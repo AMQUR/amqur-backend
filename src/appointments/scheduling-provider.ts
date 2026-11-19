@@ -39,6 +39,8 @@ export type SchedulingOutcome =
       providerStatus: string;
       scheduledAtUtc: string;
       providerRequestId?: string;
+      /** Verbatim provider status for the receipt, when different from providerStatus. */
+      rawStatus?: string;
     }
   | {
       kind: 'pending';
@@ -57,10 +59,16 @@ export type SchedulingContext = {
   timeoutMs: number;
   idempotencyKey: string;
   correlationId: string;
+  /** Clock override for deterministic tests (defaults to the wall clock). */
+  now?: Date;
 };
 
 export interface ServiceSchedulingProviderAdapter {
   readonly providerId: string;
+  /** Customer-facing scheduler name shown on a confirmation card. */
+  readonly displayName?: string;
+  /** True for demo/sandbox schedulers: every receipt and card is labelled sandbox. */
+  readonly sandbox?: boolean;
   capabilities(): SchedulingCapabilities;
   getAvailability?(
     ctx: SchedulingContext,
@@ -77,6 +85,8 @@ export interface ServiceSchedulingProviderAdapter {
       department: SchedulingDepartment;
       startUtc: string;
       durationMinutes: number;
+      /** Provider slot id when the customer picked an offered slot. */
+      providerSlotId?: string;
       customer: {
         name?: string | null;
         phone?: string | null;

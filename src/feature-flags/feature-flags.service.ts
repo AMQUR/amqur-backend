@@ -67,6 +67,17 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   smsAiReply: false,
   email: false,
   whatsapp: false,
+  /**
+   * Structured widget cards (lead form, appointment picker, enriched appointment/vehicle
+   * fields) and structured submissions on POST /chat. Default off: with it off the chat
+   * response is identical to the text-only contract.
+   */
+  salesDeskCards: false,
+  /**
+   * SANDBOX (demo) scheduler. Non-production only — forced off when NODE_ENV=production.
+   * Also needs an enabled + liveReady `appointments` IntegrationConnection (provider MOCK).
+   */
+  sandboxScheduler: false,
 };
 
 @Injectable()
@@ -127,6 +138,8 @@ export class FeatureFlagsService {
       merged.tekionIntegration = false;
     }
     for (const k of Object.keys(RESERVED_FLAGS)) merged[k] = false;
+    // The sandbox scheduler can never be switched on in production.
+    if (process.env.NODE_ENV === 'production') merged.sandboxScheduler = false;
     void vautoLive; // vAuto health is reported by the integration, not a flag
 
     return merged;
@@ -144,7 +157,10 @@ export class FeatureFlagsService {
             RESERVED_FLAGS[k] ??
             (k === 'tekionIntegration' && !v
               ? 'no_live_ready_tekion_connection'
-              : undefined),
+              : k === 'sandboxScheduler' &&
+                  process.env.NODE_ENV === 'production'
+                ? 'sandbox_scheduler_forbidden_in_production'
+                : undefined),
         },
       ]),
     );
