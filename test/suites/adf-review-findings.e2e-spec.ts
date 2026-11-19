@@ -469,6 +469,39 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14, R15)', (
       }
       expect(sinkFor(d.id)).toHaveLength(1); // only the original sandbox record
       expect(await smtp.messages()).toHaveLength(0);
+
+      // An operator replay does the same for a sandbox-acknowledged row, and is audited.
+      const other = await attempt(
+        (await submit('two', (await newLead('two')).id))!.id,
+      );
+      expect(other.status).toBe('ACCEPTED');
+      const scope = { tenantId: ids.two.tenantId, locationId: null };
+      // Not live: an acknowledged row is simply not replayable.
+      await expect(
+        deliveries.replay(scope, other.id, staffTwo),
+      ).rejects.toMatchObject({ message: 'not_replayable:ACCEPTED' });
+      process.env.NODE_ENV = 'production';
+      process.env.LEAD_DELIVERY_MODE = 'live';
+      try {
+        expect(
+          await deliveries.replay(scope, other.id, staffTwo),
+        ).toMatchObject({ status: 'QUEUED' });
+      } finally {
+        process.env.NODE_ENV = 'test';
+        process.env.LEAD_DELIVERY_MODE = 'sandbox';
+      }
+      expect(
+        await ctx.prisma.auditLog.findFirst({
+          where: {
+            tenantId: ids.two.tenantId,
+            action: 'lead_delivery.replay',
+            resourceId: other.id,
+          },
+        }),
+      ).toMatchObject({
+        userId: staffTwo,
+        metadata: { fromStatus: 'ACCEPTED', sandboxAckSuperseded: true },
+      });
       expect(await history(d.id)).toEqual([
         'QUEUED:enqueued',
         'SENT:transport_handoff',

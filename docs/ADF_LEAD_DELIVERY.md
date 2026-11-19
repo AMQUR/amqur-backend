@@ -85,7 +85,13 @@ Rules (`transitionDelivery`):
 - A duplicate or late event for a state already reached or passed is a no-op. A late failure or
   block can never erase an acknowledgement.
 - `CRM_REJECTED` and `CRM_MATCHED` are terminal.
-- Only `FAILED`, `DEAD` and `BLOCKED` can be replayed, and only by an operator.
+- Only `FAILED`, `DEAD` and `BLOCKED` can be replayed by an operator. Two transitions back to
+  `QUEUED` happen without one, each with its own evidence: `gate_reevaluation` (a row blocked by
+  an environment-level reason whose cause is gone) and `sandbox_ack_superseded` (a
+  sandbox-acknowledged row in a live environment) — see "Gates".
+- `ACCEPTED` may also be recorded from `FAILED` / `DEAD` with `late_transport_receipt` evidence
+  when the transport's acknowledgement arrives after another attempt had marked the row failed
+  (see "Idempotency and retries").
 - A `SENT` row is another worker's attempt until it is stale (see "Idempotency and retries"). A
   stale `SENT` row can be handed off again **or** become `BLOCKED` when a gate has closed in the
   meantime; a fresh one is left alone and the outbox retries later (`delivery_in_flight`).
@@ -244,7 +250,8 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
 - Key: `lead-delivery:v1:{leadId}:ADF_EMAIL:{locationId}:{department}`, unique per tenant. This
   is the route's natural key, so it is deterministic per (tenant, lead, channel, route).
 - Double submit, a later lead update, an outbox retry or a replay never create a second row. An
-  acknowledged delivery is never handed to a transport again.
+  acknowledged delivery is never handed to a transport again (a *sandbox* acknowledgement does
+  not count as one in a live environment — see "Gates").
 - Retryable failures (SMTP 4xx, connection, timeout) leave the row `FAILED` and use the existing
   outbox backoff; after 8 attempts the row is `DEAD`. Permanent failures (SMTP 5xx, bad address,
   invalid document) go straight to `DEAD`.

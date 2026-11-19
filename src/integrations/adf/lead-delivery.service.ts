@@ -1092,7 +1092,23 @@ export class LeadDeliveryService implements OnModuleInit {
     userId: string,
   ) {
     const d = await this.owned(scope, id);
-    if (await this.supersedeSandboxAck(d, userId)) return this.get(scope, id);
+    if (await this.supersedeSandboxAck(d, userId)) {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId: d.tenantId,
+          userId,
+          action: 'lead_delivery.replay',
+          resource: 'lead_delivery',
+          resourceId: d.id,
+          metadata: {
+            fromStatus: d.status,
+            department: d.department,
+            sandboxAckSuperseded: true,
+          },
+        },
+      });
+      return this.get(scope, id);
+    }
     if (!REPLAYABLE_STATUSES.has(d.status))
       throw new ConflictException(`not_replayable:${d.status}`);
     await this.prisma.$transaction(async (tx) => {
