@@ -510,17 +510,23 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
 
   it('ADF_SEND_ENABLED=false ⇒ nothing is handed to any transport', async () => {
     await smtp.clear();
-    process.env.ADF_SEND_ENABLED = 'false';
     for (const transport of ['sink', 'smtp']) {
       process.env.ADF_SANDBOX_TRANSPORT = transport;
+      // Queued while sending was on, switched off before the worker ran: blocked, not sent.
+      process.env.ADF_SEND_ENABLED = 'true';
       const lead = await newLead('infiniti');
-      const d = await attempt((await submit('infiniti', lead.id))!.id);
+      const queued = (await submit('infiniti', lead.id))!;
+      process.env.ADF_SEND_ENABLED = 'false';
+      const d = await attempt(queued.id);
       expect(d).toMatchObject({
         status: 'BLOCKED',
         blockedReason: 'send_disabled',
         attempts: 0,
         sentAt: null,
       });
+      // (R11) A lead that arrives while the master switch is off creates no row at all.
+      const later = await newLead('infiniti');
+      expect(await submit('infiniti', later.id)).toBeNull();
     }
     expect(sink.messages()).toHaveLength(0);
     expect(await smtp.messages()).toHaveLength(0);
@@ -1218,8 +1224,9 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
       await smtp.mode('reject', 1);
       await attempt(await run('north'));
       await smtp.mode('none');
+      const blocked = await run('infiniti');
       process.env.ADF_SEND_ENABLED = 'false';
-      await attempt(await run('infiniti'));
+      await attempt(blocked);
     } finally {
       for (const s of spies) s.mockRestore();
     }

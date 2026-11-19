@@ -33,7 +33,7 @@ All provider health is visible at Command Center → Integrations (`GET /api/ops
 | `uploads` | Staff uploads | durable storage in production |
 | `sms` | Outbound/inbound SMS | live-ready Twilio connection + consent |
 | `automatedFollowup` | Kill switch for all campaigns (plus per-campaign enable) | `sms` |
-| `adfLeadDelivery` | Queue per-rooftop ADF/XML lead deliveries (default off) | a send also needs `ADF_SEND_ENABLED` and an enabled, verified `LeadDeliveryRoute` |
+| `adfLeadDelivery` | Queue per-rooftop ADF/XML lead deliveries (default off) | rows are only created while `ADF_SEND_ENABLED=true`; a send also needs an enabled, verified `LeadDeliveryRoute`; in production a send additionally needs `LEAD_DELIVERY_MODE=live` (otherwise `BLOCKED: sandbox_in_production`) |
 | `tekionIntegration` | Tekion writeback | forced off without live-ready connection + verified contract |
 | `salesDeskCards` | Structured widget cards (lead form, appointment picker, enriched appointment/vehicle fields) and structured submissions on `POST /chat`. Default off — with it off the chat response is the text-only contract | `leadCapture` (form), `appointments` (picker), `sms` (TEXT channel) |
 | `sandboxScheduler` | Sandbox (demo) scheduler for a tenant/location. Default off; **forced off in production** | non-production + `MOCK` `appointments` connection |

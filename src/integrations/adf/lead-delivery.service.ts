@@ -185,6 +185,9 @@ export class LeadDeliveryService implements OnModuleInit {
     if (!lead) return this.skip('lead_not_found');
     const flags = await this.flags.resolve(lead.tenantId, lead.locationId);
     if (flags[ADF_FEATURE_FLAG] !== true) return this.skip('flag_off');
+    // Master switch off ⇒ no row at all (exactly like the rooftop flag being off). A row here
+    // would sit BLOCKED `send_disabled` and read as a delivery problem when nothing is wrong.
+    if (!readLeadDeliveryEnv().sendEnabled) return this.skip('send_disabled');
     // Nothing to hand a CRM yet; a later lead update with a contact method enqueues.
     if (!lead.email && !lead.phone) return this.skip('no_contact_method');
 

@@ -112,7 +112,12 @@ Rules (`transitionDelivery`):
 
 A send happens only when every one of these is true:
 
-1. `ADF_SEND_ENABLED=true` (default `false`);
+1. `ADF_SEND_ENABLED=true` (default `false`; with it off **no delivery row is created at all**,
+   exactly as with the rooftop flag off — so turning the rooftop flag on first leaves no
+   permanently blocked rows. A lead that arrives while it is off is queued on its next change
+   once sending is on; it is not back-filled. A row that was already queued when the switch
+   was turned off is `BLOCKED: send_disabled` and is re-queued automatically when it is turned
+   back on);
 2. the rooftop's feature flag `adfLeadDelivery` is on (default off; with it off no delivery row
    is created at all);
 3. the lead has a contact method, is not marked spam, and the customer has not opted out of

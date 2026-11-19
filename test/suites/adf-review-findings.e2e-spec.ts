@@ -646,6 +646,64 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
     });
   });
 
+  // ───────────────────────────────────────── R11: no permanent send_disabled rows
+
+  describe('R11 — enabling the rooftop flag before ADF_SEND_ENABLED leaves no permanently blocked rows', () => {
+    it('master switch off ⇒ no delivery row and no outbox event (like flag off); once on, the next lead change queues and sends', async () => {
+      const lead = await newLead('two');
+      process.env.ADF_SEND_ENABLED = 'false';
+      expect(
+        await deliveries.enqueueForLead(ids.two.tenantId, lead.id),
+      ).toEqual({ status: 'skipped', reason: 'send_disabled' });
+      expect(
+        await ctx.prisma.leadDelivery.count({ where: { leadId: lead.id } }),
+      ).toBe(0);
+      expect(
+        await ctx.prisma.outboxEvent.count({
+          where: {
+            tenantId: ids.two.tenantId,
+            idempotencyKey: { contains: lead.id },
+          },
+        }),
+      ).toBe(0);
+
+      process.env.ADF_SEND_ENABLED = 'true';
+      const d = (await submit('two', lead.id))!;
+      expect(d.status).toBe('QUEUED');
+      expect((await attempt(d.id)).status).toBe('ACCEPTED');
+      expect(sinkFor(d.id)).toHaveLength(1);
+    });
+
+    it('a row queued before the switch was turned off is BLOCKED send_disabled, and is re-queued automatically when it is turned back on', async () => {
+      const mine = { tenantId: ids.two.tenantId };
+      const d = (await submit('two', (await newLead('two')).id))!;
+      process.env.ADF_SEND_ENABLED = 'false';
+      expect(await attempt(d.id)).toMatchObject({
+        status: 'BLOCKED',
+        blockedReason: 'send_disabled',
+      });
+      // Still off: the sweep does nothing.
+      expect(await deliveries.reevaluateBlocked(mine)).toBe(0);
+      expect((await row(d.id)).status).toBe('BLOCKED');
+
+      process.env.ADF_SEND_ENABLED = 'true';
+      expect(await deliveries.reevaluateBlocked(mine)).toBeGreaterThanOrEqual(
+        1,
+      );
+      const queued = await row(d.id);
+      expect(queued).toMatchObject({ status: 'QUEUED', blockedReason: null });
+      expect((await attempt(d.id)).status).toBe('ACCEPTED');
+      expect(await history(d.id)).toEqual([
+        'QUEUED:enqueued',
+        'BLOCKED:send_disabled',
+        'QUEUED:gate_reevaluation',
+        'SENT:transport_handoff',
+        'ACCEPTED:transport_receipt',
+      ]);
+      expect(sinkFor(d.id)).toHaveLength(1);
+    });
+  });
+
   // ───────────────────────────────────────── R2: no duplicate send after a DB error
 
   describe('R2 — a failure recording the acknowledgement never causes a second send', () => {
