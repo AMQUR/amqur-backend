@@ -390,7 +390,7 @@ export class OperationsService {
       );
     if (st.appointment)
       bits.push(
-        `Appointment ${st.appointment.status.toLowerCase()}: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''}`.trim(),
+        `Appointment ${st.appointment.status.toLowerCase()}${st.appointment.sandbox ? ' (SANDBOX demo booking)' : ''}: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''}`.trim(),
       );
     if (st.service?.need) bits.push(`Service need: ${st.service.need}`);
     if (st.parts?.need)

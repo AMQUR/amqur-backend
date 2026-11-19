@@ -29,6 +29,7 @@ import {
   toZoned,
 } from '../common/time/zoned-time';
 import {
+  isSandboxBooking,
   ResolvedScheduler,
   SchedulingProviderRegistry,
 } from './scheduling-provider.registry';
@@ -464,11 +465,11 @@ export class AppointmentService {
           provider = {
             ref: res.externalId,
             name: scheduler.displayName,
-            sandbox: scheduler.sandbox,
+            sandbox: isSandboxBooking(scheduler),
             startsAt: res.scheduledAtUtc,
           };
           // A sandbox (demo) booking never enrols customer reminders.
-          if (!scheduler.sandbox)
+          if (!isSandboxBooking(scheduler))
             await this.enrollAppointmentReminder(input.tenantId, final);
         } else if (res.kind === 'pending') outcome = 'pending';
         else if (res.kind === 'failed') providerFailure = res.errorCode;
@@ -618,7 +619,7 @@ export class AppointmentService {
         connectionId: scheduler.connectionId,
         provider: scheduler.provider,
         displayName: scheduler.displayName,
-        sandbox: scheduler.sandbox,
+        sandbox: isSandboxBooking(scheduler),
         slots,
       };
     } catch {
@@ -732,7 +733,7 @@ export class AppointmentService {
         confirmedStart: r.confirmedStart ?? null,
         rawStatus: r.rawStatus?.slice(0, 120) ?? null,
         idempotencyKey: r.idempotencyKey,
-        sandbox: scheduler.sandbox || scheduler.mode === 'sandbox',
+        sandbox: isSandboxBooking(scheduler),
       },
     });
   }
@@ -992,7 +993,7 @@ export class AppointmentService {
       connectionId: p.connectionId,
       provider: p.provider,
       mode: p.mode,
-      sandbox: adapter.sandbox === true,
+      sandbox: isSandboxBooking({ adapter, mode: p.mode }),
       displayName: adapter.displayName ?? p.provider,
     };
     const ctx = this.registry.context(
@@ -1041,7 +1042,7 @@ export class AppointmentService {
         p.bookingIdempotencyKey,
       );
       if (!applied.conflict) {
-        if (!scheduler.sandbox)
+        if (!isSandboxBooking(scheduler))
           await this.enrollAppointmentReminder(p.tenantId, applied.appointment);
         this.metrics.increment('appointments.reconcile.confirmed');
         return 'reconciled_confirmed';

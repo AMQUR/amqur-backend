@@ -290,7 +290,12 @@ export type JourneySummary = {
     includesTaxAndFees: boolean;
   } | null;
   trade?: { summary: string; requestId?: string } | null;
-  appointment?: { id: string; label: string; status: string } | null;
+  appointment?: {
+    id: string;
+    label: string;
+    status: string;
+    sandbox?: boolean;
+  } | null;
   creditApplication?: { state: string } | null;
   otdQuote?: {
     status: string;
@@ -1589,7 +1594,7 @@ export class ChatOrchestrator {
       `Message: "${redactCreditSensitive(t.message).slice(0, 280)}"`,
       st.selectedVin ? `Vehicle: ${st.selectedVin}` : null,
       st.appointment
-        ? `Appointment request: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''} (${st.appointment.status})`
+        ? `Appointment request: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''} (${st.appointment.status}${st.appointment.sandbox ? ', SANDBOX demo booking' : ''})`
         : null,
       st.department ? `Department: ${st.department}` : null,
       this.customerName(t) ? `Name: ${this.customerName(t)}` : null,
@@ -3929,7 +3934,13 @@ export class ChatOrchestrator {
       requestedDate: a.requestedDate,
       requestedTime: a.requestedTime,
       outcome: res.outcome,
+      // Remembered so the recap, the model's memory and later cards keep the demo label.
+      ...(res.outcome === 'confirmed' && res.provider?.sandbox
+        ? { sandbox: true }
+        : {}),
     };
+    // A confirmation keeps its exact wording (incl. the demo label): no model rewrite.
+    if (res.outcome === 'confirmed') t.lockReply = true;
     t.st.draftAppointment = undefined;
     t.st.pending = 'none';
     t.evidence.push(
@@ -6201,7 +6212,9 @@ export class ChatOrchestrator {
     if (st.appointment) {
       const apptLabel =
         st.appointment.status === 'CONFIRMED'
-          ? 'confirmed appointment'
+          ? st.appointment.sandbox
+            ? 'SANDBOX DEMO booking (not a real appointment)'
+            : 'confirmed appointment'
           : st.appointment.status === 'CANCELLED'
             ? 'canceled appointment request'
             : 'appointment request (not confirmed)';
@@ -6670,11 +6683,11 @@ export class ChatOrchestrator {
       recap.push(
         tr(
           t.lang,
-          `your ${visitKind} request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? 'confirmed' : 'still a request'}`.replace(
+          `your ${visitKind} request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? (st.appointment.sandbox ? 'a demo booking on the sandbox scheduler, not a real appointment' : 'confirmed') : 'still a request'}`.replace(
             '  ',
             ' ',
           ),
-          `su solicitud de ${visitKindEs} del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? 'confirmada' : 'pendiente'}`,
+          `su solicitud de ${visitKindEs} del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? (st.appointment.sandbox ? 'como reserva de prueba en el sistema de demostración, no es una cita real' : 'confirmada') : 'pendiente'}`,
         ),
       );
     }
@@ -7153,11 +7166,17 @@ export class ChatOrchestrator {
     this.metrics.increment('chat.appointment_picker.already_booked');
     t.answers.push(
       row.status === 'CONFIRMED'
-        ? tr(
-            t.lang,
-            `You already have a ${what} booked for ${label}, so nothing new was booked.`,
-            `Ya tiene una ${what} reservada para el ${label}, así que no se reservó nada nuevo.`,
-          )
+        ? cur.sandbox
+          ? tr(
+              t.lang,
+              `You already have a ${what} booked for ${label} on the sandbox scheduler (a demo booking, not a real appointment), so nothing new was booked.`,
+              `Ya tiene una ${what} reservada para el ${label} en el sistema de demostración (una reserva de prueba, no una cita real), así que no se reservó nada nuevo.`,
+            )
+          : tr(
+              t.lang,
+              `You already have a ${what} booked for ${label}, so nothing new was booked.`,
+              `Ya tiene una ${what} reservada para el ${label}, así que no se reservó nada nuevo.`,
+            )
         : tr(
             t.lang,
             `You already have a ${what} request in for ${label}, so nothing new was booked.`,
@@ -7628,6 +7647,7 @@ export class ChatOrchestrator {
               type: st.appointment.type,
             }),
             status: st.appointment.status,
+            ...(st.appointment.sandbox ? { sandbox: true } : {}),
           }
         : null,
       // OFFERED = live link shown; PREVIEW = labeled demo preview (never reaches the vendor).

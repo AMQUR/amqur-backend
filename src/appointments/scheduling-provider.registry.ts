@@ -12,10 +12,27 @@ export type ResolvedScheduler = {
   connectionId: string;
   provider: string;
   mode: 'sandbox' | 'production';
-  /** Demo scheduler (adapter-declared). Never a real dealership booking. */
+  /** Sandbox booking per isSandboxBooking(): demo adapter or sandbox-mode connection. */
   sandbox: boolean;
   displayName: string;
 };
+
+/**
+ * THE one derivation of "is this booking a sandbox / demo booking?". A booking is sandbox when
+ * the adapter itself is a demo scheduler OR the connection runs in the vendor's sandbox mode
+ * (anything not explicitly `production`). Receipts, cards, replies, reminders and conversation
+ * state all take the label from here — never from a second, local rule.
+ */
+export function isSandboxBooking(
+  s: Pick<ResolvedScheduler, 'mode'> & {
+    adapter?: Pick<ServiceSchedulingProviderAdapter, 'sandbox'>;
+    sandbox?: boolean;
+  },
+): boolean {
+  return (
+    s.sandbox === true || s.adapter?.sandbox === true || s.mode !== 'production'
+  );
+}
 
 /** Extra per-tenant/location gate an adapter must pass on every resolve (fail-closed). */
 export type SchedulerGate = (
@@ -125,7 +142,10 @@ export class SchedulingProviderRegistry {
         connectionId: c.id,
         provider: c.provider,
         mode: cfg.mode === 'production' ? 'production' : 'sandbox',
-        sandbox: adapter.sandbox === true,
+        sandbox: isSandboxBooking({
+          adapter,
+          mode: cfg.mode === 'production' ? 'production' : 'sandbox',
+        }),
         displayName: adapter.displayName ?? c.provider,
       };
     }

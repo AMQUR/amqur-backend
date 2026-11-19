@@ -2,9 +2,12 @@ import request from 'supertest';
 import { createE2eApp, E2eCtx, unwrap } from '../helpers/e2e-app';
 import { DemoDealer, seedDemoDealer, SIM_ORIGIN } from '../helpers/demo-dealer';
 import { LEAD_FORM_CONSENT_VERSION } from '../../src/chat/sales-desk/consent-wording';
+import { referenceNow } from '../../src/common/time/reference-now';
+import { sandboxTakenSlotStart } from '../../src/appointments/sandbox-scheduling.adapter';
 import { SchedulingProviderRegistry } from '../../src/appointments/scheduling-provider.registry';
 import { APPOINTMENT_RECONCILE_TOPIC } from '../../src/appointments/appointment.service';
 import { OutboxProcessorService } from '../../src/integrations/core/outbox-processor.service';
+import { ConversationComposerService } from '../../src/chat/compose/conversation-composer.service';
 
 /**
  * Regression tests for the PR #55 review findings on the sales-desk cards and the sandbox
@@ -82,10 +85,11 @@ describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)'
       language,
       lead: lead(form.id),
     });
-    return {
-      conversationId: a.conversationId,
-      picker: card<Picker>(b, 'appointment_picker')!,
-    };
+    const picker = card<Picker>(b, 'appointment_picker')!;
+    // The sandbox keeps ONE designated slot visible that it always rejects; never pick it here.
+    const taken = sandboxTakenSlotStart(referenceNow());
+    picker.slots = picker.slots.filter((x) => x.start !== taken);
+    return { conversationId: a.conversationId, picker };
   };
   const select = (
     d: DemoDealer,
@@ -136,6 +140,107 @@ describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)'
     });
   }, 120_000);
   afterAll(async () => ctx.app.close());
+
+  // ───────────────────────────────────────── R7: the sandbox label never gets lost
+
+  describe('R7 — a sandbox confirmation keeps its demo label everywhere, and its wording is locked', () => {
+    const state = async (conversationId: string) =>
+      (
+        await ctx.prisma.conversation.findUniqueOrThrow({
+          where: {
+            tenantId_externalKey: {
+              tenantId: sbx.tenantId,
+              externalKey: conversationId,
+            },
+          },
+        })
+      ).state as {
+        appointment?: { status: string; sandbox?: boolean };
+      };
+
+    it('typed-time booking: the reply is not handed to the composer; state, card, journey, recap and model memory all carry the label', async () => {
+      const composer = ctx.app.get(ConversationComposerService);
+      // A composer that would happily drop the "demo booking" sentence.
+      jest.spyOn(composer, 'isEnabled').mockReturnValue(true);
+      const compose = jest.spyOn(composer, 'compose').mockResolvedValue({
+        status: 'composed',
+        text: 'You are all set for your test drive!',
+        attempts: 1,
+      });
+      try {
+        const j = await toSlotPicker(sbx); // contact known → the scheduler may be used
+        compose.mockClear();
+        // 10:00 AM store time tomorrow is a sandbox slot (15:00 UTC), typed — not tapped.
+        const r = await chat(sbx, {
+          conversationId: j.conversationId,
+          message: 'Can I come for the test drive tomorrow at 10am?',
+        });
+        const a = card<Record<string, unknown>>(r, 'appointment')!;
+        expect(a).toMatchObject({
+          status: 'CONFIRMED',
+          outcome: 'confirmed',
+          sandbox: true,
+        });
+        expect(compose).not.toHaveBeenCalled(); // locked: fixed wording only
+        expect(r.reply).toMatch(/sandbox scheduler confirmed/i);
+        expect(r.reply).toMatch(/demo booking, not a real appointment/);
+        expect((await state(j.conversationId)).appointment).toMatchObject({
+          status: 'CONFIRMED',
+          sandbox: true,
+        });
+        expect(r.journey.appointment).toMatchObject({
+          status: 'CONFIRMED',
+          sandbox: true,
+        });
+        // The receipt and the card agree (one derivation).
+        const receipt =
+          await ctx.prisma.appointmentProviderReceipt.findFirstOrThrow({
+            where: { appointmentId: a.id as string, status: 'CONFIRMED' },
+          });
+        expect(receipt.sandbox).toBe(true);
+
+        // A later turn that mentions the appointment: recap + the model's memory line.
+        compose.mockReset();
+        compose.mockResolvedValue({
+          status: 'fallback',
+          reasons: ['no_model'],
+          attempts: 0,
+        });
+        const v = sbx.vehicles[0];
+        const back = await chat(sbx, {
+          conversationId: j.conversationId,
+          message: `ok let's go back to the ${v.model}`,
+        });
+        expect(back.reply).toMatch(
+          /demo booking on the sandbox scheduler, not a real appointment/,
+        );
+        expect(back.reply).not.toMatch(/is confirmed/);
+        expect(compose).toHaveBeenCalled();
+        const memory = JSON.stringify(compose.mock.calls[0][0].memory);
+        expect(memory).toMatch(
+          /SANDBOX DEMO booking \(not a real appointment\)/,
+        );
+        expect(memory).not.toMatch(/confirmed appointment/);
+        expect(back.journey.appointment).toMatchObject({ sandbox: true });
+      } finally {
+        jest.restoreAllMocks();
+      }
+    });
+
+    it('the "you already have…" answer for a sandbox booking says it is a demo booking', async () => {
+      const j = await toSlotPicker(sbx);
+      await select(sbx, j.conversationId, j.picker.id, j.picker.slots[5].id);
+      const second = await select(
+        sbx,
+        j.conversationId,
+        j.picker.id,
+        j.picker.slots[6].id,
+      );
+      expect(second.reply).toMatch(
+        /You already have a test drive booked for .* on the sandbox scheduler \(a demo booking, not a real appointment\)/,
+      );
+    });
+  });
 
   // ───────────────────────────────────────── R6: no orphan provider booking
 

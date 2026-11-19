@@ -12,6 +12,7 @@ import {
   sandboxTakenSlotStart,
 } from './sandbox-scheduling.adapter';
 import {
+  isSandboxBooking,
   ResolvedScheduler,
   SchedulingProviderRegistry,
 } from './scheduling-provider.registry';
@@ -134,14 +135,17 @@ function fakeDb() {
 const now = new Date('2026-10-13T15:00:00.000Z');
 const slotStart = sandboxSlots(now)[0].startUtc;
 
-function make(adapter: ServiceSchedulingProviderAdapter | null) {
+function make(
+  adapter: ServiceSchedulingProviderAdapter | null,
+  mode: 'sandbox' | 'production' = 'sandbox',
+) {
   const f = fakeDb();
   const scheduler: ResolvedScheduler | null = adapter
     ? {
         adapter,
         connectionId: 'conn-1',
         provider: adapter.providerId,
-        mode: 'sandbox',
+        mode,
         sandbox: adapter.sandbox === true,
         displayName: adapter.displayName ?? adapter.providerId,
       }
@@ -668,5 +672,62 @@ describe('R6 — an unknown booking outcome is compensated (cancel-or-reconcile 
     expect(await adapter.cancelByIdempotencyKey(ctx)).toEqual({
       cancelled: false,
     });
+  });
+});
+
+describe('R7 — one derivation of the sandbox label', () => {
+  const confirmed: SchedulingOutcome = {
+    kind: 'confirmed',
+    externalId: 'X-9',
+    providerStatus: 'BOOKED',
+    scheduledAtUtc: slotStart,
+  };
+  const real = { sandbox: false as const };
+  const demo = { sandbox: true as const };
+
+  it('isSandboxBooking: demo adapter OR a connection not explicitly in production mode', () => {
+    expect(isSandboxBooking({ adapter: demo, mode: 'sandbox' })).toBe(true);
+    expect(isSandboxBooking({ adapter: demo, mode: 'production' })).toBe(true);
+    expect(isSandboxBooking({ adapter: real, mode: 'sandbox' })).toBe(true);
+    expect(isSandboxBooking({ adapter: real, mode: 'production' })).toBe(false);
+    expect(isSandboxBooking({ sandbox: true, mode: 'production' })).toBe(true);
+    expect(isSandboxBooking({ mode: 'production' })).toBe(false);
+  });
+
+  it('a real adapter on a sandbox-mode connection: the result, the receipt and the replay all say sandbox', async () => {
+    const m = make(stub(confirmed), 'sandbox');
+    const r = await m.book();
+    expect(r).toMatchObject({
+      outcome: 'confirmed',
+      provider: { sandbox: true },
+    });
+    expect(m.receipts[0]).toMatchObject({ status: 'CONFIRMED', sandbox: true });
+    // Idempotent replay reads the label back from the receipt: same answer.
+    expect(await m.book()).toMatchObject({
+      outcome: 'confirmed',
+      provider: { sandbox: true },
+    });
+    expect(
+      (await m.svc.offerableSlots({
+        tenantId: 't1',
+        locationId: 'l1',
+        type: 'TEST_DRIVE',
+        now,
+      })) ?? { sandbox: true },
+    ).toMatchObject({ sandbox: true });
+  });
+
+  it('a real adapter in production mode: none of them say sandbox', async () => {
+    const m = make(stub(confirmed), 'production');
+    const r = await m.book();
+    expect(r).toMatchObject({
+      outcome: 'confirmed',
+      provider: { sandbox: false },
+    });
+    expect(m.receipts[0]).toMatchObject({
+      status: 'CONFIRMED',
+      sandbox: false,
+    });
+    expect(await m.book()).toMatchObject({ provider: { sandbox: false } });
   });
 });

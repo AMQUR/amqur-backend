@@ -197,6 +197,16 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
   provider id `MOCK`). It offers a fixed synthetic grid, issues `SBX-…` references, always
   rejects one designated slot, marks receipts and cards `sandbox: true`, and its confirmation
   text says it is a demo booking, not a real appointment.
+- The sandbox label has **one** derivation (`isSandboxBooking`, `scheduling-provider.registry.ts`):
+  the adapter is a demo scheduler **or** the `appointments` connection is not explicitly in
+  `production` mode. The receipt, the picker and appointment cards, the reply, reminder
+  enrolment and the idempotent replay all take it from there. A confirmed sandbox booking is
+  also remembered on conversation state (`state.appointment.sandbox`), so every later mention
+  keeps the label: the "back to the vehicle" recap, the "you already have…" answer, the
+  `journey.appointment.sandbox` field, the handoff summary and the memory line given to the
+  language model ("SANDBOX DEMO booking (not a real appointment)").
+- Every reply that reports a **confirmed** appointment — tapped slot or typed time, sandbox or
+  not — is locked: its fixed wording is sent as is and is never handed to the model to rewrite.
 - It needs: non-production, the `sandboxScheduler` flag, and an enabled + liveReady `MOCK`
   `appointments` connection (the local demo seed creates one). In production it cannot be
   constructed, registered or resolved, and the flag is forced off.
