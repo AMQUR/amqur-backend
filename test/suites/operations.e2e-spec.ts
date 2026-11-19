@@ -63,7 +63,16 @@ describe('staff operations (HTTP, Postgres)', () => {
         lastName: 'Staff',
         role: Role.STAFF,
       },
-      update: { password: pw, isActive: true },
+      // Other suites create this same user with a different name; this suite asserts on the
+      // display name, so it must not depend on which suite ran first.
+      update: {
+        password: pw,
+        isActive: true,
+        firstName: 'Riley',
+        lastName: 'Staff',
+        role: Role.STAFF,
+        locationId: seed.alpha.location.id,
+      },
     });
     alphaAdmin = await login('admin@pilot-alpha.test', seed.alpha.password);
     betaAdmin = await login('admin@pilot-beta.test', seed.beta.password);
