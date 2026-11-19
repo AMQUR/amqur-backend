@@ -44,6 +44,7 @@ import {
   leadDeliveryIdempotencyKey,
   readLeadDeliveryEnv,
   REEVALUABLE_BLOCK_REASONS,
+  SENT_STALE_MS,
 } from './lead-delivery-gates';
 import {
   DeliveryEvidence,
@@ -57,14 +58,18 @@ import { LeadDeliveryRouteService } from './lead-delivery-route.service';
 import {
   LeadDeliveryTransport,
   LeadTransportError,
+  SEND_DEADLINE_CODE,
   TransportReceipt,
 } from './transports/lead-delivery-transport';
 import { SandboxSinkTransport } from './transports/sandbox-sink.transport';
 import { SmtpLeadTransport } from './transports/smtp.transport';
 
 export const LEAD_DELIVERY_TOPIC = 'lead.delivery.adf';
-/** A SENT row older than this with no outcome is treated as a crashed attempt and retried. */
-export const SENT_STALE_MS = 90_000;
+/**
+ * A SENT row older than this with no outcome is treated as a crashed attempt and retried.
+ * Always exceeds the hard send deadline plus a margin (see lead-delivery-gates.ts).
+ */
+export { SENT_STALE_MS };
 /**
  * `lastErrorCode` of a SENT row whose transport ACCEPTED the message but whose ACCEPTED write
  * could not be committed. The receipt columns are already stored; the row is finalised to
@@ -646,22 +651,24 @@ export class LeadDeliveryService implements OnModuleInit {
       gate.transport === 'smtp' ? this.smtp : this.sink;
     let receipt: AcceptedReceipt;
     try {
-      const r = await transport.send(
-        {
-          deliveryId: d.id,
-          tenantId: d.tenantId,
-          routeId: route.id,
-          correlationId: d.correlationId,
-          // Stable across retries so a receiver can de-duplicate an at-least-once resend.
-          messageId: `<lead-delivery.${d.id}@${destinationDomain(env.fromAddress) || 'amqur.example.invalid'}>`,
-          from: env.fromAddress,
-          to: destination,
-          subject: `New lead amqur-lead-${lead.id}`,
-          xml,
-          format: route.format,
-          date: new Date(),
-        },
-        { live },
+      const r = await this.sendWithinDeadline(env.sendDeadlineMs, () =>
+        transport.send(
+          {
+            deliveryId: d.id,
+            tenantId: d.tenantId,
+            routeId: route.id,
+            correlationId: d.correlationId,
+            // Stable across retries so a receiver can de-duplicate an at-least-once resend.
+            messageId: `<lead-delivery.${d.id}@${destinationDomain(env.fromAddress) || 'amqur.example.invalid'}>`,
+            from: env.fromAddress,
+            to: destination,
+            subject: `New lead amqur-lead-${lead.id}`,
+            xml,
+            format: route.format,
+            date: new Date(),
+          },
+          { live },
+        ),
       );
       if (!r.accepted || !r.providerMessageId)
         throw new LeadTransportError('transport_not_accepted', true);
@@ -704,6 +711,30 @@ export class LeadDeliveryService implements OnModuleInit {
       throw new Error(err.code);
     }
     return this.recordAccepted(sent, receipt);
+  }
+
+  /**
+   * Backstop for the hard send deadline, whatever the transport: the attempt is failed
+   * (retryable) at the deadline even if a transport ignores its own. The SMTP transport enforces
+   * the same deadline itself by aborting the connection.
+   */
+  private async sendWithinDeadline<T>(
+    deadlineMs: number,
+    send: () => Promise<T>,
+  ): Promise<T> {
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      // Slightly after the transport's own abort so its (more specific) outcome wins.
+      timer = setTimeout(
+        () => reject(new LeadTransportError(SEND_DEADLINE_CODE, true)),
+        deadlineMs + 250,
+      );
+    });
+    try {
+      return await Promise.race([send(), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ───────────────────────────────────────── recording an acknowledgement

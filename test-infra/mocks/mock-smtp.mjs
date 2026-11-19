@@ -9,7 +9,9 @@
  *     DELETE /messages
  *     POST   /mode                -> body { mode, count? }
  *        mode: none | tempfail (451 after DATA) | reject (550 on RCPT) | drop (close after DATA)
+ *              | slow (hold the reply to DATA for delayMs, then accept IF the client is still there)
  *        count: fail only the next N messages, then behave normally (default: until changed)
+ *        delayMs: slow mode only (default 2000, max 60000)
  */
 import http from 'node:http';
 import net from 'node:net';
@@ -17,10 +19,11 @@ import net from 'node:net';
 const smtpPort = Number(process.env.SMTP_PORT || 1025);
 const httpPort = Number(process.env.HTTP_PORT || 8085);
 const MAX_MESSAGE_BYTES = 1024 * 1024;
-const MODES = ['none', 'tempfail', 'reject', 'drop'];
+const MODES = ['none', 'tempfail', 'reject', 'drop', 'slow'];
 
 let mode = MODES.includes(process.env.FAIL_MODE) ? process.env.FAIL_MODE : 'none';
 let failRemaining = Infinity;
+let slowDelayMs = 2000;
 const messages = [];
 
 function currentMode() {
@@ -98,12 +101,24 @@ const smtp = net.createServer((socket) => {
       consumeFailure();
       return socket.destroy();
     }
-    const id = `mock-${messages.length + 1}`;
-    // Undo SMTP dot-stuffing.
-    const raw = data.replace(/(^|\r\n)\.\./g, '$1.');
-    messages.push({ id, from, to, raw, at: new Date().toISOString() });
+    const accept = (env) => {
+      const id = `mock-${messages.length + 1}`;
+      // Undo SMTP dot-stuffing.
+      const raw = env.data.replace(/(^|\r\n)\.\./g, '$1.');
+      messages.push({ id, from: env.from, to: env.to, raw, at: new Date().toISOString() });
+      reply(`250 2.0.0 OK queued as ${id}`);
+    };
+    const env = { from, to, data };
     reset();
-    reply(`250 2.0.0 OK queued as ${id}`);
+    if (m === 'slow') {
+      consumeFailure();
+      // A client that gave up (aborted the connection) never gets an acceptance.
+      setTimeout(() => {
+        if (!socket.destroyed && socket.writable) accept(env);
+      }, slowDelayMs);
+      return;
+    }
+    accept(env);
   };
 
   socket.on('data', (chunk) => {
@@ -153,6 +168,10 @@ const api = http.createServer(async (req, res) => {
     }
     if (!MODES.includes(body.mode)) return json(400, { ok: false, error: 'bad_mode' });
     mode = body.mode;
+    slowDelayMs =
+      Number.isInteger(body.delayMs) && body.delayMs > 0 && body.delayMs <= 60_000
+        ? body.delayMs
+        : 2000;
     failRemaining =
       Number.isInteger(body.count) && body.count > 0 ? body.count : Infinity;
     return json(200, { ok: true, mode, count: Number.isFinite(failRemaining) ? failRemaining : null });

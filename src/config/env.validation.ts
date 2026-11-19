@@ -205,6 +205,16 @@ export const envValidationSchema = Joi.object({
     .optional()
     .allow('')
     .default('AMQUR AI'),
+  /**
+   * Hard overall deadline for one lead hand-off (connect to final reply), ms. Capped at 60 s so
+   * the 90 s stale-SENT window always exceeds it by a 30 s margin.
+   */
+  ADF_SEND_DEADLINE_MS: Joi.number()
+    .integer()
+    .min(250)
+    .max(60000)
+    .optional()
+    .default(30000),
   /** Hard cap on one ADF document, bytes. */
   ADF_MAX_BYTES: Joi.number()
     .integer()

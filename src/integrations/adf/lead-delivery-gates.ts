@@ -23,7 +23,21 @@ export type LeadDeliveryEnv = {
   providerName: string;
   maxBytes: number;
   sinkDir: string | null;
+  /** Hard overall deadline for ONE transport hand-off (ADF_SEND_DEADLINE_MS). */
+  sendDeadlineMs: number;
 };
+
+/**
+ * One hard, overall deadline per send — connect + greeting + TLS + auth + DATA together — and
+ * the window after which a SENT row with no outcome is treated as a crashed attempt.
+ * INVARIANT: SENT_STALE_MS >= SEND_DEADLINE_MAX_MS + SENT_STALE_MARGIN_MS, so a row can never
+ * be reclaimed (and re-sent) while its own send is still inside its deadline.
+ */
+export const SEND_DEADLINE_DEFAULT_MS = 30_000;
+export const SEND_DEADLINE_MIN_MS = 250;
+export const SEND_DEADLINE_MAX_MS = 60_000;
+export const SENT_STALE_MARGIN_MS = 30_000;
+export const SENT_STALE_MS = SEND_DEADLINE_MAX_MS + SENT_STALE_MARGIN_MS;
 
 export const ADF_FEATURE_FLAG = 'adfLeadDelivery';
 export const ADF_SANDBOX_FROM = 'adf-sandbox@amqur.example.invalid';
@@ -52,6 +66,12 @@ export function readLeadDeliveryEnv(
     providerName: str(env.ADF_PROVIDER_NAME) ?? 'AMQUR AI',
     maxBytes: num(env.ADF_MAX_BYTES, ADF_DEFAULT_MAX_BYTES, 1024, 1024 * 1024),
     sinkDir: str(env.ADF_SANDBOX_SINK_DIR),
+    sendDeadlineMs: num(
+      env.ADF_SEND_DEADLINE_MS,
+      SEND_DEADLINE_DEFAULT_MS,
+      SEND_DEADLINE_MIN_MS,
+      SEND_DEADLINE_MAX_MS,
+    ),
   };
 }
 

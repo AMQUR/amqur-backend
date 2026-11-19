@@ -11,7 +11,12 @@ import {
   acknowledgementCountsForMode,
   blockReasonStillApplies,
   sandboxRefused,
+  SEND_DEADLINE_DEFAULT_MS,
+  SEND_DEADLINE_MAX_MS,
+  SENT_STALE_MARGIN_MS,
+  SENT_STALE_MS,
 } from './lead-delivery-gates';
+import { OUTBOX_LEASE_MS } from '../core/outbox.service';
 import { envValidationSchema } from '../../config/env.validation';
 import { PLATFORM_FEATURE_DEFAULTS } from '../../feature-flags/feature-flags.service';
 
@@ -130,6 +135,33 @@ describe('lead delivery gates (all fail-closed)', () => {
       open: false,
       reason: 'sandbox_in_production',
     });
+  });
+
+  it('R9: the send deadline is bounded and the stale-SENT window always exceeds it by the margin', () => {
+    expect(readLeadDeliveryEnv({}).sendDeadlineMs).toBe(
+      SEND_DEADLINE_DEFAULT_MS,
+    );
+    expect(
+      readLeadDeliveryEnv({ ADF_SEND_DEADLINE_MS: '500' }).sendDeadlineMs,
+    ).toBe(500);
+    // Out-of-range or junk values fall back to the default — never to "no deadline".
+    for (const v of ['0', '-1', '600000', 'abc', '1.5'])
+      expect(
+        readLeadDeliveryEnv({ ADF_SEND_DEADLINE_MS: v }).sendDeadlineMs,
+      ).toBe(SEND_DEADLINE_DEFAULT_MS);
+    expect(SEND_DEADLINE_DEFAULT_MS).toBeLessThanOrEqual(SEND_DEADLINE_MAX_MS);
+    expect(SENT_STALE_MS).toBeGreaterThanOrEqual(
+      SEND_DEADLINE_MAX_MS + SENT_STALE_MARGIN_MS,
+    );
+    expect(SENT_STALE_MARGIN_MS).toBeGreaterThanOrEqual(30_000);
+    // The outbox lease is longer than the stale window, so a lease can never hide a stale row.
+    expect(OUTBOX_LEASE_MS).toBeGreaterThan(SENT_STALE_MS);
+    const { error, value } = envValidationSchema.validate(
+      { ADF_SEND_DEADLINE_MS: '90000' },
+      { allowUnknown: true, abortEarly: false },
+    );
+    expect(String(error ?? '')).toContain('ADF_SEND_DEADLINE_MS');
+    expect(value).toBeDefined();
   });
 
   it('R3: production + master switch on + mode not live ⇒ sandbox_in_production (sink and smtp)', () => {

@@ -39,6 +39,9 @@ export interface LeadDeliveryTransport {
   ): Promise<TransportReceipt>;
 }
 
+/** Error code of a hand-off that hit the hard overall send deadline (retryable). */
+export const SEND_DEADLINE_CODE = 'send_deadline_exceeded';
+
 /** `code` is PII-free and safe for logs, outbox errors and metrics. */
 export class LeadTransportError extends Error {
   constructor(

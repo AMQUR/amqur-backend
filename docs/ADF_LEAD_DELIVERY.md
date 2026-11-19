@@ -30,7 +30,7 @@ The existing JSON `crm.webhook` path (`CRM_WEBHOOK_URL`) is unchanged and indepe
 | Operator API | `lead-delivery-ops.controller.ts` |
 | Hook | `CrmSyncService.onLeadChanged` (`src/integrations/crm/crm-sync.service.ts`) |
 | Migrations | `prisma/migrations/20261118100000_lead_delivery_adf`, `20261118120000_lead_delivery_mode` |
-| Mock SMTP | `test-infra/mocks/mock-smtp.mjs` (compose service `mock-smtp`) |
+| Mock SMTP | `test-infra/mocks/mock-smtp.mjs` (compose service `mock-smtp`; failure modes `tempfail`, `reject`, `drop`, `slow`) |
 | Consent standing from the ledger (pure) | `lead-consent-standing.ts` |
 | Tests | `src/integrations/adf/*.spec.ts`, `test/suites/adf-lead-delivery.e2e-spec.ts`, `test/suites/adf-review-findings.e2e-spec.ts` |
 
@@ -238,6 +238,16 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
 - Retryable failures (SMTP 4xx, connection, timeout) leave the row `FAILED` and use the existing
   outbox backoff; after 8 attempts the row is `DEAD`. Permanent failures (SMTP 5xx, bad address,
   invalid document) go straight to `DEAD`.
+- Every hand-off has **one hard overall deadline** (`ADF_SEND_DEADLINE_MS`, default 30 s,
+  maximum 60 s) covering connect, greeting, TLS, auth and DATA together. At the deadline the SMTP
+  connection is aborted and the attempt is a retryable failure (`send_deadline_exceeded`); the
+  handler enforces the same deadline around any transport. nodemailer's per-phase timeouts
+  (8 s connect, 8 s greeting, 15 s idle socket) only bound idle phases and remain in place.
+- A `SENT` row with no outcome is treated as a crashed attempt only after 90 s
+  (`SENT_STALE_MS` = maximum deadline 60 s + 30 s margin), so a row cannot be reclaimed and
+  re-sent while its own send is still inside its deadline. The 120 s outbox batch lease is
+  longer than that window; if a lease expires under a long batch, the second worker finds the
+  row `SENT` and fresh and backs off (`delivery_in_flight`).
 - One ADF message is sent per lead. Later lead updates are not re-sent.
 - Delivery is **at-least-once, not exactly-once**. The guarantee is: an *acknowledged* delivery
   is never handed to a transport again. It is not "at most one accepted send" in every failure.
@@ -302,6 +312,7 @@ Those are server-side calls on `LeadDeliveryRouteService` only.
 | `ADF_FROM_ADDRESS` | `adf-sandbox@amqur.example.invalid` | Sender; required when mode is `live` |
 | `ADF_PROVIDER_NAME` | `AMQUR AI` | `<provider><name>` |
 | `ADF_MAX_BYTES` | `65536` | Hard cap on one document |
+| `ADF_SEND_DEADLINE_MS` | `30000` | Hard overall deadline for one hand-off (250–60000) |
 | `ADF_SANDBOX_SINK_DIR` | unset | Optional local `.eml` directory (never in production) |
 
 ## Sandbox demo

@@ -581,6 +581,71 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
     });
   });
 
+  // ───────────────────────────────────────── R9: one hard send deadline
+
+  describe('R9 — one hard overall send deadline, well inside the stale-SENT window', () => {
+    it('a slow SMTP server is cut off at the deadline (retryable); the retry is the only accepted send', async () => {
+      await smtp.clear();
+      process.env.ADF_SANDBOX_TRANSPORT = 'smtp';
+      process.env.ADF_SEND_DEADLINE_MS = '400';
+      // The mock holds its reply to DATA for 2.5 s — far inside nodemailer's per-phase timeouts.
+      await smtp.mode('slow', 1, 2500);
+      const d = (await submit('one', (await newLead('one')).id))!;
+      const started = Date.now();
+      const first = await attempt(d.id);
+      const took = Date.now() - started;
+      expect(first).toMatchObject({
+        status: 'FAILED',
+        attempts: 1,
+        lastErrorCode: 'send_deadline_exceeded',
+        acceptedAt: null,
+      });
+      expect(took).toBeLessThan(2000); // cut off at the deadline, not when the server answered
+      // The connection was aborted, so the slow server never accepts the abandoned message.
+      await new Promise((r) => setTimeout(r, 2600));
+      expect(await smtp.messages()).toHaveLength(0);
+
+      const second = await attempt(d.id);
+      expect(second).toMatchObject({ status: 'ACCEPTED', attempts: 2 });
+      const mail = await smtp.messages();
+      expect(mail).toHaveLength(1);
+      expect(mail[0].to).toEqual([ids.one.address]);
+    });
+
+    it('a dropped connection is a retryable failure, not a hang', async () => {
+      await smtp.clear();
+      process.env.ADF_SANDBOX_TRANSPORT = 'smtp';
+      await smtp.mode('drop', 1);
+      const d = (await submit('one', (await newLead('one')).id))!;
+      const first = await attempt(d.id);
+      expect(first.status).toBe('FAILED');
+      expect((await attempt(d.id)).status).toBe('ACCEPTED');
+      expect(await smtp.messages()).toHaveLength(1);
+    });
+
+    it('while a send is inside its deadline a second worker cannot reclaim the row', async () => {
+      await smtp.clear();
+      process.env.ADF_SANDBOX_TRANSPORT = 'smtp';
+      process.env.ADF_SEND_DEADLINE_MS = '5000';
+      await smtp.mode('slow', 1, 1200);
+      const d = (await submit('one', (await newLead('one')).id))!;
+      const ev = await outboxOf(d.id);
+      const meta = { id: ev.id, tenantId: ev.tenantId, attempts: 1 };
+      const inFlight = deliveries.process(d.id, meta);
+      await new Promise((r) => setTimeout(r, 300));
+      expect((await row(d.id)).status).toBe('SENT');
+      await expect(deliveries.process(d.id, meta)).rejects.toThrow(
+        'delivery_in_flight',
+      );
+      await expect(inFlight).resolves.toMatchObject({ note: 'accepted:smtp' });
+      expect(await row(d.id)).toMatchObject({
+        status: 'ACCEPTED',
+        attempts: 1,
+      });
+      expect(await smtp.messages()).toHaveLength(1);
+    });
+  });
+
   // ───────────────────────────────────────── R2: no duplicate send after a DB error
 
   describe('R2 — a failure recording the acknowledgement never causes a second send', () => {
