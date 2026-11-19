@@ -138,18 +138,29 @@ A send happens only when every one of these is true:
 
 Transport selection:
 
-- **Live** requires `NODE_ENV=production` and `LEAD_DELIVERY_MODE=live` and
-  `ADF_SEND_ENABLED=true`, plus a `PRODUCTION` route that is `productionEnabled`. A reserved test
-  domain is refused in live mode.
-- **Production never uses a sandbox transport.** With `NODE_ENV=production` and live not fully
-  gated on (for example `LEAD_DELIVERY_MODE` unset), the delivery is `BLOCKED:
-  sandbox_in_production`; nothing is written to the sink or sent to any SMTP host. Both sandbox
-  transports also refuse on their own in production. Production either sends live or sends
-  nothing.
-- **Outside production, anything that is not live is sandbox**, whatever the route says: the in-process sink
-  (`ADF_SANDBOX_TRANSPORT=sink`, default) or the loopback mock SMTP (`smtp`). Sandbox SMTP
-  additionally requires a loopback host and a reserved-domain recipient, so even a relaying MTA
-  on localhost cannot reach a real mailbox.
+- The environment is decided by the **deployment tier** (`DEPLOYMENT_TIER`, see
+  `docs/deployment/DEPLOYMENT_TIER.md`), not by `NODE_ENV` alone. Unset, the tier is derived from
+  `NODE_ENV` (`production` ⇒ production tier), so existing deployments behave as before.
+- **Live** requires the production tier (which itself requires `NODE_ENV=production`) and
+  `LEAD_DELIVERY_MODE=live` and `ADF_SEND_ENABLED=true`, plus a `PRODUCTION` route that is
+  `productionEnabled`. A reserved test domain is refused in live mode. Live is impossible in the
+  staging, development and test tiers.
+- **The production tier never uses a sandbox transport.** With live not fully gated on (for
+  example `LEAD_DELIVERY_MODE` unset), the delivery is `BLOCKED: sandbox_in_production`; nothing
+  is written to the sink or sent to any SMTP host. Both sandbox transports also refuse on their
+  own. Production either sends live or sends nothing.
+- **Outside the production tier, anything that is not live is sandbox** — and the sandbox only
+  takes `SANDBOX` routes. A `PRODUCTION`-environment route is refused outright
+  (`BLOCKED: production_route_in_sandbox`): a sandbox transport "accepting" a lead for a real CRM
+  inbox would make it look delivered when it never left, and would put customer data in the sink.
+  Nothing is written to the sink or sent; both sandbox transports refuse such a message on their
+  own as well. Sandbox transports are the in-process sink (`ADF_SANDBOX_TRANSPORT=sink`, default)
+  or the loopback mock SMTP (`smtp`). Sandbox SMTP additionally requires a loopback host and a
+  reserved-domain recipient, so even a relaying MTA on localhost cannot reach a real mailbox.
+- **Hosted staging** (`DEPLOYMENT_TIER=staging`, typically with `NODE_ENV=production`) may run
+  the sandbox sink for `SANDBOX` routes only, the recipient must be a reserved test domain even
+  for the sink (`sandbox_recipient_not_reserved`), and — because `NODE_ENV=production` — the sink
+  keeps metadata only (no message body in memory, nothing on disk).
 - The SMTP transport itself refuses any non-loopback host unless live is fully gated on.
 - `SANDBOX` routes may only point at reserved test domains and can never be production-enabled.
 - `LeadDelivery.deliveryMode` (`sandbox` / `live`) records the mode of the latest transport
@@ -168,7 +179,8 @@ Block reasons an operator can see: `send_disabled`, `flag_off`, `no_consent_basi
 `no_contact_method`, `no_location`, `no_route`, `route_disabled`, `route_unverified`,
 `route_tenant_mismatch`, `route_not_production_environment`, `route_not_production_enabled`,
 `destination_unavailable`, `reserved_destination_in_live`, `sandbox_recipient_not_reserved`,
-`smtp_host_not_loopback`, `sandbox_in_production`, `lead_location_changed`.
+`smtp_host_not_loopback`, `sandbox_in_production`, `production_route_in_sandbox`,
+`lead_location_changed`.
 
 ## Consent
 
@@ -201,6 +213,17 @@ The consent summary in `<comments>` is `text=…, email=…, call=…` with `yes
 is a grant, or no ledger record and the lead flag is set), `no` (latest ledger record is an
 opt-out, or `Lead.optOutAt`), or `not recorded`.
 
+**Handset opt-out lock.** The web lead form does not verify who owns the phone number typed
+into it. A text opt-out that came from the handset (`source = SMS_KEYWORD`, a STOP) or from the
+messaging provider (`PROVIDER`) therefore stands until a handset/provider grant (the customer
+texting START). A later `WIDGET`, `STAFF` or `IMPORT` text grant for that number is ignored by
+both resolvers (`ConsentService.status` and `resolveLeadConsentStanding`): text stays `no`, the
+phone is not typed `cellphone`, and such a grant never lifts a do-not-contact. The latest
+handset record is queried on its own, so repeated form submissions cannot push it out of the
+ledger window. The form's tick is still stored (evidence `notEffective: handset_opt_out_stands`),
+`Lead.consentToText` stays false, and the customer is told in neutral words that texting stays
+off for that number and how to turn it on from the phone (`src/messaging/handset-opt-out.ts`).
+
 Limits: nothing writes an all-channel do-not-contact record today (no staff or privacy flow
 creates one), so rule 2 is exercised by tests only; `WHATSAPP` records are not summarised; the
 ledger is matched by exact normalised endpoint, so a customer who opted out under a different
@@ -224,6 +247,14 @@ phone or email is not recognised.
   that an appointment is confirmed or scheduled (see R8 below): an appointment row that is
   already marked confirmed is carried as "REQUESTED by customer (…) - booking status is NOT
   stated in this lead, see the appointment record", with the requested time only.
+- The comment line is `Label: value; Label: value` with `key=value` pairs, and some inputs are
+  customer-influenced. So that customer text can never forge a server-asserted segment
+  ("Appointment: CONFIRMED…", "Consent: text=yes"): `utm_*`, `Source` and `Preferred contact`
+  must match `[A-Za-z0-9._~-]{1,80}` or are **dropped** (not repaired) — enforced in the chat
+  DTO (`pageContext.utm*` is dropped, the request still succeeds) and again in the serializer
+  (`src/common/security/comment-token.ts`); the free text inside the "Requested action" and
+  "Appointment" segments has `;` and `=` removed. A UTM value with spaces or other characters is
+  therefore not forwarded to the CRM.
 - `<vendor><vendorname>` is the rooftop's own name; `<provider><name>` is `ADF_PROVIDER_NAME`.
 - Every text node and attribute is hand-escaped. Illegal XML characters, C1 controls, lone
   surrogates, bidi overrides and zero-width characters are stripped; text is NFC-normalised;
@@ -285,9 +316,21 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
 - Remaining duplicate window: the worker process dies after the transport accepts and before any
   of the writes above commits (or the database is unreachable *and* the process restarts). The
   stale `SENT` row is then retried with the same `Message-ID`, so a receiver can de-duplicate.
-- If the outbox event exhausts its attempts while a row is `accepted_record_pending`, the row
-  stays `SENT` with that code (it is not `DEAD`, because replay would re-send). Replaying the
-  outbox event finalises it.
+- If the outbox event exhausts its attempts while a row is `accepted_record_pending`, the row is
+  never made `DEAD` (replay would re-send). It is finalised to `ACCEPTED` from the stored receipt
+  by the abandon hook / the dead-outbox sweep below (or by replaying the outbox event).
+- **A delivery never waits behind a `DEAD` outbox event.** An event abandoned after repeated
+  lease expiry is dead-lettered *without* its handler running, so the topic registers an abandon
+  hook (`OutboxProcessorService.registerAbandonHandler`): `settleBehindDeadOutbox` moves a
+  `QUEUED` / `SENT` / `FAILED` row to `DEAD` (`lastErrorCode = outbox_abandoned`, replayable), or
+  finalises an accepted-but-unrecorded row to `ACCEPTED` — it never sends. The event is marked
+  `DEAD` before the hook runs, so a failing hook cannot loop. As a backstop a sweep every 5 minutes
+  (`sweepBehindDeadOutbox`, code `outbox_dead_sweep`) settles any `QUEUED` / `SENT` / `FAILED` row
+  whose outbox event is `DEAD`, whatever left it there.
+- `appointment.provider.reconcile` / `appointment.provider.cancel` have no abandon hook on
+  purpose: the appointment stays `REQUESTED` with `providerStatus = UNKNOWN:<code>` (never shown as
+  confirmed) and a `DEAD` event is the designed "staff reconcile by hand" outcome, the same state
+  as `adapter_cannot_reconcile` / `no_authorized_scheduler`.
 
 ## Privacy
 
@@ -296,7 +339,14 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
   are stripped of anything address-like before they are stored.
 - Destination addresses never appear in any API response. Operator responses show the masked
   display only; public and widget endpoints show nothing.
-- In production the sandbox sink refuses every message (`sandbox_in_production`); it stores nothing.
+- In the production tier the sandbox sink refuses every message (`sandbox_in_production`); it
+  stores nothing. In every tier it refuses a `PRODUCTION`-route message. With
+  `NODE_ENV=production` (hosted staging included) it keeps metadata only.
+- Reports and readiness evidence count a delivery as real only when it was sent by the live
+  transport on a `PRODUCTION` route (`deliveryMode = 'live'`, `src/integrations/adf/real-delivery.ts`).
+  The funnel's MAIL_ACCEPTED / CRM_RECEIVED / CRM_MATCHED stages and the capability matrix's
+  LIVE VERIFIED cells use that predicate; anything a sandbox transport acknowledged is reported
+  under "not proven".
 
 ## Operator API
 

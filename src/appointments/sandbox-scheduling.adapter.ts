@@ -7,6 +7,7 @@ import type {
   SchedulingOutcome,
   ServiceSchedulingProviderAdapter,
 } from './scheduling-provider';
+import { sandboxFacilitiesAllowed } from '../config/deployment-tier';
 
 /**
  * SANDBOX scheduler — a labelled demo stand-in, NOT a dealership scheduling integration.
@@ -27,7 +28,8 @@ const TAKEN_HOUR_UTC = 17;
 
 /**
  * The sandbox scheduler exists only when BOTH hold:
- *   1. NODE_ENV is not `production` (hard refusal — nothing overrides it), and
+ *   1. the deployment tier is not `production` (hard refusal — nothing overrides it; the tier
+ *      defaults from NODE_ENV, see config/deployment-tier.ts), and
  *   2. SANDBOX_SCHEDULER_ENABLED is exactly `true` (explicit opt-in, default off).
  * NODE_ENV alone is not enough: an unset NODE_ENV reads as "development", so a production host
  * that lost the variable must still not grow a demo scheduler.
@@ -36,15 +38,21 @@ export function sandboxSchedulerEnabled(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   return (
-    env.NODE_ENV !== 'production' && env.SANDBOX_SCHEDULER_ENABLED === 'true'
+    sandboxFacilitiesAllowed(env) && env.SANDBOX_SCHEDULER_ENABLED === 'true'
   );
 }
 
 export function assertSandboxSchedulerAllowed(
   nodeEnv: string | undefined = process.env.NODE_ENV,
   enabled: string | undefined = process.env.SANDBOX_SCHEDULER_ENABLED,
+  deploymentTier: string | undefined = process.env.DEPLOYMENT_TIER,
 ): void {
-  if (nodeEnv === 'production')
+  if (
+    !sandboxFacilitiesAllowed({
+      NODE_ENV: nodeEnv,
+      DEPLOYMENT_TIER: deploymentTier,
+    })
+  )
     throw new Error('sandbox_scheduler_forbidden_in_production');
   if (enabled !== 'true') throw new Error('sandbox_scheduler_not_enabled');
 }

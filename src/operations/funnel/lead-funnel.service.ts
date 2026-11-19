@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { buildLeadFunnel, LeadFunnel } from './lead-funnel';
+import {
+  NOT_REAL_DELIVERY,
+  REAL_DELIVERY,
+} from '../../integrations/adf/real-delivery';
 
 /**
  * Counts for the funnel. Every query is scoped to the caller's tenant (and rooftop when the
@@ -21,11 +25,12 @@ export class LeadFunnelService {
       ...(scope.locationId ? { locationId: scope.locationId } : {}),
     };
     const inWindow = { ...where, createdAt: { gte: since } };
-    // "Real" means the delivery used a PRODUCTION route. A SANDBOX route can only ever point at
-    // a reserved test address, whatever transport carried it, so its acknowledgements are
-    // never counted as mail accepted by a dealership's mail server.
-    const real = { route: { environment: 'PRODUCTION' as const } };
-    const sandbox = { route: { environment: 'SANDBOX' as const } };
+    // "Real" is decided by HOW the hand-off was made, not only by where the route points: the
+    // delivery was sent by the LIVE transport (`deliveryMode = 'live'`) AND on a PRODUCTION
+    // route. Anything a sandbox transport acknowledged — whatever the route says — and anything
+    // on a SANDBOX route is never counted as mail accepted by a dealership's mail server.
+    const real = REAL_DELIVERY;
+    const sandbox = NOT_REAL_DELIVERY;
     const [
       leads,
       deliveriesQueued,

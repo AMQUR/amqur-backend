@@ -131,6 +131,7 @@ const BLOCK_REASONS: Record<string, string> = {
   invalid_adf: 'The lead could not be turned into a valid ADF document.',
   sandbox_in_production: 'Live sending is not fully set up, and test delivery is not allowed in production. Nothing was sent.',
   lead_location_changed: 'The lead moved to another rooftop after it was queued. Nothing was sent.',
+  production_route_in_sandbox: 'This is a live destination, and this environment only does test delivery. Nothing was sent or stored.',
 };
 export function blockedReasonText(code: string | null): string {
   if (!code) return 'No reason recorded.';

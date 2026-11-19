@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { isProductionTier } from '../config/deployment-tier';
 
 /**
  * Platform defaults are FAIL-CLOSED for dealership-specific capabilities.
@@ -79,7 +80,7 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
    */
   salesDeskCards: false,
   /**
-   * SANDBOX (demo) scheduler. Non-production only — forced off when NODE_ENV=production.
+   * SANDBOX (demo) scheduler. Non-production only — forced off in the production deployment tier.
    * Also needs an enabled + liveReady `appointments` IntegrationConnection (provider MOCK).
    */
   sandboxScheduler: false,
@@ -160,7 +161,7 @@ export class FeatureFlagsService {
     }
     for (const k of Object.keys(RESERVED_FLAGS)) merged[k] = false;
     // The sandbox scheduler can never be switched on in production.
-    if (process.env.NODE_ENV === 'production') merged.sandboxScheduler = false;
+    if (isProductionTier()) merged.sandboxScheduler = false;
     void vautoLive; // vAuto health is reported by the integration, not a flag
 
     return merged;
@@ -178,8 +179,7 @@ export class FeatureFlagsService {
             RESERVED_FLAGS[k] ??
             (k === 'tekionIntegration' && !v
               ? 'no_live_ready_tekion_connection'
-              : k === 'sandboxScheduler' &&
-                  process.env.NODE_ENV === 'production'
+              : k === 'sandboxScheduler' && isProductionTier()
                 ? 'sandbox_scheduler_forbidden_in_production'
                 : undefined),
         },

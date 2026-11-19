@@ -384,6 +384,39 @@ describe('R13 — the sandbox scheduler needs an explicit SANDBOX_SCHEDULER_ENAB
     });
   }
 
+  // ── security review M4: the refusal follows the deployment tier, not NODE_ENV alone
+  it('deployment tier: hosted staging (NODE_ENV=production + DEPLOYMENT_TIER=staging) may opt in; the production tier never can', () => {
+    const on = (env: Record<string, string | undefined>) =>
+      sandboxSchedulerEnabled(env);
+    const staging = { NODE_ENV: 'production', DEPLOYMENT_TIER: 'staging' };
+    expect(on({ ...staging, SANDBOX_SCHEDULER_ENABLED: 'true' })).toBe(true);
+    // still needs the explicit switch
+    expect(on(staging)).toBe(false);
+    expect(on({ ...staging, SANDBOX_SCHEDULER_ENABLED: 'false' })).toBe(false);
+    // production tier, stated or derived, and invalid combinations (fail closed)
+    for (const env of [
+      { NODE_ENV: 'production' },
+      { NODE_ENV: 'production', DEPLOYMENT_TIER: 'production' },
+      { NODE_ENV: 'production', DEPLOYMENT_TIER: 'development' },
+      { NODE_ENV: 'production', DEPLOYMENT_TIER: 'test' },
+      { NODE_ENV: 'development', DEPLOYMENT_TIER: 'production' },
+      { NODE_ENV: 'test', DEPLOYMENT_TIER: 'nonsense' },
+    ])
+      expect(on({ ...env, SANDBOX_SCHEDULER_ENABLED: 'true' })).toBe(false);
+    expect(() =>
+      assertSandboxSchedulerAllowed('production', 'true', 'staging'),
+    ).not.toThrow();
+    expect(() =>
+      assertSandboxSchedulerAllowed('production', 'false', 'staging'),
+    ).toThrow('sandbox_scheduler_not_enabled');
+    expect(() =>
+      assertSandboxSchedulerAllowed('production', 'true', undefined),
+    ).toThrow('sandbox_scheduler_forbidden_in_production');
+    expect(() =>
+      assertSandboxSchedulerAllowed('production', 'true', 'production'),
+    ).toThrow('sandbox_scheduler_forbidden_in_production');
+  });
+
   it('production stays a hard refusal even with the switch on', async () => {
     await withEnv('production', () => {
       expect(process.env.SANDBOX_SCHEDULER_ENABLED).toBe('true');

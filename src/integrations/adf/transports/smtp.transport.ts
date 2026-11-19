@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { isLoopbackHost } from '../destination';
-import { LeadDeliveryEnv, readLeadDeliveryEnv } from '../lead-delivery-gates';
+import {
+  deliveryTier,
+  LeadDeliveryEnv,
+  readLeadDeliveryEnv,
+} from '../lead-delivery-gates';
 import {
   buildLeadMailOptions,
   LeadDeliveryTransport,
@@ -56,8 +60,10 @@ export class SmtpLeadTransport implements LeadDeliveryTransport {
   ): Promise<TransportReceipt> {
     assertSmtpTargetAllowed(env.smtp.host, ctx.live);
     // Production either sends live or sends nothing (see the `sandbox_in_production` gate).
-    if (!ctx.live && env.nodeEnv === 'production')
+    if (!ctx.live && deliveryTier(env) === 'production')
       throw new LeadTransportError('sandbox_in_production', false);
+    if (!ctx.live && message.routeEnvironment === 'PRODUCTION')
+      throw new LeadTransportError('production_route_in_sandbox', false);
     const options = buildLeadMailOptions(message);
     const transport = nodemailer.createTransport({
       host: env.smtp.host,

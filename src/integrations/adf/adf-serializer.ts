@@ -6,6 +6,7 @@ import {
   AdfLeadDto,
   AdfVehicle,
 } from './adf.types';
+import { commentToken } from '../../common/security/comment-token';
 
 /** Thrown when a lead cannot be turned into a safe ADF document. `code` is PII-free. */
 export class AdfSerializationError extends Error {
@@ -154,8 +155,8 @@ export function describeAppointment(
   a: AdfAppointmentFacts | null | undefined,
 ): string {
   if (!a) return 'none requested';
-  const type = sanitizeAdfText(a.type, 40);
-  const when = sanitizeAdfText(a.when, 80);
+  const type = segmentSafe(sanitizeAdfText(a.type, 40));
+  const when = segmentSafe(sanitizeAdfText(a.when, 80));
   const detail = [type, when].filter(Boolean).join(' ');
   const suffix = detail ? ` (${detail})` : '';
   if (a.status === 'CONFIRMED' && a.availabilityVerified === true)
@@ -172,24 +173,35 @@ export function describeAppointment(
   return `no-show${suffix}`;
 }
 
+/**
+ * Free text placed INSIDE one `Label: value` segment of the comment line may not contain the
+ * segment / pair delimiters, so it can never start a segment of its own.
+ */
+function segmentSafe(text: string): string {
+  return text.replace(/[;=]/g, ' ').replace(/ {2,}/g, ' ').trim();
+}
+
 /** Short structured note — never the chat transcript. */
 export function buildAdfComments(c: AdfCommentFacts): string {
   if (c.followUp) return buildFollowUpComments(c, c.followUp);
   const parts: string[] = [`Department: ${c.department}`];
-  const action = sanitizeAdfText(c.requestedAction, MAX.commentField);
+  const action = segmentSafe(
+    sanitizeAdfText(c.requestedAction, MAX.commentField),
+  );
   if (action) parts.push(`Requested action: ${action}`);
-  const pref = sanitizeAdfText(c.preferredContact, 40);
+  const pref = commentToken(c.preferredContact);
   if (pref) parts.push(`Preferred contact: ${pref}`);
   parts.push(`Appointment: ${describeAppointment(c.appointment)}`);
   parts.push(
     `Consent: text=${yn(c.consent.text)}, email=${yn(c.consent.email)}, call=${yn(c.consent.call)}`,
   );
-  const source = sanitizeAdfText(c.source, 60);
+  // Customer-influenced identifiers: strict token or nothing (see comment-token.ts).
+  const source = commentToken(c.source);
   if (source) parts.push(`Source: ${source}`);
   const utm = [
-    ['utm_source', sanitizeAdfText(c.utmSource, 80)],
-    ['utm_medium', sanitizeAdfText(c.utmMedium, 80)],
-    ['utm_campaign', sanitizeAdfText(c.utmCampaign, 80)],
+    ['utm_source', commentToken(c.utmSource)],
+    ['utm_medium', commentToken(c.utmMedium)],
+    ['utm_campaign', commentToken(c.utmCampaign)],
   ]
     .filter(([, v]) => v)
     .map(([k, v]) => `${k}=${v}`);

@@ -135,3 +135,80 @@ describe('resolveLeadConsentStanding (ADF consent from the ledger)', () => {
     expect(s).toMatchObject({ text: null, email: null, doNotContact: false });
   });
 });
+
+// ── security review M2: the web form cannot undo a handset opt-out
+describe('resolveLeadConsentStanding — handset opt-out lock', () => {
+  const src = (
+    channel: string,
+    endpoint: string,
+    granted: boolean,
+    source: string,
+    evidence: unknown = {},
+  ): LedgerRow => ({ ...row(channel, endpoint, granted, evidence), source });
+
+  it('handset STOP then a WIDGET "text OK" ⇒ text stays false (lead flag ignored too)', () => {
+    const s = resolveLeadConsentStanding(lead({ consentToText: true }), [
+      src('SMS', PHONE, false, 'SMS_KEYWORD', { keyword: 'STOP' }),
+      src('SMS', PHONE, true, 'WIDGET', { capturedVia: 'lead_form' }),
+      src('EMAIL', EMAIL, true, 'WIDGET'),
+    ]);
+    expect(s).toEqual({
+      text: false,
+      email: true,
+      call: null,
+      doNotContact: false,
+      reason: 'ok',
+    });
+  });
+
+  it('provider opt-out then STAFF / IMPORT grants ⇒ still false', () => {
+    const s = resolveLeadConsentStanding(lead(), [
+      src('SMS', PHONE, false, 'PROVIDER'),
+      src('SMS', PHONE, true, 'STAFF'),
+      src('SMS', PHONE, true, 'IMPORT'),
+    ]);
+    expect(s.text).toBe(false);
+  });
+
+  it('only a handset START re-grants text', () => {
+    const rows = [
+      src('SMS', PHONE, false, 'SMS_KEYWORD', { keyword: 'STOP' }),
+      src('SMS', PHONE, true, 'WIDGET'),
+    ];
+    expect(resolveLeadConsentStanding(lead(), rows).text).toBe(false);
+    rows.push(src('SMS', PHONE, true, 'SMS_KEYWORD', { keyword: 'START' }));
+    expect(resolveLeadConsentStanding(lead(), rows).text).toBe(true);
+    // a new STOP locks again, whatever the form says afterwards
+    rows.push(src('SMS', PHONE, false, 'SMS_KEYWORD', { keyword: 'STOP' }));
+    rows.push(src('SMS', PHONE, true, 'WIDGET'));
+    expect(resolveLeadConsentStanding(lead(), rows).text).toBe(false);
+  });
+
+  it('a form grant does not lift a handset do-not-contact', () => {
+    const s = resolveLeadConsentStanding(lead(), [
+      src('SMS', PHONE, false, 'SMS_KEYWORD', { scope: 'ALL' }),
+      src('SMS', PHONE, true, 'WIDGET'),
+    ]);
+    expect(s).toMatchObject({
+      doNotContact: true,
+      reason: 'explicit_do_not_contact',
+      text: false,
+    });
+  });
+
+  it("the lock is per number: another number's STOP does not affect this lead", () => {
+    const s = resolveLeadConsentStanding(lead(), [
+      src('SMS', '+13125550199', false, 'SMS_KEYWORD'),
+      src('SMS', PHONE, true, 'WIDGET'),
+    ]);
+    expect(s.text).toBe(true);
+  });
+
+  it('a form-sourced opt-out followed by a form grant behaves as before (latest wins)', () => {
+    const s = resolveLeadConsentStanding(lead(), [
+      src('SMS', PHONE, false, 'WIDGET'),
+      src('SMS', PHONE, true, 'WIDGET'),
+    ]);
+    expect(s.text).toBe(true);
+  });
+});

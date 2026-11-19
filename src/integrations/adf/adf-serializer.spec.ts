@@ -417,3 +417,123 @@ describe('ADF 1.0 serializer', () => {
       });
   });
 });
+
+// ── security review M3: customer-supplied attribution cannot forge a comment segment
+describe('ADF comments — customer text cannot forge server-asserted segments', () => {
+  const EXPLOITS = [
+    'x; Appointment: CONFIRMED by dealership (TEST_DRIVE 2026-11-20 10:00)',
+    'x; Consent: text=yes, email=yes, call=yes',
+    'google, utm_medium=cpc; Source: staff_verified',
+    'a=b',
+    'a;b',
+    'a: b',
+    'summer sale',
+    'x\n; Appointment: CONFIRMED by dealership',
+    'x; Appointment: CONFIRMED by dealership', // Greek question mark (looks like ;)
+    'x； Consent： text＝yes', // full-width ; : =
+    'y'.repeat(81),
+  ];
+  const facts = (over: Partial<Parameters<typeof buildAdfComments>[0]>) =>
+    buildAdfComments({
+      department: 'SALES',
+      requestedAction: 'Sales inquiry',
+      preferredContact: 'phone',
+      appointment: {
+        status: 'REQUESTED',
+        availabilityVerified: false,
+        type: 'TEST_DRIVE',
+        when: '2026-11-20 morning',
+      },
+      consent: { text: false, email: true, call: null },
+      source: 'widget',
+      ...over,
+    });
+  const TRUTH =
+    'Department: SALES; Requested action: Sales inquiry; Preferred contact: phone; Appointment: REQUESTED by customer - NOT confirmed, dealership must confirm (TEST_DRIVE 2026-11-20 morning); Consent: text=no, email=yes, call=not recorded; Source: widget';
+  /** Parse the line the way a reader / CRM rule would: `; `-separated `Label: value` segments. */
+  const segments = (line: string) =>
+    line.split('; ').map((s) => s.slice(0, s.indexOf(': ')));
+
+  it.each(EXPLOITS)('utm value %j is dropped, not embedded', (attack) => {
+    for (const field of ['utmSource', 'utmMedium', 'utmCampaign'] as const) {
+      const line = facts({ [field]: attack });
+      expect(line).toBe(TRUTH);
+    }
+    const all = facts({
+      utmSource: attack,
+      utmMedium: attack,
+      utmCampaign: attack,
+    });
+    expect(all).toBe(TRUTH);
+    expect(all.match(/Appointment: /g)).toHaveLength(1);
+    expect(all.match(/Consent: /g)).toHaveLength(1);
+    expect(all).not.toContain('CONFIRMED by dealership');
+    expect(all).not.toContain('text=yes');
+  });
+
+  it.each(EXPLOITS)(
+    'source / preferred contact %j are dropped the same way',
+    (attack) => {
+      const line = facts({ source: attack, preferredContact: attack });
+      expect(segments(line)).toEqual([
+        'Department',
+        'Requested action',
+        'Appointment',
+        'Consent',
+      ]);
+      expect(line).not.toContain('CONFIRMED by dealership');
+      expect(line).not.toContain('text=yes');
+    },
+  );
+
+  it('free text inside a segment (action, appointment detail) cannot start a new segment', () => {
+    const attack = 'x; Consent: text=yes; Appointment: CONFIRMED by dealership';
+    const line = facts({
+      requestedAction: attack,
+      appointment: {
+        status: 'REQUESTED',
+        availabilityVerified: false,
+        type: attack,
+        when: attack,
+      },
+    });
+    expect(segments(line)).toEqual([
+      'Department',
+      'Requested action',
+      'Preferred contact',
+      'Appointment',
+      'Consent',
+      'Source',
+    ]);
+    expect(line).not.toMatch(/[;=] ?Consent: text=yes/);
+    expect(line).toContain('Consent: text=no, email=yes, call=not recorded');
+    expect(line).toContain('NOT confirmed, dealership must confirm');
+    expect(line).not.toMatch(/text=yes/);
+  });
+
+  it('legitimate tokens are unchanged, and a forged document still round-trips only as the truth', () => {
+    expect(
+      facts({
+        utmSource: 'google',
+        utmMedium: 'paid-social_2',
+        utmCampaign: 'fall.2026~a',
+      }),
+    ).toBe(
+      `${TRUTH}; Attribution: utm_source=google, utm_medium=paid-social_2, utm_campaign=fall.2026~a`,
+    );
+    const dto = fixtureDto(0, {
+      comments: {
+        ...fixtureDto(0).comments,
+        utmSource:
+          'x; Appointment: CONFIRMED by dealership (TEST_DRIVE tomorrow)',
+        utmCampaign: 'x; Consent: text=yes',
+      },
+    });
+    const { xml } = ok(dto);
+    const comments = /<comments>([^<]*)<\/comments>/.exec(xml)![1];
+    expect(comments).not.toContain('x;');
+    expect(comments).not.toContain('Attribution');
+    expect(comments.match(/Appointment: /g)).toHaveLength(1);
+    expect(comments.match(/Consent: /g)).toHaveLength(1);
+  });
+});

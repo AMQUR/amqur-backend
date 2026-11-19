@@ -9,6 +9,7 @@
  * production-enabled) and is "verified" only in the sandbox sense recorded in its evidence
  * text. Refuses a non-local database or NODE_ENV=production. No real mailbox is ever addressed.
  */
+import { isProductionTier } from '../src/config/deployment-tier';
 function fail(msg: string): never {
   console.error(msg);
   process.exit(1);
@@ -19,8 +20,8 @@ async function main() {
     .hostname;
   if (!['127.0.0.1', 'localhost'].includes(dbHost))
     fail(`Refusing to run: DATABASE_URL host '${dbHost}' is not local.`);
-  if (process.env.NODE_ENV === 'production')
-    fail('Refusing to run with NODE_ENV=production.');
+  if (isProductionTier())
+    fail('Refusing to run in the production deployment tier.');
   process.env.OUTBOX_PROCESSOR_ENABLED = 'false';
   process.env.INVENTORY_SYNC_ENABLED = 'false';
 

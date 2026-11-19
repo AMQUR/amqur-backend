@@ -218,6 +218,88 @@ describe('sandbox sink transport', () => {
   });
 });
 
+// ── security review M4: the sink follows the deployment tier and never holds a PRODUCTION route
+describe('sandbox sink transport — deployment tier', () => {
+  const withEnv = async (
+    env: Record<string, string | undefined>,
+    fn: () => Promise<void>,
+  ) => {
+    const keys = ['NODE_ENV', 'DEPLOYMENT_TIER', 'ADF_SANDBOX_SINK_DIR'];
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    for (const k of keys) {
+      if (env[k] === undefined) delete process.env[k];
+      else process.env[k] = env[k];
+    }
+    try {
+      await fn();
+    } finally {
+      for (const k of keys) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
+    }
+  };
+
+  it('a lead for a PRODUCTION route is refused and nothing is recorded (any tier)', async () => {
+    for (const env of [
+      { NODE_ENV: 'test' },
+      { NODE_ENV: 'development' },
+      { NODE_ENV: 'production', DEPLOYMENT_TIER: 'staging' },
+    ])
+      await withEnv(env, async () => {
+        const sink = new SandboxSinkTransport();
+        await expect(
+          sink.send(msg({ routeEnvironment: 'PRODUCTION' })),
+        ).rejects.toMatchObject({
+          code: 'production_route_in_sandbox',
+          retryable: false,
+        });
+        expect(sink.messages()).toHaveLength(0);
+      });
+  });
+
+  it('production tier: refused outright (unchanged), with or without an explicit tier', async () => {
+    for (const env of [
+      { NODE_ENV: 'production' },
+      { NODE_ENV: 'production', DEPLOYMENT_TIER: 'production' },
+      // invalid combinations fail closed
+      { NODE_ENV: 'production', DEPLOYMENT_TIER: 'development' },
+      { NODE_ENV: 'development', DEPLOYMENT_TIER: 'production' },
+    ])
+      await withEnv(env, async () => {
+        const sink = new SandboxSinkTransport();
+        await expect(
+          sink.send(msg({ routeEnvironment: 'SANDBOX' })),
+        ).rejects.toMatchObject({ code: 'sandbox_in_production' });
+        expect(sink.messages()).toHaveLength(0);
+      });
+  });
+
+  it('hosted staging: a SANDBOX route is recorded as metadata only — no body in memory, nothing on disk', async () => {
+    const dir = `${process.cwd()}/.tmp-sink-should-not-exist-${process.pid}`;
+    await withEnv(
+      {
+        NODE_ENV: 'production',
+        DEPLOYMENT_TIER: 'staging',
+        ADF_SANDBOX_SINK_DIR: dir,
+      },
+      async () => {
+        const sink = new SandboxSinkTransport();
+        const receipt = await sink.send(msg({ routeEnvironment: 'SANDBOX' }));
+        expect(receipt).toMatchObject({
+          accepted: true,
+          providerName: 'sandbox-sink',
+        });
+        const [rec] = sink.messages();
+        expect(rec.xml).toBe('');
+        expect(rec.raw).toBe('');
+        expect(rec.sha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(require('fs').existsSync(dir)).toBe(false);
+      },
+    );
+  });
+});
+
 describe('SMTP transport policy', () => {
   it('refuses any non-loopback host unless live is fully gated on', () => {
     for (const host of [

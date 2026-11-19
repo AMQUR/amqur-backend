@@ -6,6 +6,7 @@ import { ConfigModule } from '@nestjs/config';
 import { envValidationSchema } from './config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TenantThrottlerGuard } from './common/guards/tenant-throttler.guard';
+import { rateLimit } from './common/rate-limits';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 
@@ -75,12 +76,12 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
         name: 'default',
         ttl: 60_000,
         // Higher ceiling in test/load labs; production stays 120/min.
-        limit: process.env.NODE_ENV === 'test' ? 10_000 : 120,
+        limit: rateLimit(120, 10_000),
       },
       {
         name: 'auth',
         ttl: 60_000,
-        limit: process.env.NODE_ENV === 'test' ? 5_000 : 20,
+        limit: rateLimit(20, 5_000),
       },
     ]),
 

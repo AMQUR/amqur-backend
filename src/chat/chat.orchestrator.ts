@@ -113,6 +113,10 @@ import { incidentRank } from './safety/customer-incident';
 import { seedOf, socialLine, vary } from './dialogue/social';
 import { CampaignEngine } from '../messaging/campaign.engine';
 import { ConsentService } from '../messaging/consent.service';
+import {
+  GRANT_NOT_EFFECTIVE_HANDSET_OPT_OUT,
+  textStaysOffText,
+} from '../messaging/handset-opt-out';
 import { departmentFor } from '../appointments/appointment.service';
 import type { Appointment } from '@prisma/client';
 import { isoDate } from '../common/time/zoned-time';
@@ -5744,6 +5748,18 @@ export class ChatOrchestrator {
     if (p === 'confirm_handoff') return this.handleHandoff(t, 'request');
     if (p === 'text_consent') {
       if (!t.st.contact.phone) return;
+      // A handset opt-out is only lifted from the handset (the chat cannot verify the number).
+      if (
+        await this.consent.handsetOptOutStands(
+          t.tenantId,
+          'SMS',
+          t.st.contact.phone,
+        )
+      ) {
+        this.metrics.increment('chat.text_consent.handset_opt_out_stands');
+        t.narration.push(textStaysOffText(t.lang === 'es' ? 'es' : 'en'));
+        return;
+      }
       await this.consent.record({
         tenantId: t.tenantId,
         locationId: t.locationId,
@@ -6973,6 +6989,21 @@ export class ChatOrchestrator {
         );
       return;
     }
+    // The form does not prove who owns the number: a text opt-in typed here never undoes an
+    // opt-out sent from the handset itself. The tick is still recorded (what the form said), but
+    // marked as not effective, and the lead is not flagged as textable.
+    const smsGrant = v.grants.find((g) => g.ledgerChannel === 'SMS');
+    const textLocked = smsGrant
+      ? await this.consent.handsetOptOutStands(
+          t.tenantId,
+          'SMS',
+          smsGrant.endpoint,
+        )
+      : false;
+    if (textLocked) {
+      v.contact.consentToText = false;
+      this.metrics.increment('chat.lead_form.text_grant_not_effective');
+    }
     // Consent first (append-only), so contact is never held without its consent record.
     for (const g of v.grants) {
       await this.consent.record({
@@ -6996,9 +7027,13 @@ export class ChatOrchestrator {
           // The language the form was ISSUED in (the wording shown), not the client's claim.
           language: v.language,
           formIssuedAt: offered!.issuedAt,
+          ...(textLocked && g.ledgerChannel === 'SMS'
+            ? { notEffective: GRANT_NOT_EFFECTIVE_HANDSET_OPT_OUT }
+            : {}),
         },
       });
     }
+    if (textLocked) t.answers.push(textStaysOffText(v.language));
     const c = v.contact;
     // Same shape absorbEntities() produces for a typed "John Smith, 555…" turn.
     t.u.entities.contact = {

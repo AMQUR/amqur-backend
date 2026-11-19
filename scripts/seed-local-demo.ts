@@ -18,6 +18,7 @@
  *
  * It never configures a credit-application destination; use `npm run credit:destination`.
  */
+import { isProductionTier } from '../src/config/deployment-tier';
 import { PrismaClient, Role } from '@prisma/client';
 import { seedDisabledAppointmentReminderCampaign } from '../src/messaging/seed-appointment-reminder-campaign';
 import { seedDisabledPostSaleCampaign } from '../src/messaging/seed-post-sale-campaign';
@@ -41,8 +42,8 @@ async function main() {
     );
     process.exit(1);
   }
-  if (process.env.NODE_ENV === 'production') {
-    console.error('Refusing to seed demo data with NODE_ENV=production.');
+  if (isProductionTier()) {
+    console.error('Refusing to seed demo data in the production deployment tier.');
     process.exit(1);
   }
   const cfg = JSON.parse(
@@ -129,7 +130,7 @@ async function main() {
   // production and still needs this enabled connection plus the sandboxScheduler flag.
   const sandboxScheduler =
     cfg.featureFlags.sandboxScheduler === true &&
-    process.env.NODE_ENV !== 'production';
+    !isProductionTier();
   const sandboxConn = await prisma.integrationConnection.findFirst({
     where: {
       tenantId: tenant.id,

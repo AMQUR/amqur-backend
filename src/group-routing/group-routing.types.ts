@@ -13,6 +13,11 @@ export type GroupMember = {
   tenantSlug: string;
   /** Locations of this rooftop that are listed and whose own inventory capability is ready. */
   locationIds: string[];
+  /**
+   * True only when EVERY location of this rooftop is listed. Its location-less vehicles are then
+   * included; otherwise they are not, because they cannot be attributed to a listed location.
+   */
+  allLocationsListed: boolean;
   primaryLocationId: string;
   /** Owner-approved public name (the rooftop's own location name). */
   name: string;

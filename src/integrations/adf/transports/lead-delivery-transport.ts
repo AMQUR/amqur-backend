@@ -7,6 +7,8 @@ export type OutboundLeadMessage = {
   deliveryId: string;
   tenantId: string;
   routeId: string;
+  /** The route's environment; a sandbox transport refuses anything but SANDBOX. */
+  routeEnvironment?: 'SANDBOX' | 'PRODUCTION';
   correlationId: string;
   messageId: string;
   from: string;

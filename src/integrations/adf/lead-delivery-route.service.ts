@@ -38,7 +38,8 @@ export const ROUTE_PUBLIC_SELECT = {
   verified: true,
   verifiedAt: true,
   verifiedBy: true,
-  verificationEvidence: true,
+  // verificationEvidence is free text that may contain the full destination address, which
+  // this projection promises never to return. Staff see who verified and when, not the text.
   productionEnabled: true,
   productionEnabledAt: true,
   productionEnabledBy: true,

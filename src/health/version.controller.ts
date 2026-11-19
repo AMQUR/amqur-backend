@@ -2,11 +2,14 @@ import { Controller, Get } from '@nestjs/common';
 import { Public } from '../common/decorators/public.decorator';
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveDeploymentTier } from '../config/deployment-tier';
 
 type ReleaseInfo = {
   version: string;
   commitSha: string;
   environment: string;
+  /** production | staging | development | test — see config/deployment-tier.ts. */
+  deploymentTier: string;
   buildTime: string;
   releaseId: string;
   service: string;
@@ -18,7 +21,8 @@ type ReleaseInfo = {
  * 2. release.json stamped into the image by scripts/stamp-release.mjs
  * 3. package.json version / 'unknown'
  *
- * Returns ONLY release identity — never configuration or secrets.
+ * Returns ONLY release identity (plus the resolved deployment tier, so a deployment can be
+ * checked) — never configuration or secrets.
  */
 @Controller('version')
 export class VersionController {
@@ -46,6 +50,7 @@ export class VersionController {
         process.env.RAILWAY_ENVIRONMENT_NAME?.trim() ||
         process.env.NODE_ENV ||
         'unknown',
+      deploymentTier: resolveDeploymentTier(),
       buildTime:
         process.env.APP_BUILD_TIME?.trim() ||
         (stamped?.buildTime as string) ||
