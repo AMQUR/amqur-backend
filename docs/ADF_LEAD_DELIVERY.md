@@ -201,6 +201,17 @@ The consent summary in `<comments>` is `text=…, email=…, call=…` with `yes
 is a grant, or no ledger record and the lead flag is set), `no` (latest ledger record is an
 opt-out, or `Lead.optOutAt`), or `not recorded`.
 
+**Handset opt-out lock.** The web lead form does not verify who owns the phone number typed
+into it. A text opt-out that came from the handset (`source = SMS_KEYWORD`, a STOP) or from the
+messaging provider (`PROVIDER`) therefore stands until a handset/provider grant (the customer
+texting START). A later `WIDGET`, `STAFF` or `IMPORT` text grant for that number is ignored by
+both resolvers (`ConsentService.status` and `resolveLeadConsentStanding`): text stays `no`, the
+phone is not typed `cellphone`, and such a grant never lifts a do-not-contact. The latest
+handset record is queried on its own, so repeated form submissions cannot push it out of the
+ledger window. The form's tick is still stored (evidence `notEffective: handset_opt_out_stands`),
+`Lead.consentToText` stays false, and the customer is told in neutral words that texting stays
+off for that number and how to turn it on from the phone (`src/messaging/handset-opt-out.ts`).
+
 Limits: nothing writes an all-channel do-not-contact record today (no staff or privacy flow
 creates one), so rule 2 is exercised by tests only; `WHATSAPP` records are not summarised; the
 ledger is matched by exact normalised endpoint, so a customer who opted out under a different

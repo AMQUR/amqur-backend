@@ -61,6 +61,7 @@ import {
   SEND_DEADLINE_CODE,
   TransportReceipt,
 } from './transports/lead-delivery-transport';
+import { HANDSET_CONSENT_SOURCES } from '../../messaging/handset-opt-out';
 import { SandboxSinkTransport } from './transports/sandbox-sink.transport';
 import { SmtpLeadTransport } from './transports/smtp.transport';
 
@@ -417,10 +418,36 @@ export class LeadDeliveryService implements OnModuleInit {
             granted: true,
             createdAt: true,
             evidence: true,
+            source: true,
           },
         })
       : [];
-    const standing = resolveLeadConsentStanding(lead, rows);
+    // The latest handset/provider text record is fetched on its own: no number of later form
+    // grants can push a STOP out of the window above.
+    const handset = ep.phone
+      ? await this.prisma.consentRecord.findFirst({
+          where: {
+            tenantId: lead.tenantId,
+            channel: 'SMS',
+            endpoint: ep.phone,
+            revokedAt: null,
+            source: { in: [...HANDSET_CONSENT_SOURCES] },
+          },
+          orderBy: [{ createdAt: 'desc' }, { granted: 'asc' }],
+          select: {
+            channel: true,
+            endpoint: true,
+            granted: true,
+            createdAt: true,
+            evidence: true,
+            source: true,
+          },
+        })
+      : null;
+    const standing = resolveLeadConsentStanding(
+      lead,
+      handset ? [...rows, handset] : rows,
+    );
     if (standing.doNotContact)
       this.metrics.increment(`adf.delivery.consent.${standing.reason}`);
     return standing;

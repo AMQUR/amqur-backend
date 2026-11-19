@@ -1,4 +1,8 @@
 import { normalizeEndpoint } from '../../messaging/consent.service';
+import {
+  handsetOptOutStands,
+  isHandsetConsentSource,
+} from '../../messaging/handset-opt-out';
 
 /**
  * Customer consent standing for an ADF lead hand-off, resolved from the append-only consent
@@ -18,6 +22,10 @@ import { normalizeEndpoint } from '../../messaging/consent.service';
  *    consent summary and is never reported as consent, whatever `Lead.consentTo*` says.
  *  - Per channel the LATEST non-revoked ledger record for (channel, endpoint) wins. With no
  *    ledger record the lead's own flag counts as a recorded opt-in; otherwise "not recorded".
+ *  - Exception: a text opt-out that came from the handset or the provider (`SMS_KEYWORD` /
+ *    `PROVIDER`) stands until a handset/provider grant. A later form, staff or import grant for
+ *    that number is ignored (the form does not verify who owns the number), so text stays
+ *    "false" and such a grant never lifts a do-not-contact either.
  */
 export type LedgerRow = {
   channel: string;
@@ -25,6 +33,8 @@ export type LedgerRow = {
   granted: boolean;
   createdAt: Date;
   evidence?: unknown;
+  /** WIDGET | STAFF | SMS_KEYWORD | PROVIDER | IMPORT */
+  source?: string | null;
 };
 
 /** true = recorded opt-in, false = recorded opt-out, null = not recorded. */
@@ -83,9 +93,24 @@ export function resolveLeadConsentStanding(
   rows: ReadonlyArray<LedgerRow>,
 ): LeadConsentStanding {
   const ep = leadConsentEndpoints(lead);
-  const mine = rows
-    .filter((r) => r.endpoint === ep.email || r.endpoint === ep.phone)
-    .slice()
+  const own = rows.filter(
+    (r) => r.endpoint === ep.email || r.endpoint === ep.phone,
+  );
+  // Handset opt-out lock: non-handset text grants for the phone have no effect while it stands.
+  const textLocked = handsetOptOutStands(
+    own.filter((r) => r.channel === 'SMS' && r.endpoint === ep.phone),
+  );
+  const mine = own
+    .filter(
+      (r) =>
+        !(
+          textLocked &&
+          r.granted &&
+          r.channel === 'SMS' &&
+          r.endpoint === ep.phone &&
+          !isHandsetConsentSource(r.source)
+        ),
+    )
     // Newest first; on an exact timestamp tie the opt-out wins (fail closed).
     .sort(
       (a, b) =>

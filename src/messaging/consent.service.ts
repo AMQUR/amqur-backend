@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { HANDSET_CONSENT_SOURCES } from './handset-opt-out';
 
 export type ConsentChannel = 'SMS' | 'EMAIL' | 'CALL' | 'WHATSAPP';
 export type ConsentPurpose = 'TRANSACTIONAL' | 'CONVERSATIONAL' | 'MARKETING';
@@ -23,6 +24,8 @@ export function normalizeEndpoint(
 /**
  * Append-only consent ledger. The LATEST record for (channel, endpoint) wins; an opt-out on a
  * channel blocks every purpose on that channel. Possessing a phone number is never consent.
+ * Exception to "latest wins": a handset/provider opt-out (STOP) stands until a handset/provider
+ * grant (START) — a later form, staff or import grant does not re-open the channel.
  * MARKETING requires an explicit MARKETING grant; CONVERSATIONAL/TRANSACTIONAL accept either
  * a matching grant or a MARKETING grant.
  */
@@ -82,6 +85,33 @@ export class ConsentService {
     return res.count;
   }
 
+  /**
+   * True while the LATEST handset/provider-sourced record for (channel, endpoint) is an opt-out
+   * (see handset-opt-out.ts). Queried on its own so that no number of later form grants can push
+   * the opt-out out of a result window.
+   */
+  async handsetOptOutStands(
+    tenantId: string,
+    channel: ConsentChannel,
+    rawEndpoint: string,
+  ): Promise<boolean> {
+    const endpoint = normalizeEndpoint(channel, rawEndpoint);
+    if (!endpoint) return false;
+    const latest = await this.prisma.consentRecord.findFirst({
+      where: {
+        tenantId,
+        channel,
+        endpoint,
+        revokedAt: null,
+        source: { in: [...HANDSET_CONSENT_SOURCES] },
+      },
+      // On an exact timestamp tie the opt-out wins (fail closed).
+      orderBy: [{ createdAt: 'desc' }, { granted: 'asc' }],
+      select: { granted: true },
+    });
+    return latest !== null && !latest.granted;
+  }
+
   async status(
     tenantId: string,
     channel: ConsentChannel,
@@ -91,6 +121,9 @@ export class ConsentService {
     const endpoint = normalizeEndpoint(channel, rawEndpoint);
     if (!endpoint)
       return { allowed: false, reason: 'invalid_endpoint' as const };
+    // A handset/provider opt-out is lifted only from the handset — never by a form/staff grant.
+    if (await this.handsetOptOutStands(tenantId, channel, endpoint))
+      return { allowed: false, reason: 'opted_out' as const };
     const rows = await this.prisma.consentRecord.findMany({
       where: { tenantId, channel, endpoint, revokedAt: null },
       orderBy: { createdAt: 'desc' },

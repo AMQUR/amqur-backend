@@ -26,6 +26,17 @@ describe('ConsentService.status', () => {
   ) {
     const prisma = {
       consentRecord: {
+        // Latest handset/provider-sourced row (the handset opt-out lock query).
+        findFirst: jest.fn().mockImplementation(() => {
+          const handset = rows
+            .filter((r) => ['SMS_KEYWORD', 'PROVIDER'].includes(r.source ?? ''))
+            .sort(
+              (a, b) =>
+                b.createdAt.getTime() - a.createdAt.getTime() ||
+                Number(a.granted) - Number(b.granted),
+            )[0];
+          return Promise.resolve(handset ? { granted: handset.granted } : null);
+        }),
         findMany: jest.fn().mockResolvedValue(
           rows.map((r, i) => ({
             id: `row-${i}`,
@@ -105,5 +116,101 @@ describe('ConsentService.status', () => {
     await expect(
       consent.status(tenantId, 'SMS', endpoint, 'MARKETING'),
     ).resolves.toMatchObject({ allowed: false, reason: 'opted_out' });
+  });
+
+  // ── security review M2: a handset opt-out is lifted only from the handset
+  describe('handset opt-out lock', () => {
+    const stop = new Date('2026-10-02T12:00:00Z');
+    const later = new Date('2026-10-05T12:00:00Z');
+    const stopRows = [
+      {
+        purpose: 'MARKETING',
+        granted: false,
+        createdAt: stop,
+        source: 'SMS_KEYWORD',
+      },
+      {
+        purpose: 'CONVERSATIONAL',
+        granted: false,
+        createdAt: stop,
+        source: 'SMS_KEYWORD',
+      },
+    ];
+
+    it.each(['WIDGET', 'STAFF', 'IMPORT'])(
+      'a later %s grant does NOT re-open texting after a handset STOP',
+      async (source) => {
+        const consent = svc([
+          { purpose: 'MARKETING', granted: true, createdAt: later, source },
+          {
+            purpose: 'CONVERSATIONAL',
+            granted: true,
+            createdAt: later,
+            source,
+          },
+          ...stopRows,
+        ]);
+        for (const purpose of ['CONVERSATIONAL', 'MARKETING'] as const)
+          await expect(
+            consent.status(tenantId, 'SMS', endpoint, purpose),
+          ).resolves.toEqual({ allowed: false, reason: 'opted_out' });
+      },
+    );
+
+    it('a provider-reported opt-out locks the same way', async () => {
+      const consent = svc([
+        {
+          purpose: 'CONVERSATIONAL',
+          granted: true,
+          createdAt: later,
+          source: 'WIDGET',
+        },
+        {
+          purpose: 'CONVERSATIONAL',
+          granted: false,
+          createdAt: stop,
+          source: 'PROVIDER',
+        },
+      ]);
+      await expect(
+        consent.status(tenantId, 'SMS', endpoint, 'CONVERSATIONAL'),
+      ).resolves.toEqual({ allowed: false, reason: 'opted_out' });
+    });
+
+    it('a handset START lifts it; an earlier form grant made while locked still does not count on its own', async () => {
+      const start = new Date('2026-10-06T12:00:00Z');
+      const consent = svc([
+        {
+          purpose: 'CONVERSATIONAL',
+          granted: true,
+          createdAt: start,
+          source: 'SMS_KEYWORD',
+        },
+        ...stopRows,
+      ]);
+      await expect(
+        consent.status(tenantId, 'SMS', endpoint, 'CONVERSATIONAL'),
+      ).resolves.toMatchObject({ allowed: true });
+    });
+
+    it('a form opt-out followed by a form grant is unchanged (no handset record involved)', async () => {
+      const consent = svc([
+        {
+          purpose: 'CONVERSATIONAL',
+          granted: true,
+          createdAt: later,
+          source: 'WIDGET',
+        },
+        {
+          purpose: 'CONVERSATIONAL',
+          granted: false,
+          createdAt: stop,
+          source: 'WIDGET',
+        },
+      ]);
+      await expect(
+        consent.status(tenantId, 'SMS', endpoint, 'CONVERSATIONAL'),
+      ).resolves.toMatchObject({ allowed: true });
+    });
   });
 });
