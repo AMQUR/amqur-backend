@@ -24,6 +24,7 @@ import { GroupRoutingService } from '../group-routing/group-routing.service';
 import { GroupMembershipService } from '../group-routing/group-membership.service';
 import { GroupInventoryService } from '../group-routing/group-inventory.service';
 
+import { TurnLockService } from './turn-lock.service';
 @Module({
   imports: [
     AuthModule,
@@ -40,6 +41,7 @@ import { GroupInventoryService } from '../group-routing/group-inventory.service'
   providers: [
     ChatOrchestrator,
     ChatService,
+    TurnLockService,
     InventoryEngine,
     JourneyStore,
     ClaudeConversationService,
