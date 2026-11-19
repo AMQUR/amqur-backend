@@ -117,13 +117,18 @@ describe('lead delivery state machine', () => {
     // A free-text note alone is not evidence — Message-ID mismatch fails closed.
     expect(
       go('SENT', 'ACCEPTED', {
-        ...E.operatorAccept,
+        kind: 'operator_accept_assertion',
+        actor: 'user-1',
+        providerMessageId: '<lead-delivery.d1@amqur.example.invalid>',
+        evidenceKind: 'mailbox_message_id',
         evidenceReference: '<other@amqur.example.invalid>',
       }).ok,
     ).toBe(false);
     expect(
       go('SENT', 'ACCEPTED', {
-        ...E.operatorAccept,
+        kind: 'operator_accept_assertion',
+        actor: 'user-1',
+        providerMessageId: '<lead-delivery.d1@amqur.example.invalid>',
         evidenceKind: 'crm_ingest_receipt',
         evidenceReference: 'CRM-INGEST-99',
       }),
