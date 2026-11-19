@@ -3,8 +3,10 @@ import {
   Injectable,
   Logger,
   OnModuleDestroy,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
+import { resolveDeploymentTier } from '../config/deployment-tier';
 
 /**
  * One turn at a time per conversation.
@@ -17,8 +19,8 @@ import { randomBytes } from 'crypto';
  * Turns of one conversation are therefore serialised:
  *  - always within this process (a promise chain per key);
  *  - across processes with a Redis lock (SET NX PX, renewed while held, released only by its
- *    holder). Without Redis — not configured, or down — only the in-process chain applies and
- *    the state store's optimistic check remains the last line of defence.
+ *    holder). Hosted deployments and any process with Redis configured require a remote lock.
+ *    An unconfigured local development or test process uses only the in-process chain.
  * A turn that cannot get the lock within `waitMs` is refused with 409 `conversation_busy`
  * (the widget shows its retry), never run in parallel.
  */
@@ -45,9 +47,13 @@ export class TurnLockService implements OnModuleDestroy {
   private readonly chains = new Map<string, Promise<void>>();
   private redis: RedisLike | null = null;
   private redisReady = false;
+  private readonly remoteRequired: boolean;
 
   constructor() {
     const url = process.env.REDIS_URL?.trim();
+    const tier = resolveDeploymentTier();
+    this.remoteRequired =
+      Boolean(url) || tier === 'production' || tier === 'staging';
     if (!url) return;
     try {
       const Redis = require('ioredis') as new (
@@ -56,8 +62,10 @@ export class TurnLockService implements OnModuleDestroy {
       ) => RedisLike;
       const client = new Redis(url, {
         connectTimeout: 1_500,
+        commandTimeout: 1_500,
         maxRetriesPerRequest: 1,
         enableOfflineQueue: false,
+        autoResendUnfulfilledCommands: false,
       });
       client.on('error', () => {
         this.redisReady = false;
@@ -65,9 +73,12 @@ export class TurnLockService implements OnModuleDestroy {
       client.on('ready', () => {
         this.redisReady = true;
       });
+      client.on('close', () => {
+        this.redisReady = false;
+      });
       this.redis = client;
     } catch {
-      this.logger.warn('ioredis not available — turn lock is in-process only');
+      this.logger.error('Redis turn lock initialization failed');
     }
   }
 
@@ -91,11 +102,21 @@ export class TurnLockService implements OnModuleDestroy {
     const mine = new Promise<void>((r) => (releaseLocal = r));
     const tail = prev.then(() => mine);
     this.chains.set(key, tail);
+    void tail.then(() => {
+      if (this.chains.get(key) === tail) this.chains.delete(key);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const waited = await Promise.race([
         prev.then(() => true),
-        sleep(Math.max(0, deadline - Date.now())).then(() => false),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(
+            () => resolve(false),
+            Math.max(0, deadline - Date.now()),
+          );
+        }),
       ]);
+      clearTimeout(timer);
       if (!waited) throw busy();
 
       // 2. Cross-process.
@@ -122,17 +143,17 @@ export class TurnLockService implements OnModuleDestroy {
       }
     } finally {
       releaseLocal();
-      if (this.chains.get(key) === tail) this.chains.delete(key);
     }
   }
 
-  /** Lock token, or null when Redis is not usable (in-process serialisation only). */
+  /** Lock token, or null for unconfigured local development and tests. */
   private async acquireRemote(
     key: string,
     ttlMs: number,
     deadline: number,
   ): Promise<string | null> {
-    if (!this.redis || !this.redisReady) return null;
+    if (!this.remoteRequired) return null;
+    if (!this.redis || !this.redisReady) throw unavailable();
     const token = randomBytes(12).toString('base64url');
     let delay = 15;
     for (;;) {
@@ -140,7 +161,7 @@ export class TurnLockService implements OnModuleDestroy {
       try {
         ok = await this.redis.set(redisKey(key), token, 'PX', ttlMs, 'NX');
       } catch {
-        return null; // Redis failed mid-acquire: degrade, never block the customer on it
+        throw unavailable();
       }
       if (ok === 'OK') return token;
       if (Date.now() + delay > deadline) throw busy();
@@ -152,6 +173,11 @@ export class TurnLockService implements OnModuleDestroy {
 
 const redisKey = (key: string) => `amqur:turn-lock:${key}`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const unavailable = () =>
+  new ServiceUnavailableException({
+    message: 'conversation_temporarily_unavailable',
+    detail: 'Please retry your message shortly.',
+  });
 const busy = () =>
   new ConflictException({
     message: 'conversation_busy',

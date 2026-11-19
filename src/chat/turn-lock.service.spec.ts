@@ -1,5 +1,8 @@
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ServiceUnavailableException } from '@nestjs/common';
+import Redis from 'ioredis';
 import { TurnLockService } from './turn-lock.service';
+
+jest.mock('ioredis', () => jest.fn());
 
 describe('TurnLockService (in-process; no REDIS_URL)', () => {
   const prev = process.env.REDIS_URL;
@@ -74,5 +77,80 @@ describe('TurnLockService (in-process; no REDIS_URL)', () => {
       }),
     ).rejects.toThrow('boom');
     await expect(lock.run('t1:y', async () => 'next')).resolves.toBe('next');
+  });
+
+  it('does not let a later turn overtake an active turn after a waiter times out', async () => {
+    const lock = new TurnLockService();
+    let finish!: () => void;
+    const active = lock.run(
+      't1:z',
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const work = jest.fn(async () => 'ok');
+    try {
+      await expect(
+        lock.run('t1:z', work, { waitMs: 5 }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      await expect(
+        lock.run('t1:z', work, { waitMs: 5 }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(work).not.toHaveBeenCalled();
+    } finally {
+      finish();
+      await active;
+    }
+    await expect(lock.run('t1:z', work)).resolves.toBe('ok');
+  });
+});
+
+describe('TurnLockService (distributed)', () => {
+  const initialRedisUrl = process.env.REDIS_URL;
+  const initialTier = process.env.DEPLOYMENT_TIER;
+
+  afterEach(() => {
+    if (initialRedisUrl === undefined) delete process.env.REDIS_URL;
+    else process.env.REDIS_URL = initialRedisUrl;
+    if (initialTier === undefined) delete process.env.DEPLOYMENT_TIER;
+    else process.env.DEPLOYMENT_TIER = initialTier;
+  });
+
+  it('refuses hosted turns when Redis is missing', async () => {
+    delete process.env.REDIS_URL;
+    process.env.DEPLOYMENT_TIER = 'staging';
+    const work = jest.fn();
+    await expect(
+      new TurnLockService().run('tenant:conversation', work),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(work).not.toHaveBeenCalled();
+  });
+
+  it('refuses turns during Redis outages and resumes after Redis recovers', async () => {
+    process.env.REDIS_URL = 'redis://127.0.0.1:6379';
+    const events = new Map<string, () => void>();
+    const set = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('socket closed'))
+      .mockResolvedValue('OK');
+    (Redis as unknown as jest.Mock).mockImplementation(() => ({
+      on: (event: string, callback: () => void) => events.set(event, callback),
+      set,
+      eval: jest.fn().mockResolvedValue(1),
+    }));
+    const lock = new TurnLockService();
+    const work = jest.fn(async () => 'ok');
+    const run = () => lock.run('tenant:conversation', work);
+
+    await expect(run()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    events.get('ready')?.();
+    await expect(run()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    events.get('close')?.();
+    await expect(run()).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(work).not.toHaveBeenCalled();
+    events.get('ready')?.();
+    await expect(run()).resolves.toBe('ok');
+    expect(work).toHaveBeenCalledTimes(1);
   });
 });
