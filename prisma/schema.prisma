@@ -125,6 +125,8 @@ model Tenant {
   workflowRuns            WorkflowRun[]
   toolActionRequests      ToolActionRequest[]
   workflowVersions        WorkflowVersion[]
+  leadDeliveryRoutes      LeadDeliveryRoute[]
+  leadDeliveries          LeadDelivery[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -242,6 +244,7 @@ model Location {
   priceQuoteRequests     PriceQuoteRequest[]
   conversationPlaybooks  ConversationPlaybook[]
   promptVersions         PromptVersion[]
+  leadDeliveryRoutes     LeadDeliveryRoute[]
 
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -517,6 +520,8 @@ model Lead {
   assignedUserId String?
   notes          String?
   nextBestAction String?
+
+  deliveries LeadDelivery[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2043,4 +2048,185 @@ model ToolActionRequest {
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, locationId])
+}
+
+// ───────────────────────────── Per-rooftop lead delivery (ADF/XML) — docs/ADF_LEAD_DELIVERY.md
+
+enum LeadDeliveryChannel {
+  ADF_EMAIL
+}
+
+enum LeadDeliveryDepartment {
+  SALES
+  SERVICE
+  PARTS
+}
+
+/// Each state needs its own evidence; they are never collapsed into "success".
+enum LeadDeliveryStatus {
+  /// Row + outbox event written; nothing handed to any transport yet.
+  QUEUED
+  /// Handed to the transport (attempt in flight or outcome unknown).
+  SENT
+  /// Transport/provider acknowledged (e.g. SMTP 250 + message id). NOT delivery, NOT a CRM record.
+  ACCEPTED
+  /// Provider delivery callback only.
+  DELIVERED
+  /// Explicit reconciliation input: the CRM parsed the lead.
+  CRM_PARSED
+  /// Explicit reconciliation input carrying a CRM record reference.
+  CRM_MATCHED
+  /// Explicit reconciliation input: the CRM parser rejected the lead.
+  CRM_REJECTED
+  /// Retryable transport failure (outbox backoff owns the retry).
+  FAILED
+  /// Permanent failure / attempts exhausted / invalid payload. Operator replay only.
+  DEAD
+  /// A gate was closed (route unknown/unverified/disabled, send disabled, no consent basis…).
+  BLOCKED
+}
+
+enum LeadDeliveryFormat {
+  XML_BODY
+  XML_ATTACHMENT
+}
+
+enum LeadDeliveryRouteEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
+/// Server-side destination for one rooftop department. The address is AES-256-GCM encrypted
+/// (SecretVaultService); only a keyed fingerprint and a masked display are stored in clear.
+/// Never exposed through any public/widget response.
+model LeadDeliveryRoute {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  channel     LeadDeliveryChannel          @default(ADF_EMAIL)
+  department  LeadDeliveryDepartment
+  /// SANDBOX routes may only point at reserved test domains and can never be production-enabled.
+  environment LeadDeliveryRouteEnvironment @default(SANDBOX)
+  enabled     Boolean                      @default(false)
+
+  destinationCiphertext  String
+  destinationIv          String
+  destinationAuthTag     String
+  /// HMAC-SHA256 (keyed, non-reversible) of the normalized address.
+  destinationFingerprint String
+  /// e.g. l***@d***.net
+  destinationMasked      String
+
+  format     LeadDeliveryFormat @default(XML_BODY)
+  adfVersion String             @default("1.0")
+
+  verified             Boolean   @default(false)
+  verifiedAt           DateTime?
+  verifiedBy           String?
+  verificationEvidence String?
+
+  productionEnabled   Boolean   @default(false)
+  productionEnabledAt DateTime?
+  productionEnabledBy String?
+
+  deliveries LeadDelivery[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationId, channel, department])
+  /// Target of the composite FK that makes a cross-tenant delivery→route link impossible.
+  @@unique([id, tenantId])
+  @@index([tenantId, enabled])
+}
+
+/// One row per (lead, channel, destination) attempt chain. Holds no customer contact data and
+/// no raw destination address.
+model LeadDelivery {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+
+  leadId String
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  channel    LeadDeliveryChannel    @default(ADF_EMAIL)
+  department LeadDeliveryDepartment
+
+  /// Composite FK (routeId, tenantId) → route (id, tenantId): the route is always the same tenant.
+  routeId String?
+  route   LeadDeliveryRoute? @relation(fields: [routeId, tenantId], references: [id, tenantId], onDelete: NoAction, onUpdate: NoAction)
+
+  destinationFingerprint String?
+  destinationMasked      String?
+
+  idempotencyKey String
+
+  status      LeadDeliveryStatus @default(QUEUED)
+  attempts    Int                @default(0)
+  replayCount Int                @default(0)
+
+  providerName      String?
+  providerMessageId String?
+  providerRawStatus String?
+  crmRecordRef      String?
+  payloadSha256     String?
+  payloadBytes      Int?
+
+  blockedReason String?
+  lastErrorCode String?
+  lastErrorAt   DateTime?
+
+  queuedAt      DateTime  @default(now())
+  sentAt        DateTime?
+  acceptedAt    DateTime?
+  deliveredAt   DateTime?
+  crmParsedAt   DateTime?
+  crmMatchedAt  DateTime?
+  crmRejectedAt DateTime?
+  failedAt      DateTime?
+  deadAt        DateTime?
+  blockedAt     DateTime?
+
+  correlationId String
+  outboxEventId String?
+
+  events LeadDeliveryEvent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, locationId, status])
+  @@index([leadId])
+}
+
+/// Append-only status history (evidence carries codes/ids only — never PII).
+model LeadDeliveryEvent {
+  id String @id @default(cuid())
+
+  tenantId   String
+  deliveryId String
+  delivery   LeadDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  fromStatus LeadDeliveryStatus?
+  toStatus   LeadDeliveryStatus
+  reasonCode String?
+  evidence   Json?
+  /// "system" or a staff user id
+  actor      String              @default("system")
+
+  createdAt DateTime @default(now())
+
+  @@index([deliveryId, createdAt])
+  @@index([tenantId, createdAt])
 }
