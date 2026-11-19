@@ -7,7 +7,10 @@ CALLER_PORT="${PORT:-}"
 set -a; . ./test-infra/.env.test; set +a
 DB_HOST="$(node -e "console.log(new URL(process.env.DATABASE_URL).hostname)")"
 case "$DB_HOST" in localhost|127.0.0.1) ;; *) echo "Refusing: non-local DATABASE_URL host $DB_HOST" >&2; exit 1;; esac
-export NODE_ENV=development PORT="${CALLER_PORT:-3001}"
+# DEMO_NODE_ENV=test lifts the per-minute rate limit for automated browser runs against this
+# local stack (several journeys in one minute). Only development or test; never production.
+case "${DEMO_NODE_ENV:-development}" in development|test) ;; *) echo "Refusing: DEMO_NODE_ENV must be development or test" >&2; exit 1;; esac
+export NODE_ENV="${DEMO_NODE_ENV:-development}" PORT="${CALLER_PORT:-3001}"
 # .env.test points CRM_WEBHOOK_URL at the mock-CRM test double. Its 200 is not a person being
 # alerted, so the demo must not say "I've alerted the team". Use a real receiver only if given.
 export CRM_WEBHOOK_URL="${DEMO_CRM_WEBHOOK_URL:-}"
