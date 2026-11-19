@@ -20,6 +20,16 @@ export type OutboxHandler = (
 ) => Promise<OutboxHandlerResult>;
 
 /**
+ * Called once when an event is dead-lettered WITHOUT its handler running (abandoned after
+ * repeated lease expiry). Lets a topic move its own domain row to a terminal, operator-visible
+ * state instead of leaving it waiting behind a DEAD event. Must be idempotent.
+ */
+export type OutboxAbandonHandler = (
+  payload: Record<string, unknown>,
+  meta: { id: string; tenantId: string; attempts: number },
+) => Promise<void>;
+
+/**
  * Multi-worker-safe outbox dispatcher. Claiming is atomic in OutboxService.claimPending;
  * handlers must be idempotent (keyed by event id / idempotency key) because delivery is
  * at-least-once. Unknown topics go to DEAD — they are never silently marked published.
@@ -29,6 +39,7 @@ export class OutboxProcessorService {
   private readonly logger = new Logger(OutboxProcessorService.name);
   private running = false;
   private readonly handlers = new Map<string, OutboxHandler>();
+  private readonly abandonHandlers = new Map<string, OutboxAbandonHandler>();
 
   constructor(
     private readonly outbox: OutboxService,
@@ -43,6 +54,11 @@ export class OutboxProcessorService {
 
   registerHandler(topic: string, handler: OutboxHandler): void {
     this.handlers.set(topic, handler);
+  }
+
+  /** See OutboxAbandonHandler. One hook per topic. */
+  registerAbandonHandler(topic: string, handler: OutboxAbandonHandler): void {
+    this.abandonHandlers.set(topic, handler);
   }
 
   hasHandler(topic: string): boolean {
@@ -77,7 +93,7 @@ export class OutboxProcessorService {
         // Only abandoned (lease-expired) attempts can bring a claimed row to the limit:
         // handled failures are dead-lettered in markFailed. Stop instead of crashing again.
         if (row.attempts >= OUTBOX_MAX_ATTEMPTS) {
-          await this.outbox.markFailed(
+          const dead = await this.outbox.markFailed(
             row.id,
             'abandoned_after_repeated_lease_expiry',
             row.attempts,
@@ -87,6 +103,24 @@ export class OutboxProcessorService {
           this.logger.error(
             `Outbox ${row.id} topic=${row.topic} abandoned ${row.attempts} times (worker died or hung) → DEAD`,
           );
+          // The handler never runs on this path, so the topic's own row would be left waiting
+          // behind a DEAD event. The event is DEAD first: a hook that throws (or kills the
+          // worker) can therefore never bring this event back or loop.
+          const onAbandon = this.abandonHandlers.get(row.topic);
+          if (onAbandon && dead.count === 1) {
+            try {
+              await onAbandon(row.payload as Record<string, unknown>, {
+                id: row.id,
+                tenantId: row.tenantId,
+                attempts: row.attempts,
+              });
+            } catch (err: unknown) {
+              this.metrics.increment('outbox.abandon_hook_failed');
+              this.logger.error(
+                `Outbox ${row.id} topic=${row.topic} abandon hook failed: ${err instanceof Error ? err.name : 'error'}`,
+              );
+            }
+          }
           continue;
         }
         const attempts = row.attempts + 1;

@@ -283,9 +283,21 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
 - Remaining duplicate window: the worker process dies after the transport accepts and before any
   of the writes above commits (or the database is unreachable *and* the process restarts). The
   stale `SENT` row is then retried with the same `Message-ID`, so a receiver can de-duplicate.
-- If the outbox event exhausts its attempts while a row is `accepted_record_pending`, the row
-  stays `SENT` with that code (it is not `DEAD`, because replay would re-send). Replaying the
-  outbox event finalises it.
+- If the outbox event exhausts its attempts while a row is `accepted_record_pending`, the row is
+  never made `DEAD` (replay would re-send). It is finalised to `ACCEPTED` from the stored receipt
+  by the abandon hook / the dead-outbox sweep below (or by replaying the outbox event).
+- **A delivery never waits behind a `DEAD` outbox event.** An event abandoned after repeated
+  lease expiry is dead-lettered *without* its handler running, so the topic registers an abandon
+  hook (`OutboxProcessorService.registerAbandonHandler`): `settleBehindDeadOutbox` moves a
+  `QUEUED` / `SENT` / `FAILED` row to `DEAD` (`lastErrorCode = outbox_abandoned`, replayable), or
+  finalises an accepted-but-unrecorded row to `ACCEPTED` — it never sends. The event is marked
+  `DEAD` before the hook runs, so a failing hook cannot loop. As a backstop a sweep every 5 minutes
+  (`sweepBehindDeadOutbox`, code `outbox_dead_sweep`) settles any `QUEUED` / `SENT` / `FAILED` row
+  whose outbox event is `DEAD`, whatever left it there.
+- `appointment.provider.reconcile` / `appointment.provider.cancel` have no abandon hook on
+  purpose: the appointment stays `REQUESTED` with `providerStatus = UNKNOWN:<code>` (never shown as
+  confirmed) and a `DEAD` event is the designed "staff reconcile by hand" outcome, the same state
+  as `adapter_cannot_reconcile` / `no_authorized_scheduler`.
 
 ## Privacy
 

@@ -76,6 +76,10 @@ export { SENT_STALE_MS };
  * ACCEPTED from them on the next attempt and is NEVER handed to a transport again.
  */
 export const ACCEPT_RECORD_PENDING = 'accepted_record_pending';
+/** `lastErrorCode` of a row dead-lettered because its outbox event was abandoned (no handler run). */
+export const OUTBOX_ABANDONED_CODE = 'outbox_abandoned';
+/** Same outcome, found by the defensive sweep rather than the abandon hook. */
+export const OUTBOX_DEAD_SWEEP_CODE = 'outbox_dead_sweep';
 const ACCEPT_WRITE_ATTEMPTS = 3;
 const ACCEPT_WRITE_BACKOFF_MS = 75;
 
@@ -153,6 +157,10 @@ export class LeadDeliveryService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
+    this.processor.registerAbandonHandler(LEAD_DELIVERY_TOPIC, async (p, m) => {
+      if (typeof p.deliveryId === 'string')
+        await this.settleBehindDeadOutbox(p.deliveryId, m.tenantId);
+    });
     this.processor.registerHandler(LEAD_DELIVERY_TOPIC, (p, m) => {
       if (typeof p.deliveryId !== 'string')
         throw new PermanentOutboxError('bad_payload');
@@ -472,6 +480,104 @@ export class LeadDeliveryService implements OnModuleInit {
       this.logger.error(
         `lead delivery ${deliveryId} could not be dead-lettered on the final attempt`,
       );
+    }
+  }
+
+  /**
+   * The delivery's outbox event is DEAD and its handler will not run again (abandoned after
+   * repeated lease expiry, or any other path that left the row behind). Bring the row to a
+   * terminal, operator-visible state:
+   *  - accepted by the transport but not yet recorded → FINALISED to ACCEPTED from the stored
+   *    receipt; never dead-lettered, never re-sent;
+   *  - otherwise QUEUED / SENT / FAILED → DEAD (replayable by an operator).
+   * Idempotent; anything already terminal is left alone.
+   */
+  async settleBehindDeadOutbox(
+    deliveryId: string,
+    tenantId: string,
+    code = OUTBOX_ABANDONED_CODE,
+  ): Promise<'accepted' | 'dead' | 'unchanged'> {
+    const cur = await this.prisma.leadDelivery.findFirst({
+      where: { id: deliveryId, tenantId },
+    });
+    if (!cur || !['QUEUED', 'SENT', 'FAILED'].includes(cur.status))
+      return 'unchanged';
+    const receipt = this.pendingReceipt(cur);
+    if (receipt) {
+      try {
+        await this.recordAccepted(cur, receipt);
+      } catch {
+        // Still pending (database trouble): the sweep finalises it on a later pass.
+        return 'unchanged';
+      }
+      return 'accepted';
+    }
+    const moved = await this.apply(
+      this.prisma,
+      cur,
+      'DEAD',
+      { kind: 'attempts_exhausted', code },
+      {
+        data: { lastErrorCode: code, lastErrorAt: new Date() },
+        reasonCode: code,
+      },
+    );
+    if (moved)
+      this.logger.error(
+        `lead delivery ${deliveryId} DEAD code=${code} (outbox event dead-lettered without a handler run)`,
+      );
+    return moved ? 'dead' : 'unchanged';
+  }
+
+  /**
+   * Defensive sweep: a delivery must never sit in QUEUED / SENT / FAILED behind a DEAD outbox
+   * event (nothing would ever move it, and replay refuses QUEUED / SENT). Whatever left it there,
+   * settle it. Bounded; returns how many rows changed.
+   */
+  async sweepBehindDeadOutbox(
+    opts: { limit?: number; tenantId?: string } = {},
+  ): Promise<number> {
+    const take = Math.min(Math.max(opts.limit ?? 200, 1), 500);
+    const rows = await this.prisma.$queryRaw<
+      Array<{ id: string; tenantId: string }>
+    >`
+      SELECT d."id", d."tenantId"
+        FROM "LeadDelivery" d
+        JOIN "OutboxEvent" o ON o."id" = d."outboxEventId"
+       WHERE d."status" IN ('QUEUED', 'SENT', 'FAILED')
+         AND o."status" = 'DEAD'::"OutboxStatus"
+         AND (${opts.tenantId ?? null}::text IS NULL OR d."tenantId" = ${opts.tenantId ?? null})
+       ORDER BY d."createdAt" ASC
+       LIMIT ${take}`;
+    let settled = 0;
+    for (const r of rows) {
+      try {
+        const res = await this.settleBehindDeadOutbox(
+          r.id,
+          r.tenantId,
+          OUTBOX_DEAD_SWEEP_CODE,
+        );
+        if (res !== 'unchanged') settled += 1;
+      } catch {
+        // Changed concurrently — the next sweep looks again.
+      }
+    }
+    if (settled > 0) {
+      this.metrics.increment('adf.delivery.dead_outbox_swept', settled);
+      this.logger.error(
+        `lead delivery sweep settled ${settled} row(s) stranded behind a DEAD outbox event`,
+      );
+    }
+    return settled;
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async sweepBehindDeadOutboxTick(): Promise<void> {
+    if (process.env.OUTBOX_PROCESSOR_ENABLED === 'false') return;
+    try {
+      await this.sweepBehindDeadOutbox();
+    } catch {
+      this.logger.warn('lead delivery dead-outbox sweep failed');
     }
   }
 
