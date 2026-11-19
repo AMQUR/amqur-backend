@@ -3946,10 +3946,15 @@ export class ChatOrchestrator {
     t.evidence.push(
       this.evidenceSvc.forAppointment(t.tenantId, t.locationId, a),
     );
+    // "Provider-confirmed" needs a CONFIRMED provider receipt; a row staff confirmed by hand
+    // (no receipt) is confirmed, but never attributed to a scheduling system.
+    const providerConfirmed = res.outcome === 'confirmed' && !!res.provider;
     t.sources.add(
-      res.outcome === 'confirmed'
+      providerConfirmed
         ? `scheduler:${a.provider}`
-        : 'appointment_request',
+        : res.outcome === 'confirmed'
+          ? 'appointment_staff_confirmed'
+          : 'appointment_request',
     );
     const label = this.apptLabel(t, a);
     const what =
@@ -3967,11 +3972,17 @@ export class ChatOrchestrator {
               `The sandbox scheduler confirmed a ${what} ${label}. This is a demo booking, not a real appointment.`,
               `El sistema de citas de demostración confirmó su ${what} para el ${label}. Es una reserva de prueba, no una cita real.`,
             )
-          : tr(
-              t.lang,
-              `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
-              `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
-            ),
+          : providerConfirmed
+            ? tr(
+                t.lang,
+                `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
+                `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
+              )
+            : tr(
+                t.lang,
+                `You're booked for a ${what} ${label} — the dealership team confirmed it.`,
+                `Su ${what} quedó confirmada para el ${label} — el equipo de la agencia la confirmó.`,
+              ),
       );
     } else if (res.outcome === 'pending') {
       t.narration.push(
@@ -4018,7 +4029,7 @@ export class ChatOrchestrator {
       date: a.requestedDate,
       time: a.requestedTime,
       label,
-      verified: res.outcome === 'confirmed',
+      verified: providerConfirmed,
       // sales-desk hook 5/7: rooftop/department/provider-receipt fields (flag-gated).
       ...(await this.appointmentCardExtras(t, a, res)),
     });

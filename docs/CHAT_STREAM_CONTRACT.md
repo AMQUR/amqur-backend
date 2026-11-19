@@ -146,8 +146,13 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
   a `CONFIRMED` `AppointmentProviderReceipt` (`providerRef` unique per tenant + provider).
   Every provider response writes one receipt row (`CONFIRMED`, `PENDING`, `UNAVAILABLE`,
   `FAILED`, `CONFLICT`; plus `UNKNOWN`, `NOT_FOUND`, `ORPHAN_CANCELLED` for the compensation
-  path below). (Staff can still confirm a request by hand in the Command Center;
-  that path is unchanged and writes no provider receipt.)
+  path below).
+- Staff can still confirm a request by hand in the Command Center; that path writes no provider
+  receipt. When such a row is reported in chat (for example the same request is replayed) the
+  card is `status: 'CONFIRMED'`, `outcome: 'confirmed'` but **`verified: false`** with no
+  `providerRef` / `providerName`, and the reply says "the dealership team confirmed it" — never
+  "the dealership's scheduling system confirmed it". `verified: true` and the provider wording
+  require a `CONFIRMED` receipt.
 - Provider says no / lost race → "That time was just taken, so nothing was booked." plus a
   fresh picker; the attempt is recorded `CANCELLED` + `UNAVAILABLE` receipt.
 - Provider **reports** a failure → the request stays `REQUESTED` (`outcome: 'requested'`,

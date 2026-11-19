@@ -731,3 +731,36 @@ describe('R7 — one derivation of the sandbox label', () => {
     expect(await m.book()).toMatchObject({ provider: { sandbox: false } });
   });
 });
+
+describe('R10 — a staff-confirmed row (no receipt) is never reported as provider-confirmed', () => {
+  it('replay of the same request after staff confirmed it: confirmed, but with no provider confirmation', async () => {
+    const m = make(null);
+    const over = {
+      providerSlot: undefined,
+      idempotencyKey: 'appt:conv-1:SALES:x',
+    };
+    await m.book(over);
+    // Staff confirm by hand in the Command Center: no provider, no receipt.
+    Object.assign(m.appointments[0], {
+      status: 'CONFIRMED',
+      availabilityVerified: true,
+      scheduledAt: new Date(slotStart),
+    });
+    const replay = await m.book(over);
+    expect(replay).toMatchObject({ status: 'saved', outcome: 'confirmed' });
+    expect(replay).not.toHaveProperty('provider');
+    expect(m.receipts).toEqual([]);
+    expect(
+      await m.svc.providerConfirmation(m.appointments[0] as never),
+    ).toBeUndefined();
+  });
+
+  it('a provider-confirmed row replays WITH its receipt-backed confirmation', async () => {
+    const m = make(new SandboxSchedulingAdapter());
+    await m.book();
+    expect(await m.book()).toMatchObject({
+      outcome: 'confirmed',
+      provider: { ref: expect.stringMatching(/^SBX-/), sandbox: true },
+    });
+  });
+});

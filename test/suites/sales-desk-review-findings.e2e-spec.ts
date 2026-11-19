@@ -5,7 +5,10 @@ import { LEAD_FORM_CONSENT_VERSION } from '../../src/chat/sales-desk/consent-wor
 import { referenceNow } from '../../src/common/time/reference-now';
 import { sandboxTakenSlotStart } from '../../src/appointments/sandbox-scheduling.adapter';
 import { SchedulingProviderRegistry } from '../../src/appointments/scheduling-provider.registry';
-import { APPOINTMENT_RECONCILE_TOPIC } from '../../src/appointments/appointment.service';
+import {
+  APPOINTMENT_RECONCILE_TOPIC,
+  AppointmentService,
+} from '../../src/appointments/appointment.service';
 import { OutboxProcessorService } from '../../src/integrations/core/outbox-processor.service';
 import { ConversationComposerService } from '../../src/chat/compose/conversation-composer.service';
 
@@ -28,6 +31,7 @@ const PHONE = '(312) 555-0147';
 describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)', () => {
   let ctx: E2eCtx;
   let sbx: DemoDealer; // salesDeskCards + sandbox scheduler
+  let plain: DemoDealer; // salesDeskCards, no scheduler (request-only)
   const tokens: Record<string, string> = {};
   const srv = () => request(ctx.app.getHttpServer());
   const tokenFor = async (d: DemoDealer) => {
@@ -120,6 +124,10 @@ describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)'
       creditPreview: false,
       flags: { salesDeskCards: true, sandboxScheduler: true },
     });
+    plain = await seedDemoDealer(ctx.app, ctx.prisma, 'sdr-cards', {
+      creditPreview: false,
+      flags: { salesDeskCards: true },
+    });
     await ctx.prisma.integrationConnection.deleteMany({
       where: { tenantId: sbx.tenantId, capability: 'appointments' },
     });
@@ -140,6 +148,76 @@ describe('sales desk + sandbox scheduler — review findings (R5, R7, R10, R12)'
     });
   }, 120_000);
   afterAll(async () => ctx.app.close());
+
+  // ───────────────────────────────────────── R10: staff-confirmed is not provider-confirmed
+
+  describe('R10 — a staff-confirmed appointment is never worded or flagged as provider-confirmed', () => {
+    it('same request replayed after staff confirmed it: "the dealership team confirmed it", verified:false, no providerRef', async () => {
+      const typed = {
+        message: `I'd like to come see the ${plain.vehicles[0].model} tomorrow at 11am`,
+      };
+      const first = await chat(plain, typed);
+      const c1 = card<Record<string, unknown>>(first, 'appointment')!;
+      expect(c1).toMatchObject({
+        status: 'REQUESTED',
+        outcome: 'requested',
+        verified: false,
+      });
+
+      // Staff confirm by hand (phone / DMS): no scheduling provider, no receipt.
+      await ctx.app.get(AppointmentService).staffTransition({
+        tenantId: plain.tenantId,
+        appointmentId: c1.id as string,
+        to: 'CONFIRMED',
+        actorId: 'staff-r10',
+      });
+      expect(
+        await ctx.prisma.appointmentProviderReceipt.count({
+          where: { appointmentId: c1.id as string },
+        }),
+      ).toBe(0);
+
+      // The client retries the same turn as if the first answer had been lost (the stored
+      // conversation state does not have the appointment yet).
+      const where = {
+        tenantId_externalKey: {
+          tenantId: plain.tenantId,
+          externalKey: first.conversationId,
+        },
+      };
+      const conv = await ctx.prisma.conversation.findUniqueOrThrow({ where });
+      const state = { ...(conv.state as Record<string, unknown>) };
+      delete state.appointment;
+      await ctx.prisma.conversation.update({
+        where,
+        data: { state: state as never },
+      });
+      const replay = await chat(plain, {
+        ...typed,
+        conversationId: first.conversationId,
+      });
+      const c2 = card<Record<string, unknown>>(replay, 'appointment')!;
+      expect(c2).toMatchObject({
+        id: c1.id,
+        status: 'CONFIRMED',
+        outcome: 'confirmed',
+        verified: false,
+      });
+      expect(c2).not.toHaveProperty('providerRef');
+      expect(c2).not.toHaveProperty('providerName');
+      expect(c2).not.toHaveProperty('sandbox');
+      expect(replay.reply).toMatch(/the dealership team confirmed it/);
+      expect(replay.reply).not.toMatch(/scheduling system confirmed/);
+      expect(
+        await ctx.prisma.appointment.count({
+          where: {
+            tenantId: plain.tenantId,
+            conversation: { externalKey: first.conversationId },
+          },
+        }),
+      ).toBe(1);
+    });
+  });
 
   // ───────────────────────────────────────── R7: the sandbox label never gets lost
 
