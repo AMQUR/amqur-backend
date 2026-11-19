@@ -42,6 +42,7 @@ import type {
 import { CircuitBreakerService } from '../integrations/core/circuit-breaker.service';
 import { MetricsService } from '../observability/metrics.service';
 import { CampaignEngine } from '../messaging/campaign.engine';
+import { LeadAppointmentUpdateService } from '../integrations/adf/lead-appointment-update.service';
 
 export type AppointmentRequestInput = {
   tenantId: string;
@@ -177,7 +178,24 @@ export class AppointmentService {
     private readonly breaker: CircuitBreakerService,
     private readonly metrics: MetricsService,
     @Optional() private readonly campaigns?: CampaignEngine,
+    @Optional() private readonly leadUpdates?: LeadAppointmentUpdateService,
   ) {}
+
+  /**
+   * R8: an appointment is a separate event from its lead. After a state change, let the lead's
+   * route record (and, where the destination supports it, send) ONE update for that state. It
+   * is idempotent and can never fail or delay the appointment flow itself.
+   */
+  private async reportToLead(
+    appt: Pick<Appointment, 'id' | 'tenantId' | 'leadId'> | null | undefined,
+  ): Promise<void> {
+    if (!appt?.leadId || !this.leadUpdates) return;
+    try {
+      await this.leadUpdates.syncAppointment(appt.tenantId, appt.id);
+    } catch {
+      this.metrics.increment('adf.appointment_update.sync_error');
+    }
+  }
 
   async getHours(
     tenantId: string,
@@ -491,6 +509,7 @@ export class AppointmentService {
       }
     }
 
+    await this.reportToLead(final);
     return {
       status: 'saved',
       appointment: final,
@@ -1043,6 +1062,8 @@ export class AppointmentService {
         found,
         p.bookingIdempotencyKey,
       );
+      // The CONFIRMED receipt (or the conflict) is committed: report that state, once.
+      await this.reportToLead(applied.appointment);
       if (!applied.conflict) {
         if (!isSandboxBooking(scheduler))
           await this.enrollAppointmentReminder(p.tenantId, applied.appointment);
@@ -1131,6 +1152,7 @@ export class AppointmentService {
       await this.enqueueProviderOp(old, 'appointment.provider.cancel');
     }
     this.metrics.increment('appointments.rescheduled');
+    await this.reportToLead(old);
     return {
       ...res,
       appointment: { ...res.appointment, rescheduledFromId: old.id },
@@ -1163,6 +1185,7 @@ export class AppointmentService {
       await this.enqueueProviderOp(appt, 'appointment.provider.cancel');
     }
     this.metrics.increment('appointments.canceled');
+    await this.reportToLead(updated);
     return updated;
   }
 
@@ -1227,6 +1250,7 @@ export class AppointmentService {
       where: { id: appt.id },
       data,
     });
+    await this.reportToLead(updated);
     if (params.to === 'CONFIRMED') {
       await this.enrollAppointmentReminder(params.tenantId, updated);
     }

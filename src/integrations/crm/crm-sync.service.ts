@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { CrmSyncStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OutboxService } from '../core/outbox.service';
@@ -15,6 +15,7 @@ import {
 } from '../tekion/tekion.capabilities';
 import { MetricsService } from '../../observability/metrics.service';
 import { LeadDeliveryService } from '../adf/lead-delivery.service';
+import { LeadAppointmentUpdateService } from '../adf/lead-appointment-update.service';
 
 export type CrmGate =
   | { open: true; provider: 'TEKION'; connectionId: string }
@@ -47,6 +48,8 @@ export class CrmSyncService implements OnModuleInit {
     private readonly writeback: TekionCrmWritebackService,
     private readonly metrics: MetricsService,
     private readonly leadDelivery: LeadDeliveryService,
+    @Optional()
+    private readonly appointmentUpdates?: LeadAppointmentUpdateService,
   ) {}
 
   onModuleInit() {
@@ -161,6 +164,15 @@ export class CrmSyncService implements OnModuleInit {
     } catch {
       this.metrics.increment('adf.delivery.enqueue_error');
       this.logger.warn(`ADF lead delivery enqueue failed lead=${leadId}`);
+    }
+    // R8 (docs/ADF_LEAD_DELIVERY.md): the lead above never waits for an appointment. An
+    // appointment is a SEPARATE update for the same lead, recorded only after the lead's own
+    // delivery row exists — this picks up appointments linked to the lead after they were made.
+    try {
+      await this.appointmentUpdates?.syncLead(tenantId, leadId);
+    } catch {
+      this.metrics.increment('adf.appointment_update.sync_error');
+      this.logger.warn(`ADF appointment update sync failed lead=${leadId}`);
     }
   }
 }
