@@ -36,7 +36,7 @@ export async function seedSandboxRoutes(
     await routes.verify(
       r.tenantId,
       route.id,
-      { evidence: SANDBOX_VERIFICATION_EVIDENCE },
+      { evidence: SANDBOX_VERIFICATION_EVIDENCE, address },
       actor,
     );
     out.push({ slug: r.slug, routeId: route.id, address });

@@ -97,13 +97,18 @@ Rules (`transitionDelivery`):
 
 ## Routing
 
-- The route lookup is keyed by the lead row's `tenantId` + `locationId` + department (from
-  `Lead.source`: `widget_service` is SERVICE, `widget_parts` is PARTS, everything else SALES).
+- A delivery row is created for the lead's `tenantId` + `locationId` + department (from
+  `Lead.source`: `widget_service` is SERVICE, `widget_parts` is PARTS, everything else SALES) at
+  the time it is queued, and that rooftop is part of its idempotency key. The worker resolves
+  the flag, the route and the final guard from the **delivery row's** `locationId`, never from
+  wherever the lead is now. If the lead has since been moved to another rooftop the old row is
+  `BLOCKED: lead_location_changed` and nothing is sent on it; the lead's next change queues a
+  separate row for its new rooftop.
 - There is no default, catch-all, tenant-wide or group-wide recipient, and no CC/BCC path. A
   route holds exactly one bare mailbox.
 - Unknown, disabled or unverified route: `BLOCKED` with the reason; the lead stays in AMQUR.
 - Immediately before transport the handler re-checks that the route's tenant and location equal
-  the lead's. CDJR South (`dial-cdjr-of-chicago`) and Jeep North (`jeep-of-chicago`) are separate
+  the delivery row's and the lead's. CDJR South (`dial-cdjr-of-chicago`) and Jeep North (`jeep-of-chicago`) are separate
   tenants and can only ever resolve their own route.
 - ADF is a sales lead format. SERVICE and PARTS leads need their own explicitly configured
   route; without one they are `BLOCKED: no_route`.
@@ -157,7 +162,7 @@ Block reasons an operator can see: `send_disabled`, `flag_off`, `no_consent_basi
 `no_contact_method`, `no_location`, `no_route`, `route_disabled`, `route_unverified`,
 `route_tenant_mismatch`, `route_not_production_environment`, `route_not_production_enabled`,
 `destination_unavailable`, `reserved_destination_in_live`, `sandbox_recipient_not_reserved`,
-`smtp_host_not_loopback`, `sandbox_in_production`.
+`smtp_host_not_loopback`, `sandbox_in_production`, `lead_location_changed`.
 
 ## Consent
 
@@ -304,6 +309,12 @@ to a location. Another tenant's delivery is a 404.
 
 There is deliberately no HTTP endpoint that creates, verifies or production-enables a route.
 Those are server-side calls on `LeadDeliveryRouteService` only.
+
+Verification is bound to the destination that was reviewed. `verify()` takes the reviewed
+mailbox (`address`) and refuses with `route_destination_changed` when the route no longer points
+at it; independently, the write is conditional on the destination fingerprint that was read, so
+an address rotated concurrently is never left marked verified (rotation itself resets
+`verified` and `productionEnabled`).
 
 ## Environment variables
 

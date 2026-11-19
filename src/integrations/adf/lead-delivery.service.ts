@@ -513,11 +513,15 @@ export class LeadDeliveryService implements OnModuleInit {
       );
 
     const env = readLeadDeliveryEnv();
-    const flags = await this.flags.resolve(lead.tenantId, lead.locationId);
-    // Routing is keyed strictly by the LEAD's own tenant + location + department.
+    // The delivery row was created for ONE rooftop (its locationId is part of the idempotency
+    // key). Flags, routing and the final guard use THAT rooftop — never wherever the lead is
+    // now. A lead that has since moved to another rooftop is not sent to the old one.
+    if ((lead.locationId ?? null) !== (d.locationId ?? null))
+      return this.block(d, 'lead_location_changed');
+    const flags = await this.flags.resolve(d.tenantId, d.locationId);
     const route = await this.routes.findForLead(
-      lead.tenantId,
-      lead.locationId,
+      d.tenantId,
+      d.locationId,
       d.department,
     );
     // Consent standing comes from the append-only ledger at SEND time (and so on every replay).
@@ -526,8 +530,8 @@ export class LeadDeliveryService implements OnModuleInit {
       env,
       flagEnabled: flags[ADF_FEATURE_FLAG] === true,
       lead: {
-        tenantId: lead.tenantId,
-        locationId: lead.locationId,
+        tenantId: d.tenantId,
+        locationId: d.locationId,
         hasContactMethod: Boolean(lead.email || lead.phone),
         optedOut: standing.doNotContact,
         spam: lead.status === 'SPAM',
@@ -616,10 +620,12 @@ export class LeadDeliveryService implements OnModuleInit {
       return this.dead(d, { kind: 'invalid_payload', code }, code);
     }
 
-    // FINAL GUARD, immediately before transport: the route is the lead's own tenant + rooftop.
+    // FINAL GUARD, immediately before transport: the route is the DELIVERY ROW's own tenant +
+    // rooftop, and the lead still belongs to both.
     if (
       route.tenantId !== lead.tenantId ||
       route.tenantId !== d.tenantId ||
+      route.locationId !== d.locationId ||
       route.locationId !== lead.locationId
     ) {
       this.metrics.increment('adf.delivery.cross_tenant_guard_tripped');

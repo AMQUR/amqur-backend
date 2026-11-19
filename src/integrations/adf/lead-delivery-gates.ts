@@ -120,6 +120,7 @@ export type BlockReason =
   | 'no_consent_basis'
   | 'no_contact_method'
   | 'no_location'
+  | 'lead_location_changed'
   | 'no_route'
   | 'route_tenant_mismatch'
   | 'route_disabled'

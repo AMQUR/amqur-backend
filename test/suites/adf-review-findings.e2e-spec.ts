@@ -123,7 +123,7 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
   const retireOutbox = () =>
     ctx.prisma.outboxEvent.updateMany({
       where: {
-        tenantId: { in: KEYS.map((k) => ids[k].tenantId) },
+        tenant: { slug: { startsWith: 'adfr-' } },
         status: { in: ['PENDING', 'PROCESSING'] },
       },
       data: { status: 'DEAD', lastError: 'test_suite_cleanup' },
@@ -701,6 +701,146 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
         'ACCEPTED:transport_receipt',
       ]);
       expect(sinkFor(d.id)).toHaveLength(1);
+    });
+  });
+
+  // ───────────────────────────────────────── R14: verification and routing are bound
+
+  describe("R14 — verification is bound to the reviewed destination; routing uses the delivery row's rooftop", () => {
+    const ADDR_A = 'adf-sales-r14-a@leads.example.invalid';
+    const ADDR_B = 'adf-sales-r14-b@leads.example.invalid';
+    let r14: { tenantId: string; locationId: string; otherLocationId: string };
+
+    beforeAll(async () => {
+      const tenant = await ctx.prisma.tenant.upsert({
+        where: { slug: 'adfr-r14' },
+        create: {
+          slug: 'adfr-r14',
+          name: 'Review rooftop r14 (simulated)',
+          featureFlags: { adfLeadDelivery: true },
+        },
+        update: { featureFlags: { adfLeadDelivery: true } },
+      });
+      const loc = (slug: string) =>
+        ctx.prisma.location.upsert({
+          where: { tenantId_slug: { tenantId: tenant.id, slug } },
+          create: { tenantId: tenant.id, slug, name: `adfr-r14 ${slug}` },
+          update: {},
+        });
+      r14 = {
+        tenantId: tenant.id,
+        locationId: (await loc('main')).id,
+        otherLocationId: (await loc('second')).id,
+      };
+    });
+
+    const configure = (address: string, locationId = r14.locationId) =>
+      routes.configure(
+        r14.tenantId,
+        { locationId, department: 'SALES', address, environment: 'SANDBOX' },
+        'cli:r14',
+      );
+    const stored = (id: string) =>
+      ctx.prisma.leadDeliveryRoute.findUniqueOrThrow({ where: { id } });
+
+    it('an address rotated between the review and the write is NOT marked verified', async () => {
+      const route = await configure(ADDR_A);
+      expect((await stored(route.id)).verified).toBe(false);
+      // The reviewer read the route (address A)…
+      const realFind = ctx.prisma.leadDeliveryRoute.findFirst.bind(
+        ctx.prisma.leadDeliveryRoute,
+      );
+      jest
+        .spyOn(ctx.prisma.leadDeliveryRoute, 'findFirst')
+        .mockImplementationOnce((async (args: never) => {
+          const seen = await realFind(args);
+          // …and before the verify write lands, someone rotates the destination to B.
+          await configure(ADDR_B);
+          return seen;
+        }) as never);
+      await expect(
+        routes.verify(
+          r14.tenantId,
+          route.id,
+          { evidence: 'CRM admin confirmed address A in writing' },
+          'cli:r14',
+        ),
+      ).rejects.toMatchObject({ message: 'route_destination_changed' });
+      const after = await stored(route.id);
+      expect(after).toMatchObject({
+        verified: false,
+        verifiedAt: null,
+        verificationEvidence: null,
+      });
+      expect(routes.revealDestination(after)).toBe(ADDR_B);
+    });
+
+    it('verifying with the reviewed address: refused when the route now points elsewhere, accepted when it matches', async () => {
+      const route = await configure(ADDR_B);
+      await expect(
+        routes.verify(
+          r14.tenantId,
+          route.id,
+          { evidence: 'CRM admin confirmed address A', address: ADDR_A },
+          'cli:r14',
+        ),
+      ).rejects.toMatchObject({ message: 'route_destination_changed' });
+      expect((await stored(route.id)).verified).toBe(false);
+      const ok = await routes.verify(
+        r14.tenantId,
+        route.id,
+        { evidence: 'CRM admin confirmed address B', address: ADDR_B },
+        'cli:r14',
+      );
+      expect(ok.verified).toBe(true);
+    });
+
+    it('a lead moved to another rooftop after it was queued is not sent anywhere on the old delivery row', async () => {
+      const main = await configure(ADDR_B);
+      await routes.verify(
+        r14.tenantId,
+        main.id,
+        { evidence: 'sandbox reserved address', address: ADDR_B },
+        'cli:r14',
+      );
+      const second = await configure(ADDR_A, r14.otherLocationId);
+      await routes.verify(
+        r14.tenantId,
+        second.id,
+        { evidence: 'sandbox reserved address', address: ADDR_A },
+        'cli:r14',
+      );
+      seq += 1;
+      const lead = await ctx.prisma.lead.create({
+        data: {
+          tenantId: r14.tenantId,
+          locationId: r14.locationId,
+          firstName: 'Synthetic',
+          lastName: `Mover${seq}`,
+          email: `adfr-r14-${run}-${seq}@example.invalid`,
+          source: 'widget',
+        },
+      });
+      await deliveries.enqueueForLead(r14.tenantId, lead.id);
+      const d = await ctx.prisma.leadDelivery.findFirstOrThrow({
+        where: { leadId: lead.id },
+      });
+      expect(d.locationId).toBe(r14.locationId);
+      // The lead is re-assigned to the second rooftop before the worker runs.
+      await ctx.prisma.lead.update({
+        where: { id: lead.id },
+        data: { locationId: r14.otherLocationId },
+      });
+      const after = await attempt(d.id);
+      expect(after).toMatchObject({
+        status: 'BLOCKED',
+        blockedReason: 'lead_location_changed',
+        routeId: null,
+      });
+      // Before the fix the row was routed by the lead's CURRENT location and went to the
+      // second rooftop's inbox under the first rooftop's delivery row.
+      expect(sinkFor(d.id)).toHaveLength(0);
+      expect(sink.messages().filter((m) => m.to === ADDR_A)).toHaveLength(0);
     });
   });
 
