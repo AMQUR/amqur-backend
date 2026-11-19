@@ -34,7 +34,9 @@ const STORES = {
 type Key = keyof typeof STORES;
 const KEYS = Object.keys(STORES) as Key[];
 const PASSWORD = 'AdfTestPass123!';
-const SMTP_API = 'http://127.0.0.1:18085';
+// Overridable so an isolated stack never shares the (stateful) default mock SMTP.
+const SMTP_API = process.env.MOCK_SMTP_API_URL || 'http://127.0.0.1:18085';
+const SMTP_PORT = process.env.MOCK_SMTP_PORT || '11025';
 const ENV_KEYS = [
   'OUTBOX_PROCESSOR_ENABLED',
   'ADF_SEND_ENABLED',
@@ -164,7 +166,7 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
     process.env.LEAD_DELIVERY_MODE = 'sandbox';
     process.env.ADF_SANDBOX_TRANSPORT = 'sink';
     process.env.ADF_SMTP_HOST = '127.0.0.1';
-    process.env.ADF_SMTP_PORT = '11025';
+    process.env.ADF_SMTP_PORT = SMTP_PORT;
 
     ctx = await createE2eApp();
     crm = ctx.app.get(CrmSyncService);
