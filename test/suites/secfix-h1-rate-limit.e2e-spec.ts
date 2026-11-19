@@ -121,6 +121,7 @@ describe('H1 rate limiting cannot be reset by the caller', () => {
           .post('/api/public/widget-token')
           .set('Origin', SIM_ORIGIN)
           .send({ tenantSlug: `no-such-rooftop-${i}`, locationSlug: 'main' });
+        if (r.status === 429) expect(r.headers['retry-after']).toMatch(/^\d+$/);
         statuses.push(r.status);
       }
       expectCeiling(statuses, 30);

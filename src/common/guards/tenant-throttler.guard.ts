@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { ExecutionContext, Injectable } from '@nestjs/common';
+import { ThrottlerGuard, ThrottlerLimitDetail } from '@nestjs/throttler';
 import { resolveThrottleTracker } from './throttle-tracker';
 
 /**
@@ -21,5 +21,16 @@ import { resolveThrottleTracker } from './throttle-tracker';
 export class TenantThrottlerGuard extends ThrottlerGuard {
   protected getTracker(req: Record<string, any>): Promise<string> {
     return Promise.resolve(resolveThrottleTracker(req));
+  }
+
+  protected throwThrottlingException(
+    context: ExecutionContext,
+    detail: ThrottlerLimitDetail,
+  ): Promise<void> {
+    context
+      .switchToHttp()
+      .getResponse()
+      .setHeader('Retry-After', detail.timeToBlockExpire);
+    return super.throwThrottlingException(context, detail);
   }
 }
