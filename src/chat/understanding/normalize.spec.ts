@@ -7,6 +7,15 @@ describe('customer text normalization', () => {
     expect(n('whats ur best price pls')).toBe('whats your best price please');
     expect(n('pmt on that?')).toBe('payment on that?');
   });
+  it('fixes small-talk and acknowledgment typos without fuzzy consent', () => {
+    expect(n('how are yu today')).toBe('how are you today');
+    expect(n('oay')).toBe('ok');
+    expect(n('oky')).toBe('okay');
+    expect(n('okey')).toBe('okay');
+    // Random short tokens stay untouched — never fuzzy-consent.
+    expect(n('xyz')).toBe('xyz');
+    expect(n('omg')).toBe('omg');
+  });
   it('fixes keyword typos but never real inflections', () => {
     expect(n('whats the paymnet')).toBe('whats the payment');
     expect(n('can i shedule service')).toBe('can i schedule service');

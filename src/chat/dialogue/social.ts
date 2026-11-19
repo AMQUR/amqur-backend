@@ -40,7 +40,7 @@ const norm = (s: string) =>
     .trim()} `;
 
 const HOW_ARE_YOU =
-  /\b(how are (?:you|u|ya)|how r u|how(?:'s| is) (?:it going|your day|everything|life)|how(?:'re| are) you doing|how(?:'s| is) it goin|how have you been|how you doing|how do you do|what'?s up|wassup|sup\b|c[oó]mo est[aá]s?|c[oó]mo te va|qu[eé] tal)\b/;
+  /\b(how are (?:you|u|yu|ya)|how r (?:u|yu)|how(?:'s| is) (?:it going|your day|everything|life)|how(?:'re| are) you doing|how(?:'s| is) it goin|how have you been|how you doing|how do you do|what'?s up|wassup|sup\b|c[oó]mo est[aá]s?|c[oó]mo te va|qu[eé] tal)\b/;
 const ASK_BACK =
   /\b(and you|you\?|u\?|yourself|how about you|what about you|and yours|y t[uú]|y usted)\b|\byou\s*\?\s*$/;
 const WELLBEING =
