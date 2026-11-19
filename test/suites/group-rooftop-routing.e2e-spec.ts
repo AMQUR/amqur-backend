@@ -1680,6 +1680,26 @@ describe('group-site rooftop routing', () => {
       expect(dump).not.toContain(leadId);
       expect(dump).not.toContain(appointmentId);
 
+      // The older comparison report agrees: a demo-scheduler booking is a request there too.
+      const cmp = unwrap<{
+        stores: Array<{
+          tenant: { id: string };
+          counts: Record<string, number>;
+        }>;
+      }>(
+        (
+          await get(
+            'group',
+            `/dealer-groups/${seeded.dealerGroupId}/comparison?days=7`,
+          )
+        ).body,
+      );
+      const cmpNorth = cmp.stores.find(
+        (x) => x.tenant.id === tenantOf('north'),
+      )!;
+      expect(cmpNorth.counts.appointmentRequests).toBe(1);
+      expect(cmpNorth.counts.appointmentsConfirmed).toBe(0);
+
       // A rooftop admin who is not a group member, a widget token and no token at all.
       expect((await get('chevy', path)).status).toBe(403);
       expect((await get('group', path, widget.group)).status).toBe(403);

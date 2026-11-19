@@ -131,6 +131,15 @@ export function Group() {
           </div>
         </Card>
       )}
+      {gid && (
+        <div className="row" role="group" aria-label="Time window">
+          {[7, 30, 90].map((d) => (
+            <button key={d} className={`btn ${d === days ? '' : 'btn--ghost'}`} aria-pressed={d === days} onClick={() => setDays(d)}>
+              Last {d} days
+            </button>
+          ))}
+        </div>
+      )}
       {gid && <GroupOverview groupId={gid} days={days} />}
       {loading && <p className="muted">Loading…</p>}
       {!loading && !gid && groups.data && <Empty>You are not a member of a dealer group.</Empty>}
@@ -151,13 +160,6 @@ export function Group() {
       )}
       {!loading && cmp.data && cmp.data.stores.length > 0 && (
         <>
-          <div className="row">
-            {[7, 30, 90].map((d) => (
-              <button key={d} className={`btn ${d === days ? '' : 'btn--ghost'}`} onClick={() => setDays(d)}>
-                Last {d} days
-              </button>
-            ))}
-          </div>
           <Card title={`All stores · since ${new Date(cmp.data.since).toLocaleDateString()}`}>
             <div style={{ overflowX: 'auto' }}>
               <table className="table">

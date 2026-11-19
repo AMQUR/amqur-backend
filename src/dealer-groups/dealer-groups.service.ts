@@ -196,7 +196,19 @@ export class DealerGroupsService {
         this.prisma.lead.count({ where: w }),
         this.prisma.lead.count({ where: { ...w, stage: 'HOT' } }),
         this.prisma.appointment.count({ where: w }),
-        this.prisma.appointment.count({ where: { ...w, status: 'CONFIRMED' } }),
+        // A booking confirmed only by the labelled demo scheduler is not a confirmed
+        // appointment: it never counts here (staff and real-provider confirmations do).
+        this.prisma.appointment.count({
+          where: {
+            ...w,
+            status: 'CONFIRMED',
+            NOT: {
+              providerReceipts: {
+                some: { status: 'CONFIRMED', sandbox: true },
+              },
+            },
+          },
+        }),
         this.prisma.escalation.count({ where: w }),
         this.prisma.escalation.count({
           where: { ...w, notifiedAt: { not: null } },
@@ -332,6 +344,12 @@ export class DealerGroupsService {
               tenantId: t.id,
               status: 'CONFIRMED',
               createdAt: { gte: since7d },
+              // demo-scheduler bookings are not confirmed appointments
+              NOT: {
+                providerReceipts: {
+                  some: { status: 'CONFIRMED', sandbox: true },
+                },
+              },
             },
           }),
           this.prisma.escalation.count({
