@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  LeadDeliveryAppointmentUpdates,
   LeadDeliveryChannel,
   LeadDeliveryDepartment,
   LeadDeliveryFormat,
@@ -41,6 +42,7 @@ export const ROUTE_PUBLIC_SELECT = {
   productionEnabled: true,
   productionEnabledAt: true,
   productionEnabledBy: true,
+  appointmentUpdates: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -177,6 +179,8 @@ export class LeadDeliveryRouteService {
               productionEnabled: false,
               productionEnabledAt: null,
               productionEnabledBy: null,
+              // A different mailbox has confirmed nothing about appointment updates.
+              appointmentUpdates: 'NONE' as const,
             }),
       },
       select: ROUTE_PUBLIC_SELECT,
@@ -305,6 +309,49 @@ export class LeadDeliveryRouteService {
       route,
     );
     return updated;
+  }
+
+  /**
+   * R8 (proposed policy): declare whether THIS destination accepts appointment updates for a
+   * lead it already received. Default NONE; server-side only, audited, evidence required to
+   * switch it on. It is a statement about the receiving system, so it is cleared whenever the
+   * destination address changes (see configure).
+   */
+  async setAppointmentUpdates(
+    tenantId: string,
+    routeId: string,
+    input: { mode: LeadDeliveryAppointmentUpdates; evidence?: string },
+    actor: string,
+  ) {
+    const route = await this.own(tenantId, routeId);
+    const evidence = (input.evidence ?? '').trim().slice(0, 500);
+    if (input.mode !== 'NONE' && evidence.length < 6)
+      throw new BadRequestException(
+        'Evidence that the destination accepts appointment updates is required',
+      );
+    if (input.mode !== 'NONE' && !route.verified)
+      throw new ConflictException('Route is not verified');
+    const res = await this.prisma.leadDeliveryRoute.updateMany({
+      where: {
+        id: route.id,
+        tenantId,
+        destinationFingerprint: route.destinationFingerprint,
+      },
+      data: { appointmentUpdates: input.mode },
+    });
+    if (res.count !== 1)
+      throw new ConflictException('route_destination_changed');
+    await this.audit(
+      tenantId,
+      actor,
+      'lead_delivery_route.appointment_updates_set',
+      route,
+      { mode: input.mode, evidence: evidence || null },
+    );
+    return this.prisma.leadDeliveryRoute.findFirstOrThrow({
+      where: { id: route.id, tenantId },
+      select: ROUTE_PUBLIC_SELECT,
+    });
   }
 
   /**

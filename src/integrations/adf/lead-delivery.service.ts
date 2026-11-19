@@ -140,6 +140,10 @@ export class LeadDeliveryService implements OnModuleInit {
    * unreachable). Kept in memory so this process finalises the row instead of re-sending.
    */
   private readonly unrecordedReceipts = new Map<string, AcceptedReceipt>();
+  /** R8: told (best effort) when a lead delivery is recorded ACCEPTED. Never affects it. */
+  private readonly acceptedListeners: Array<
+    (d: { id: string; tenantId: string }) => Promise<unknown>
+  > = [];
 
   constructor(
     private readonly prisma: PrismaService,
@@ -158,6 +162,13 @@ export class LeadDeliveryService implements OnModuleInit {
         throw new PermanentOutboxError('bad_payload');
       return this.process(p.deliveryId, m);
     });
+  }
+
+  /** R8: appointment updates held for a lead are released when its delivery is accepted. */
+  onAccepted(
+    listener: (d: { id: string; tenantId: string }) => Promise<unknown>,
+  ): void {
+    this.acceptedListeners.push(listener);
   }
 
   // ───────────────────────────────────────── enqueue
@@ -386,8 +397,9 @@ export class LeadDeliveryService implements OnModuleInit {
   /**
    * Resolve the customer's standing from the consent ledger for the lead's own email / phone
    * within the lead's own tenant. Endpoints are PII: queried, never logged.
+   * (Also used, unchanged, by the R8 appointment update at ITS send time.)
    */
-  private async consentStanding(
+  async consentStanding(
     lead: StandingLead & { tenantId: string },
   ): Promise<LeadConsentStanding> {
     const ep = leadConsentEndpoints(lead);
@@ -727,7 +739,7 @@ export class LeadDeliveryService implements OnModuleInit {
    * (retryable) at the deadline even if a transport ignores its own. The SMTP transport enforces
    * the same deadline itself by aborting the connection.
    */
-  private async sendWithinDeadline<T>(
+  async sendWithinDeadline<T>(
     deadlineMs: number,
     send: () => Promise<T>,
   ): Promise<T> {
@@ -849,6 +861,9 @@ export class LeadDeliveryService implements OnModuleInit {
         this.logger.log(
           `lead delivery ${row.id} ACCEPTED provider=${receipt.providerName} note=${note}`,
         );
+        // The acknowledgement is committed. A listener failure can never undo or repeat it.
+        for (const listener of this.acceptedListeners)
+          await listener(row).catch(() => undefined);
         return { note };
       } catch {
         if (i < ACCEPT_WRITE_ATTEMPTS)
@@ -925,6 +940,22 @@ export class LeadDeliveryService implements OnModuleInit {
             reasonCode: true,
             evidence: true,
             actor: true,
+            createdAt: true,
+          },
+        },
+        // R8: appointment updates that follow this lead (ids, states and codes only).
+        appointmentUpdates: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            appointmentId: true,
+            state: true,
+            status: true,
+            reason: true,
+            sandboxReceipt: true,
+            deliveryMode: true,
+            sentAt: true,
+            acceptedAt: true,
             createdAt: true,
           },
         },

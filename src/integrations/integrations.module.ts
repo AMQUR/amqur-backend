@@ -20,6 +20,7 @@ import { MetaGraphLeadClientService } from './meta/meta-graph-lead.client';
 import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
 import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
 import { LeadDeliveryService } from './adf/lead-delivery.service';
+import { LeadAppointmentUpdateService } from './adf/lead-appointment-update.service';
 import { LeadDeliveryRouteService } from './adf/lead-delivery-route.service';
 import { LeadDeliveryOpsController } from './adf/lead-delivery-ops.controller';
 import { SandboxSinkTransport } from './adf/transports/sandbox-sink.transport';
@@ -55,6 +56,7 @@ import { SmtpLeadTransport } from './adf/transports/smtp.transport';
     SmtpLeadTransport,
     LeadDeliveryRouteService,
     LeadDeliveryService,
+    LeadAppointmentUpdateService,
     CrmSyncService,
   ],
   exports: [
@@ -73,6 +75,7 @@ import { SmtpLeadTransport } from './adf/transports/smtp.transport';
     SandboxSinkTransport,
     LeadDeliveryRouteService,
     LeadDeliveryService,
+    LeadAppointmentUpdateService,
   ],
 })
 export class IntegrationsModule {}

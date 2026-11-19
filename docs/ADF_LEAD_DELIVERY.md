@@ -220,8 +220,10 @@ phone or email is not recognised.
 - `<customer><contact>` with name parts, email and typed phone as provided.
 - `<comments>`: a short structured note (department, requested action, preferred contact,
   appointment state, consent summary, source and UTM). Never the transcript. A requested
-  appointment is worded "REQUESTED by customer - NOT confirmed"; only a `CONFIRMED` appointment
-  with verified availability is worded as confirmed.
+  appointment is worded "REQUESTED by customer - NOT confirmed". The lead document never states
+  that an appointment is confirmed or scheduled (see R8 below): an appointment row that is
+  already marked confirmed is carried as "REQUESTED by customer (…) - booking status is NOT
+  stated in this lead, see the appointment record", with the requested time only.
 - `<vendor><vendorname>` is the rooftop's own name; `<provider><name>` is `ADF_PROVIDER_NAME`.
 - Every text node and attribute is hand-escaped. Illegal XML characters, C1 controls, lone
   surrogates, bidi overrides and zero-width characters are stripped; text is NFC-normalised;
@@ -356,6 +358,182 @@ synthetic lead per rooftop and prints where each landed.
 `config/rooftops/lead-recipient-candidates.json` lists the operator-supplied candidate inboxes,
 masked, every one `verified:false, productionEnabled:false`. Nothing reads it to send.
 
+## R8: lead first, appointment as a separate update (proposed policy)
+
+**Status: PROPOSED implementation policy. Verified in the local sandbox only. It is not a
+verification of any external CRM, and no dealership has confirmed how (or whether) its CRM
+accepts an update to a lead it already holds.** Actual CRM delivery stays disabled
+(`ADF_SEND_ENABLED` default off, no production route exists).
+
+### The policy
+
+The lead is created and queued for delivery as soon as the contact and consent gates allow. It
+does not wait for an appointment and does not depend on one. An appointment is a separate event.
+When an appointment exists for a lead that already has its delivery row, AMQUR records at most
+one **appointment update** per (lead, appointment, state), keeps the original lead identity, and
+never creates a second lead delivery.
+
+### What happened before R8
+
+- One `LeadDelivery` per lead was queued on the first lead change with a contact method. That
+  part is unchanged.
+- The ADF document is built when the outbox worker SENDS (and again on every retry or replay),
+  and it read the lead's latest `Appointment` row at that moment. So the appointment line
+  depended on timing:
+  - appointment made in the same chat turn as the lead (linked before the send) and still a
+    request → `Appointment: REQUESTED by customer - NOT confirmed, dealership must confirm (…)`;
+  - appointment row already `CONFIRMED` with `availabilityVerified` at send time — a scheduler
+    that answers at once (including the sandbox demo scheduler) or a staff confirmation made
+    before the send → `Appointment: CONFIRMED by dealership (TYPE <scheduledAt> (tz))`. This
+    used the appointment row alone: no provider receipt was checked and a sandbox booking was
+    not labelled;
+  - appointment made, confirmed, cancelled or rescheduled after the lead was accepted → the CRM
+    was never told. `enqueueForLead` returns `exists` and nothing is re-sent.
+- The same lead could therefore reach a CRM saying "none requested", "requested" or "confirmed"
+  purely by timing, and a replay could send different content than the first attempt.
+
+### What happens now
+
+**The lead document** never claims a confirmation. Appointment line of a lead:
+
+| Latest appointment at send time | Line in the lead |
+| --- | --- |
+| none | `none requested` |
+| requested / pending / rescheduled | `REQUESTED by customer - NOT confirmed, dealership must confirm (TYPE date time)` |
+| marked confirmed (by anyone) | `REQUESTED by customer (TYPE date time) - booking status is NOT stated in this lead, see the appointment record` |
+| cancelled / completed / no-show | unchanged (`cancelled (…)`, `completed (…)`, `no-show (…)`) |
+
+The time shown is always the time the customer asked for, never a scheduled slot. The line can
+still differ with timing (a request that exists at send time is mentioned), but it can no longer
+assert a booking.
+
+**The appointment update** (`LeadAppointmentUpdate`, one row per (lead, appointment, state)):
+
+| State | Recorded when | Words used |
+| --- | --- | --- |
+| `REQUESTED` | the appointment is a request (also while a provider answer is pending or unknown) | `REQUESTED by customer - not confirmed, dealership must confirm` |
+| `SCHEDULED` | staff confirmed a time and no provider receipt exists | `SCHEDULED by dealership staff - no scheduling-provider receipt` |
+| `CONFIRMED` | a valid `CONFIRMED` `AppointmentProviderReceipt` exists | live hand-off + non-sandbox receipt: `CONFIRMED by scheduling provider (…), provider reference …`; sandbox hand-off: `DEMO BOOKING ONLY - sandbox, not a real appointment, nothing is booked with the dealership` |
+| `CANCELLED` | the appointment was cancelled | `CANCELLED - this appointment is no longer expected` |
+| `RESCHEDULED` | the appointment was replaced; the new appointment gets its own updates | `RESCHEDULED - the previous time no longer applies …` |
+| `FAILED` | the scheduling provider could not book | `FAILED to book with the scheduling provider - nothing is booked, dealership must contact the customer` |
+
+- A valid receipt belongs to this appointment, has status exactly `CONFIRMED`, carries a
+  provider reference, and its provider and reference are the ones on the appointment row. A
+  `PENDING`, `UNKNOWN` or `FAILED` receipt is not a confirmation.
+- The capitalised word `CONFIRMED` is written only for a non-sandbox receipt on a live hand-off.
+  A sandbox receipt is worded as a demo booking in sandbox mode and is refused
+  (`sandbox_booking_in_live`) on a live route. In sandbox mode every update carries a demo note.
+- The state is derived from the appointment row and its receipts, so a duplicate, replayed or
+  late event derives the same state and finds the existing row
+  (`@@unique([tenantId, idempotencyKey])`, key `lead-appointment-update:v1:{lead}:{appointment}:{state}`).
+- Just before sending, the state is derived again. If the appointment has moved on, the update
+  is `BLOCKED superseded_by_later_state` and not sent (a confirmation overtaken by a
+  cancellation never goes out).
+
+**Whether anything is sent** is a per-route capability,
+`LeadDeliveryRoute.appointmentUpdates`: `NONE` (default) or `ADF_FOLLOW_UP`.
+
+- `NONE`: the update row is written as `NOT_SENT` with reason
+  `destination_does_not_accept_updates`. No outbox job, no send. The appointment stays visible
+  to staff only. The lead delivery's history gets an `appointment_update_not_sent` entry and
+  `GET /api/ops/lead-deliveries/:id` lists the row under `appointmentUpdates`. A row recorded as
+  `NOT_SENT` is not sent later if the capability is switched on.
+- `ADF_FOLLOW_UP`: the update is queued on the outbox (topic
+  `lead.delivery.adf.appointment-update`) and sent as a follow-up ADF document.
+- The capability is set server-side only (`LeadDeliveryRouteService.setAppointmentUpdates`),
+  needs an evidence note and a verified route, is audited
+  (`lead_delivery_route.appointment_updates_set`), and is cleared when the route's address
+  changes. There is no HTTP endpoint for it.
+
+**The follow-up document** is built by the same mapper and serializer as the lead:
+
+- the same `<id sequence="1" source="AMQUR">amqur-lead-{leadId}</id>` and the same
+  `<requestdate>` as the original lead;
+- `<prospect status="resend">` (ADF 1.0 allows `new` and `resend`; a lead is always `new`);
+- `<comments>` starts with `APPOINTMENT UPDATE for existing lead amqur-lead-{leadId} - follow-up
+  to a lead already sent, NOT a new lead`, then department, the appointment line above,
+  `Appointment reference: amqur-appt-{appointmentId}`, the update state and time, and the
+  consent summary. ADF 1.0 has no appointment element, so the comment carries it;
+- mail subject `Appointment update for lead amqur-lead-{leadId}`, its own stable `Message-ID`
+  `<lead-appointment-update.{updateId}@…>`;
+- it passes the hardened validator and the round-trip check. The validator takes the one
+  prospect status the caller expects (default `new`); an update must ask for `resend`, so a lead
+  can never pass as an update or the other way round.
+
+**Gates at send time** — every gate a lead delivery passes, evaluated again for the update:
+`ADF_SEND_ENABLED`, the rooftop flag, the consent ledger, contact method, route enabled and
+verified, live/sandbox mode and the sandbox-in-production refusal, the destination check, and
+the tenant/rooftop guard. In addition:
+
+- the route must be the one the lead went to, with the same destination fingerprint
+  (`route_changed_since_lead`), in the same mode (`delivery_mode_differs_from_lead`);
+- the route must still declare `ADF_FOLLOW_UP`;
+- lead, lead delivery and appointment must all resolve inside the update's own tenant and point
+  at the same lead (`lead_appointment_mismatch`). `Appointment.leadId` is honoured only for a
+  lead of the same tenant.
+
+**Queue rule: never before the original lead was accepted.**
+
+| Original lead delivery | Update |
+| --- | --- |
+| `ACCEPTED`, `DELIVERED`, `CRM_PARSED`, `CRM_MATCHED` (in a mode that counts) | sent |
+| `QUEUED`, `SENT`, `FAILED`, `BLOCKED`, `DEAD`, or acknowledged by the sandbox while the environment is live | held as `WAITING_FOR_LEAD`; nothing is sent |
+| `CRM_REJECTED` | `BLOCKED lead_rejected_by_crm` |
+| no lead delivery row at all (flag off, switch off, no contact method) | no update row |
+
+Held, not dropped: the usual case is an appointment made seconds after the lead was queued, and
+dropping the update would lose the appointment for the CRM for good. Sending it early would hand
+a CRM a document about a lead it has never seen, which it could only file as a new lead. A held
+update is released when the lead delivery is recorded `ACCEPTED` (and by a five-minute sweep),
+and every gate is checked again. If the lead is never accepted, the update is never sent.
+
+### Schema (migration `20261119100000_lead_appointment_updates`, additive)
+
+- `LeadDeliveryRoute.appointmentUpdates` (`LeadDeliveryAppointmentUpdates`, default `NONE`).
+- New table `LeadAppointmentUpdate` with enums `LeadAppointmentUpdateState` and
+  `LeadAppointmentUpdateStatus` (`NOT_SENT`, `WAITING_FOR_LEAD`, `QUEUED`, `SENT`, `ACCEPTED`,
+  `FAILED`, `DEAD`, `BLOCKED`). It holds ids, states and codes only.
+- No existing column, constraint or row is changed. Code that predates the migration never reads
+  the new column or table, and has no handler for the new outbox topic.
+- Updates are a separate table, not extra `LeadDelivery` rows, so lead-delivery counts and the
+  operations funnel still count leads only.
+
+### What is and is not verified
+
+Verified by automated tests in the local sandbox (Postgres, the outbox, the in-process sink and
+the loopback mock SMTP server; `test/suites/adf-appointment-update.e2e-spec.ts` and
+`src/integrations/adf/lead-appointment-update.spec.ts`):
+
+- the lead is delivered without an appointment and never claims a confirmation;
+- one update per (lead, appointment, state), linked to the original lead delivery and sent to
+  the same sandbox route; replays, retries and duplicate events add no update and no second lead
+  delivery;
+- capability off: nothing queued or sent, and the record says so;
+- cancel, reschedule, failed, staff-scheduled and provider-confirmed each keep their own word;
+- no confirmation without a valid provider receipt; a sandbox receipt is worded as a demo;
+- consent opt-out, cross-tenant references and route changes block the update;
+- an update is never sent before the lead was accepted.
+
+NOT verified, and not claimed:
+
+- **No real CRM has received a follow-up.** How VinSolutions, eLead, DealerSocket, Tekion CRM
+  or any other system treats `prospect status="resend"` with a known `<id>` is unknown. Some
+  CRMs match on contact data, some on `<id>`, some create a duplicate. The capability must stay
+  `NONE` for a destination until its owner confirms the behaviour in writing.
+- The live wording (`CONFIRMED by scheduling provider`) is covered by unit tests of the pure
+  rules only. No live hand-off of an update has been made, and no production route exists.
+- The scheduling providers in the tests are in-test stand-ins. No dealership scheduler was used.
+
+Limits:
+
+- An update that ends `BLOCKED`, `DEAD` or `NOT_SENT` has no operator replay.
+- An update acknowledged in sandbox is not sent again when the environment becomes live.
+- A lead change only considers appointments touched in the last 7 days.
+- If recording an update fails (database error), the appointment flow continues and the update
+  is picked up on the next lead change, not by a dedicated retry.
+- `COMPLETED` and `NO_SHOW` produce no update.
+
 ## What remains BLOCKED
 
 | Item | Why it is blocked | What unblocks it |
@@ -366,4 +544,5 @@ masked, every one `verified:false, productionEnabled:false`. Nothing reads it to
 | Delivery callback | Plain SMTP gives no delivery or bounce signal, so `DELIVERED` cannot be reached | A relay with signed delivery webhooks and an inbound endpoint for them |
 | Tekion reconciliation source | No approved Tekion API scope; `CRM_PARSED` / `CRM_MATCHED` are manual operator inputs | An approved Tekion read scope or an agreed export from the store |
 | Route administration over HTTP | Not built on purpose | A release gate for who may verify and production-enable a route |
+| Appointment updates (R8) | No destination has confirmed how its CRM treats a follow-up for a lead it already holds; `appointmentUpdates` is `NONE` on every route | The store's CRM admin confirms the behaviour of a test follow-up in writing; then `setAppointmentUpdates` with that evidence |
 | Live send | Never exercised | All of the above, then a per-store canary |

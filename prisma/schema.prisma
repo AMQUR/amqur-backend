@@ -2178,6 +2178,10 @@ model LeadDeliveryRoute {
   productionEnabledAt DateTime?
   productionEnabledBy String?
 
+  /// R8: whether THIS destination accepts appointment updates for a lead it already received.
+  /// Default NONE (nothing is sent). No dealership has confirmed a protocol yet.
+  appointmentUpdates LeadDeliveryAppointmentUpdates @default(NONE)
+
   deliveries LeadDelivery[]
 
   createdAt DateTime @default(now())
@@ -2214,9 +2218,9 @@ model LeadDelivery {
 
   idempotencyKey String
 
-  status      LeadDeliveryStatus @default(QUEUED)
-  attempts    Int                @default(0)
-  replayCount Int                @default(0)
+  status       LeadDeliveryStatus @default(QUEUED)
+  attempts     Int                @default(0)
+  replayCount  Int                @default(0)
   /// 'sandbox' | 'live' — the mode of the most recent transport hand-off (null = never handed off).
   /// A sandbox acknowledgement never counts as acknowledged for a live route.
   deliveryMode String?
@@ -2246,7 +2250,8 @@ model LeadDelivery {
   correlationId String
   outboxEventId String?
 
-  events LeadDeliveryEvent[]
+  events             LeadDeliveryEvent[]
+  appointmentUpdates LeadAppointmentUpdate[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2255,6 +2260,107 @@ model LeadDelivery {
   @@index([tenantId, status, createdAt])
   @@index([tenantId, locationId, status])
   @@index([leadId])
+}
+
+/// R8: per-route capability for appointment updates (proposed policy, default NONE).
+enum LeadDeliveryAppointmentUpdates {
+  /// Nothing is sent after the lead; the appointment is visible to staff only.
+  NONE
+  /// A follow-up ADF document carrying the SAME lead reference, to the SAME route.
+  ADF_FOLLOW_UP
+}
+
+/// R8: the appointment states an update can report. Never collapsed into one another.
+enum LeadAppointmentUpdateState {
+  REQUESTED
+  /// Staff set a time; no scheduling-provider receipt exists.
+  SCHEDULED
+  /// Backed by a CONFIRMED scheduling-provider receipt.
+  CONFIRMED
+  CANCELLED
+  RESCHEDULED
+  FAILED
+}
+
+enum LeadAppointmentUpdateStatus {
+  /// The destination has no update capability: recorded for staff, nothing queued or sent.
+  NOT_SENT
+  /// Held until the ORIGINAL lead delivery is accepted. Nothing has been sent.
+  WAITING_FOR_LEAD
+  QUEUED
+  SENT
+  /// Transport acknowledged. NOT delivery, NOT a CRM record.
+  ACCEPTED
+  FAILED
+  DEAD
+  BLOCKED
+}
+
+/// R8: at most one update per (lead, appointment, state) for a lead that already has its
+/// LeadDelivery. Holds references and codes only — no address, no customer contact data.
+/// It never changes the lead delivery it belongs to.
+model LeadAppointmentUpdate {
+  id String @id @default(cuid())
+
+  tenantId   String
+  locationId String?
+
+  leadId String
+
+  /// The ORIGINAL lead delivery this update follows.
+  leadDeliveryId String
+  leadDelivery   LeadDelivery @relation(fields: [leadDeliveryId], references: [id], onDelete: Cascade)
+
+  appointmentId String
+
+  state  LeadAppointmentUpdateState
+  status LeadAppointmentUpdateStatus
+
+  /// The lead identity the original delivery carried (`amqur-lead-<id>`), repeated verbatim.
+  leadRef        String
+  /// The CONFIRMED AppointmentProviderReceipt behind a CONFIRMED update (null otherwise).
+  receiptId      String?
+  /// True when any receipt of the appointment came from a sandbox / demo scheduler.
+  sandboxReceipt Boolean @default(false)
+
+  idempotencyKey String
+
+  /// Why nothing was sent (NOT_SENT / WAITING_FOR_LEAD / BLOCKED). A code, never free text.
+  reason String?
+
+  routeId                String?
+  destinationFingerprint String?
+  destinationMasked      String?
+  /// 'sandbox' | 'live' — the mode of the most recent hand-off (null = never handed off).
+  deliveryMode           String?
+
+  attempts          Int     @default(0)
+  providerName      String?
+  providerMessageId String?
+  providerRawStatus String?
+  payloadSha256     String?
+  payloadBytes      Int?
+
+  lastErrorCode String?
+  lastErrorAt   DateTime?
+
+  sentAt     DateTime?
+  acceptedAt DateTime?
+  failedAt   DateTime?
+  deadAt     DateTime?
+  blockedAt  DateTime?
+
+  correlationId String
+  outboxEventId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([leadDeliveryId, createdAt])
+  @@index([tenantId, appointmentId])
+  @@index([tenantId, leadId, createdAt])
+  @@index([status, updatedAt])
 }
 
 /// Append-only status history (evidence carries codes/ids only — never PII).

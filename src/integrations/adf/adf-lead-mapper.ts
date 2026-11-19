@@ -121,11 +121,11 @@ export function mapLeadToAdf(p: {
         status: a.status,
         availabilityVerified: a.availabilityVerified,
         type: a.type,
+        // R8: the lead carries what the customer ASKED for. A scheduled / confirmed slot is
+        // never stated here — that is an appointment update's job, with a provider receipt.
         when:
-          a.status === 'CONFIRMED' && a.availabilityVerified && a.scheduledAt
-            ? `${a.scheduledAt.toISOString()} (${a.timezone})`
-            : [a.requestedDate, a.requestedTime].filter(Boolean).join(' ') ||
-              undefined,
+          [a.requestedDate, a.requestedTime].filter(Boolean).join(' ') ||
+          undefined,
       }
     : null;
   const optedOut = lead.optOutAt !== null;

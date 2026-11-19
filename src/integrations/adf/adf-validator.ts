@@ -3,6 +3,8 @@ import { ADF_DEFAULT_MAX_BYTES, ADF_VERSION, AdfLeadDto } from './adf.types';
 import { normalizedAdfFields } from './adf-serializer';
 
 export type AdfParsedSummary = {
+  /** `<prospect status>`: `new` for a lead, `resend` for an R8 appointment update. */
+  prospectStatus: 'new' | 'resend';
   leadRef: string;
   idSource: string;
   requestDate: string;
@@ -41,10 +43,14 @@ const text = (v: unknown): string | null => {
  * cap and any DTD / entity declaration / CDATA / illegal control character, so no entity
  * expansion or external reference can ever be evaluated; then checks well-formedness and the
  * required ADF structure. A document that fails here is never sent.
+ *
+ * `prospectStatus` is the ONE status the caller expects (default `new`). An appointment update
+ * must ask for `resend` explicitly; a lead document that came out as `resend`, or an update
+ * that came out as `new`, fails.
  */
 export function validateAdfXml(
   xml: unknown,
-  opts: { maxBytes?: number } = {},
+  opts: { maxBytes?: number; prospectStatus?: 'new' | 'resend' } = {},
 ): AdfValidationResult {
   if (typeof xml !== 'string' || xml.length === 0)
     return { ok: false, code: 'adf_empty' };
@@ -86,7 +92,8 @@ export function validateAdfXml(
   const prospects = asArray(doc?.adf?.prospect);
   if (prospects.length !== 1) return { ok: false, code: 'adf_prospect_count' };
   const p = prospects[0] as Record<string, any>;
-  if (p['@_status'] !== 'new')
+  const prospectStatus = opts.prospectStatus === 'resend' ? 'resend' : 'new';
+  if (p['@_status'] !== prospectStatus)
     return { ok: false, code: 'adf_prospect_status' };
 
   const ids = asArray(p.id);
@@ -138,6 +145,7 @@ export function validateAdfXml(
   return {
     ok: true,
     summary: {
+      prospectStatus,
       leadRef,
       idSource,
       requestDate,
@@ -162,7 +170,11 @@ export function validateAdfRoundTrip(
   xml: string,
   opts: { maxBytes?: number } = {},
 ): AdfValidationResult {
-  const res = validateAdfXml(xml, opts);
+  // The expected status comes from the DTO itself, never from the produced XML.
+  const res = validateAdfXml(xml, {
+    ...opts,
+    prospectStatus: dto.prospectStatus === 'resend' ? 'resend' : 'new',
+  });
   if (!res.ok) return res;
   const want = normalizedAdfFields(dto);
   const got = res.summary;
