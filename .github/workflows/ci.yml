@@ -115,6 +115,7 @@ jobs:
           cache: npm
           cache-dependency-path: command-center/package-lock.json
       - run: npm --prefix command-center ci
+      - run: npm --prefix command-center test
       - run: npm --prefix command-center run build
 
   sbom:
