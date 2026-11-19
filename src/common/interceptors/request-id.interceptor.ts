@@ -21,6 +21,8 @@ export class RequestIdInterceptor implements NestInterceptor {
     res.setHeader('X-Request-Id', requestId);
     return next.handle().pipe(
       tap(() => {
+        // A streamed response has already sent its headers.
+        if (res.headersSent) return;
         res.setHeader('X-Request-Id', requestId);
       }),
     );

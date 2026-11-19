@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   SchedulingContext,
+  SchedulingDepartment,
   ServiceSchedulingProviderAdapter,
 } from './scheduling-provider';
 import { CircuitBreakerService } from '../integrations/core/circuit-breaker.service';
@@ -11,7 +12,16 @@ export type ResolvedScheduler = {
   connectionId: string;
   provider: string;
   mode: 'sandbox' | 'production';
+  /** Demo scheduler (adapter-declared). Never a real dealership booking. */
+  sandbox: boolean;
+  displayName: string;
 };
+
+/** Extra per-tenant/location gate an adapter must pass on every resolve (fail-closed). */
+export type SchedulerGate = (
+  tenantId: string,
+  locationId: string | null | undefined,
+) => Promise<boolean>;
 
 /**
  * Resolves the authoritative scheduler for a tenant/location from IntegrationConnection
@@ -27,14 +37,29 @@ export class SchedulingProviderRegistry {
     string,
     ServiceSchedulingProviderAdapter
   >();
+  private readonly gates = new Map<string, SchedulerGate>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly breaker: CircuitBreakerService,
   ) {}
 
-  register(provider: string, adapter: ServiceSchedulingProviderAdapter): void {
+  register(
+    provider: string,
+    adapter: ServiceSchedulingProviderAdapter,
+    gate?: SchedulerGate,
+  ): void {
+    // A sandbox scheduler can never be registered in production, whoever asks.
+    if (adapter.sandbox && process.env.NODE_ENV === 'production') {
+      throw new Error('sandbox_scheduler_forbidden_in_production');
+    }
     this.adapters.set(provider, adapter);
+    if (gate) this.gates.set(provider, gate);
+    else this.gates.delete(provider);
+  }
+
+  adapterFor(provider: string): ServiceSchedulingProviderAdapter | undefined {
+    return this.adapters.get(provider);
   }
 
   registeredProviders(): string[] {
@@ -44,6 +69,7 @@ export class SchedulingProviderRegistry {
   async resolve(
     tenantId: string,
     locationId?: string | null,
+    department?: SchedulingDepartment,
   ): Promise<ResolvedScheduler | null> {
     const conns = await this.prisma.integrationConnection.findMany({
       where: {
@@ -73,12 +99,25 @@ export class SchedulingProviderRegistry {
         continue;
       }
       if (this.breaker.isOpen(`scheduler:${c.id}`)) continue;
+      if (adapter.sandbox && process.env.NODE_ENV === 'production') continue;
+      const gate = this.gates.get(c.provider);
+      if (gate && !(await gate(tenantId, locationId).catch(() => false)))
+        continue;
       const cfg = (c.config ?? {}) as Record<string, unknown>;
+      // Optional per-connection department allow-list (absent = every department).
+      if (
+        department &&
+        Array.isArray(cfg.departments) &&
+        !cfg.departments.includes(department)
+      )
+        continue;
       return {
         adapter,
         connectionId: c.id,
         provider: c.provider,
         mode: cfg.mode === 'production' ? 'production' : 'sandbox',
+        sandbox: adapter.sandbox === true,
+        displayName: adapter.displayName ?? c.provider,
       };
     }
     return null;
@@ -90,6 +129,7 @@ export class SchedulingProviderRegistry {
     locationId: string | null | undefined,
     idempotencyKey: string,
     correlationId: string,
+    now?: Date,
   ): SchedulingContext {
     return {
       tenantId,
@@ -99,6 +139,7 @@ export class SchedulingProviderRegistry {
       timeoutMs: 8000,
       idempotencyKey,
       correlationId,
+      ...(now ? { now } : {}),
     };
   }
 }

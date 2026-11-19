@@ -28,8 +28,12 @@ import {
   parseIsoDate,
   toZoned,
 } from '../common/time/zoned-time';
-import { SchedulingProviderRegistry } from './scheduling-provider.registry';
+import {
+  ResolvedScheduler,
+  SchedulingProviderRegistry,
+} from './scheduling-provider.registry';
 import type {
+  AvailabilitySlot,
   SchedulingDepartment,
   SchedulingOutcome,
 } from './scheduling-provider';
@@ -54,9 +58,23 @@ export type AppointmentRequestInput = {
   };
   notes?: string | null;
   idempotencyKey?: string;
+  /**
+   * A slot the scheduling provider itself offered (picked from an appointment picker). The
+   * provider is authoritative for it, so store-hours validation is skipped and the booking
+   * is attempted for exactly this start.
+   */
+  providerSlot?: { startUtc: string; providerSlotId?: string };
   source: 'chat' | 'staff' | 'api';
   actorId?: string | null;
   now?: Date;
+};
+
+/** Provider confirmation details — present only when backed by a CONFIRMED provider receipt. */
+export type ProviderConfirmation = {
+  ref: string | null;
+  name: string;
+  sandbox: boolean;
+  startsAt: string | null;
 };
 
 export type AppointmentRequestResult =
@@ -67,6 +85,7 @@ export type AppointmentRequestResult =
       outcome: 'requested' | 'pending' | 'confirmed';
       hoursVerified: boolean;
       providerFailure?: string;
+      provider?: ProviderConfirmation;
     }
   | {
       status: 'rejected';
@@ -179,7 +198,20 @@ export class AppointmentService {
     const date = input.when.date;
 
     let requestedAt: Date | null = null;
-    if (profile?.verified) {
+    if (input.providerSlot) {
+      requestedAt = new Date(input.providerSlot.startUtc);
+      if (
+        Number.isNaN(requestedAt.getTime()) ||
+        requestedAt.getTime() <= now.getTime()
+      ) {
+        return {
+          status: 'rejected',
+          code: 'in_past',
+          alternatives: [],
+          timezone: tz,
+        };
+      }
+    } else if (profile?.verified) {
       // Validate against authoritative hours. Part-of-day only checks the day is open.
       if (input.when.time !== undefined) {
         const v = StoreHoursService.validateSlot(
@@ -253,31 +285,22 @@ export class AppointmentService {
       }
     }
 
-    const idempotencyKey =
+    let idempotencyKey =
       input.idempotencyKey ??
       `appt:${input.conversationId ?? randomUUID()}:${input.type}:${isoOf(date)}:${input.when.time ?? input.when.partOfDay ?? ''}`;
 
-    const existing = await this.prisma.appointment.findUnique({
-      where: {
-        tenantId_idempotencyKey: { tenantId: input.tenantId, idempotencyKey },
-      },
-    });
-    if (
-      existing &&
-      existing.status !== 'CANCELLED' &&
-      existing.status !== 'RESCHEDULED'
-    ) {
-      return {
-        status: 'saved',
-        appointment: existing,
-        outcome:
-          existing.status === 'CONFIRMED'
-            ? 'confirmed'
-            : existing.status === 'PENDING_CONFIRMATION'
-              ? 'pending'
-              : 'requested',
-        hoursVerified: !!profile?.verified,
-      };
+    // The same request after a cancelled/rescheduled one is a NEW attempt: it needs its own
+    // key (the old row keeps the original), otherwise the insert below collides.
+    for (let hop = 0; hop < 8; hop += 1) {
+      const existing = await this.prisma.appointment.findUnique({
+        where: {
+          tenantId_idempotencyKey: { tenantId: input.tenantId, idempotencyKey },
+        },
+      });
+      if (!existing) break;
+      if (existing.status !== 'CANCELLED' && existing.status !== 'RESCHEDULED')
+        return this.savedFromExisting(existing, !!profile?.verified);
+      idempotencyKey = `${idempotencyKey}:again:${existing.id}`.slice(-180);
     }
 
     const requestedTime =
@@ -286,7 +309,158 @@ export class AppointmentService {
         : (input.when.partOfDay ?? null);
 
     // CRITICAL WRITE: row + outbox atomically, before any acknowledgement.
-    const appointment = await this.prisma.$transaction(async (tx) => {
+    let appointment: Appointment;
+    try {
+      appointment = await this.createRequested(input, {
+        idempotencyKey,
+        date,
+        requestedTime,
+        requestedAt,
+        tz,
+        profile,
+      });
+    } catch (e: unknown) {
+      if (
+        !(
+          e instanceof Prisma.PrismaClientKnownRequestError &&
+          e.code === 'P2002'
+        )
+      )
+        throw e;
+      // A concurrent identical request won the insert. Never book twice: report the winner's
+      // state (waiting briefly for its provider answer when a slot is being booked).
+      const winner = await this.awaitSibling(
+        input.tenantId,
+        idempotencyKey,
+        !!input.providerSlot,
+      );
+      if (!winner) throw e;
+      if (winner.status === 'CANCELLED' || winner.status === 'RESCHEDULED')
+        return {
+          status: 'rejected',
+          code: 'unavailable',
+          alternatives: [],
+          timezone: tz,
+        };
+      return this.savedFromExisting(winner, !!profile?.verified);
+    }
+    this.metrics.increment('appointments.requested');
+    if (
+      input.type === 'SERVICE' &&
+      input.conversationId &&
+      appointment.status === AppointmentStatus.REQUESTED
+    ) {
+      await this.notifyServiceAdvisor(appointment).catch(() => undefined);
+    }
+
+    // Authoritative scheduler (if one is explicitly enabled) — confirmation only from provider.
+    let outcome: 'requested' | 'pending' | 'confirmed' = 'requested';
+    let providerFailure: string | undefined;
+    let provider: ProviderConfirmation | undefined;
+    let final = appointment;
+    if (requestedAt) {
+      const scheduler = await this.registry.resolve(
+        input.tenantId,
+        input.locationId,
+        input.type as SchedulingDepartment,
+      );
+      if (scheduler?.adapter.create) {
+        const ctx = this.registry.context(
+          scheduler,
+          input.tenantId,
+          input.locationId,
+          idempotencyKey,
+          appointment.id,
+          input.now,
+        );
+        let res: SchedulingOutcome;
+        try {
+          res = await withTimeout(
+            scheduler.adapter.create(ctx, {
+              department: input.type as SchedulingDepartment,
+              startUtc: requestedAt.toISOString(),
+              durationMinutes: DURATION[input.type],
+              providerSlotId: input.providerSlot?.providerSlotId,
+              customer: input.customer ?? {},
+              vin: input.vin,
+              serviceType: input.serviceType,
+              notes: input.notes,
+            }),
+            ctx.timeoutMs,
+          );
+          this.breaker.recordSuccess(`scheduler:${scheduler.connectionId}`);
+        } catch (e) {
+          this.breaker.recordFailure(`scheduler:${scheduler.connectionId}`);
+          res = {
+            kind: 'failed',
+            errorCode: e instanceof Error ? e.message.slice(0, 80) : 'error',
+            retryable: true,
+          };
+        }
+        const applied = await this.applyProviderOutcome(
+          appointment,
+          scheduler,
+          res,
+          idempotencyKey,
+        );
+        final = applied.appointment;
+        // The provider reference already backs another appointment: not ours to confirm.
+        if (applied.conflict)
+          res = { kind: 'unavailable', reason: 'provider_ref_conflict' };
+        if (res.kind === 'confirmed') {
+          outcome = 'confirmed';
+          provider = {
+            ref: res.externalId,
+            name: scheduler.displayName,
+            sandbox: scheduler.sandbox,
+            startsAt: res.scheduledAtUtc,
+          };
+          // A sandbox (demo) booking never enrols customer reminders.
+          if (!scheduler.sandbox)
+            await this.enrollAppointmentReminder(input.tenantId, final);
+        } else if (res.kind === 'pending') outcome = 'pending';
+        else if (res.kind === 'failed') providerFailure = res.errorCode;
+        else if (res.kind === 'unavailable') {
+          return {
+            status: 'rejected',
+            code: 'unavailable',
+            alternatives: (res.alternatives ?? []).slice(0, 3).map((s) => {
+              const z = toZoned(new Date(s.startUtc), tz);
+              return {
+                date: isoOf(z),
+                open: z.hour * 60 + z.minute,
+                close: z.hour * 60 + z.minute,
+              };
+            }),
+            timezone: tz,
+          };
+        }
+      }
+    }
+
+    return {
+      status: 'saved',
+      appointment: final,
+      outcome,
+      hoursVerified: !!profile?.verified,
+      providerFailure,
+      ...(provider ? { provider } : {}),
+    };
+  }
+
+  private createRequested(
+    input: AppointmentRequestInput,
+    p: {
+      idempotencyKey: string;
+      date: LocalDate;
+      requestedTime: string | null;
+      requestedAt: Date | null;
+      tz: string;
+      profile: HoursProfile | null;
+    },
+  ): Promise<Appointment> {
+    const { idempotencyKey, date, requestedTime, requestedAt, tz, profile } = p;
+    return this.prisma.$transaction(async (tx) => {
       const row = await tx.appointment.create({
         data: {
           tenantId: input.tenantId,
@@ -333,151 +507,302 @@ export class AppointmentService {
       });
       return row;
     });
-    this.metrics.increment('appointments.requested');
+  }
+
+  /**
+   * Slots a customer may pick right now — only from a scheduler the registry resolves for
+   * this tenant/location/department (enabled + liveReady connection, adapter registered, all
+   * gates passed) that can both read availability and create bookings. Null means "no
+   * authorised scheduler": the caller must fall back to a request, never invent availability.
+   */
+  async offerableSlots(p: {
+    tenantId: string;
+    locationId?: string | null;
+    type: AppointmentType;
+    now: Date;
+    horizonDays?: number;
+  }): Promise<{
+    connectionId: string;
+    provider: string;
+    displayName: string;
+    sandbox: boolean;
+    slots: AvailabilitySlot[];
+  } | null> {
+    const scheduler = await this.registry.resolve(
+      p.tenantId,
+      p.locationId,
+      p.type as SchedulingDepartment,
+    );
+    const caps = scheduler?.adapter.capabilities();
     if (
-      input.type === 'SERVICE' &&
-      input.conversationId &&
-      appointment.status === AppointmentStatus.REQUESTED
-    ) {
-      await this.notifyServiceAdvisor(appointment).catch(() => undefined);
-    }
-
-    // Authoritative scheduler (if one is explicitly enabled) — confirmation only from provider.
-    let outcome: 'requested' | 'pending' | 'confirmed' = 'requested';
-    let providerFailure: string | undefined;
-    let final = appointment;
-    if (requestedAt) {
-      const scheduler = await this.registry.resolve(
-        input.tenantId,
-        input.locationId,
+      !scheduler ||
+      !caps?.availabilityRead ||
+      !caps.create ||
+      !scheduler.adapter.getAvailability ||
+      !scheduler.adapter.create
+    )
+      return null;
+    const ctx = this.registry.context(
+      scheduler,
+      p.tenantId,
+      p.locationId,
+      `availability:${randomUUID()}`,
+      'availability',
+      p.now,
+    );
+    try {
+      const slots = await withTimeout(
+        scheduler.adapter.getAvailability(ctx, {
+          department: p.type as SchedulingDepartment,
+          fromUtc: p.now.toISOString(),
+          toUtc: new Date(
+            p.now.getTime() + (p.horizonDays ?? 7) * 86_400_000,
+          ).toISOString(),
+        }),
+        ctx.timeoutMs,
       );
-      if (scheduler?.adapter.create) {
-        const ctx = this.registry.context(
-          scheduler,
-          input.tenantId,
-          input.locationId,
-          idempotencyKey,
-          appointment.id,
-        );
-        let res: SchedulingOutcome;
-        try {
-          res = await withTimeout(
-            scheduler.adapter.create(ctx, {
-              department: input.type as SchedulingDepartment,
-              startUtc: requestedAt.toISOString(),
-              durationMinutes: DURATION[input.type],
-              customer: input.customer ?? {},
-              vin: input.vin,
-              serviceType: input.serviceType,
-              notes: input.notes,
-            }),
-            ctx.timeoutMs,
-          );
-          this.breaker.recordSuccess(`scheduler:${scheduler.connectionId}`);
-        } catch (e) {
-          this.breaker.recordFailure(`scheduler:${scheduler.connectionId}`);
-          res = {
-            kind: 'failed',
-            errorCode: e instanceof Error ? e.message.slice(0, 80) : 'error',
-            retryable: true,
-          };
-        }
-        final = await this.applyProviderOutcome(
-          appointment,
-          scheduler.provider,
-          res,
-        );
-        if (res.kind === 'confirmed') {
-          outcome = 'confirmed';
-          await this.enrollAppointmentReminder(input.tenantId, final);
-        } else if (res.kind === 'pending') outcome = 'pending';
-        else if (res.kind === 'failed') providerFailure = res.errorCode;
-        else if (res.kind === 'unavailable') {
-          return {
-            status: 'rejected',
-            code: 'unavailable',
-            alternatives: (res.alternatives ?? []).slice(0, 3).map((s) => {
-              const z = toZoned(new Date(s.startUtc), tz);
-              return {
-                date: isoOf(z),
-                open: z.hour * 60 + z.minute,
-                close: z.hour * 60 + z.minute,
-              };
-            }),
-            timezone: tz,
-          };
-        }
-      }
+      this.breaker.recordSuccess(`scheduler:${scheduler.connectionId}`);
+      return {
+        connectionId: scheduler.connectionId,
+        provider: scheduler.provider,
+        displayName: scheduler.displayName,
+        sandbox: scheduler.sandbox,
+        slots,
+      };
+    } catch {
+      this.breaker.recordFailure(`scheduler:${scheduler.connectionId}`);
+      this.metrics.increment('appointments.availability_failed');
+      return null;
     }
+  }
 
+  /** Result for a request that already has a live row (idempotent replay). */
+  private async savedFromExisting(
+    existing: Appointment,
+    hoursVerified: boolean,
+  ): Promise<AppointmentRequestResult> {
+    const outcome =
+      existing.status === 'CONFIRMED'
+        ? 'confirmed'
+        : existing.status === 'PENDING_CONFIRMATION'
+          ? 'pending'
+          : 'requested';
+    const provider =
+      outcome === 'confirmed'
+        ? await this.providerConfirmation(existing)
+        : undefined;
     return {
       status: 'saved',
-      appointment: final,
+      appointment: existing,
       outcome,
-      hoursVerified: !!profile?.verified,
-      providerFailure,
+      hoursVerified,
+      ...(provider ? { provider } : {}),
     };
   }
 
+  /** Provider confirmation for a CONFIRMED appointment, from its CONFIRMED receipt only. */
+  async providerConfirmation(
+    appt: Pick<Appointment, 'id' | 'tenantId' | 'status' | 'provider'>,
+  ): Promise<ProviderConfirmation | undefined> {
+    if (appt.status !== 'CONFIRMED' || appt.provider === 'NONE')
+      return undefined;
+    const receipt = await this.prisma.appointmentProviderReceipt.findFirst({
+      where: {
+        tenantId: appt.tenantId,
+        appointmentId: appt.id,
+        status: 'CONFIRMED',
+      },
+      orderBy: { receivedAt: 'desc' },
+    });
+    if (!receipt) return undefined;
+    const adapter = this.registry.adapterFor(receipt.provider);
+    return {
+      ref: receipt.providerRef,
+      name: adapter?.displayName ?? receipt.provider,
+      sandbox: receipt.sandbox,
+      startsAt: receipt.confirmedStart?.toISOString() ?? null,
+    };
+  }
+
+  /** Wait (briefly) for the concurrent request that owns this idempotency key. */
+  private async awaitSibling(
+    tenantId: string,
+    idempotencyKey: string,
+    waitForProvider: boolean,
+  ): Promise<Appointment | null> {
+    for (let i = 0; i < 20; i += 1) {
+      const row = await this.prisma.appointment.findUnique({
+        where: { tenantId_idempotencyKey: { tenantId, idempotencyKey } },
+      });
+      if (
+        row &&
+        (!waitForProvider ||
+          row.status !== 'REQUESTED' ||
+          row.provider !== 'NONE')
+      )
+        return row;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return this.prisma.appointment.findUnique({
+      where: { tenantId_idempotencyKey: { tenantId, idempotencyKey } },
+    });
+  }
+
+  private async writeReceipt(
+    db: Pick<Prisma.TransactionClient, 'appointmentProviderReceipt'>,
+    appt: Appointment,
+    scheduler: Pick<ResolvedScheduler, 'provider' | 'sandbox' | 'mode'>,
+    r: {
+      status: 'CONFIRMED' | 'PENDING' | 'UNAVAILABLE' | 'FAILED' | 'CONFLICT';
+      providerRef?: string | null;
+      confirmedStart?: Date | null;
+      rawStatus?: string | null;
+      idempotencyKey: string;
+    },
+  ) {
+    return db.appointmentProviderReceipt.create({
+      data: {
+        tenantId: appt.tenantId,
+        appointmentId: appt.id,
+        provider: scheduler.provider,
+        providerRef: r.providerRef ?? null,
+        status: r.status,
+        confirmedStart: r.confirmedStart ?? null,
+        rawStatus: r.rawStatus?.slice(0, 120) ?? null,
+        idempotencyKey: r.idempotencyKey,
+        sandbox: scheduler.sandbox || scheduler.mode === 'sandbox',
+      },
+    });
+  }
+
+  /**
+   * Applies ONE provider response: writes its receipt and keeps the Appointment.provider*
+   * columns in sync. CONFIRMED is set only in the same transaction that inserts the CONFIRMED
+   * receipt; if that provider reference already backs another appointment the insert fails
+   * (unique tenant+provider+providerRef) and nothing is confirmed (`conflict: true`).
+   */
   private async applyProviderOutcome(
     appt: Appointment,
-    provider: string,
+    scheduler: ResolvedScheduler,
     res: SchedulingOutcome,
-  ): Promise<Appointment> {
+    idempotencyKey: string,
+  ): Promise<{ appointment: Appointment; conflict?: boolean }> {
+    const provider = scheduler.provider;
     const prov = { ...(appt.provenance as Record<string, unknown> | null) };
     switch (res.kind) {
-      case 'confirmed':
-        this.metrics.increment('appointments.provider_confirmed');
-        return this.prisma.appointment.update({
-          where: { id: appt.id },
-          data: {
-            status: AppointmentStatus.CONFIRMED,
-            availabilityVerified: true,
-            provider,
-            externalProviderId: res.externalId,
-            providerStatus: res.providerStatus,
-            scheduledAt: new Date(res.scheduledAtUtc),
-            confirmedAt: new Date(),
-            provenance: {
-              ...prov,
-              confirmedBy: provider,
-              providerRequestId: res.providerRequestId ?? null,
-            },
-          },
-        });
+      case 'confirmed': {
+        try {
+          const appointment = await this.prisma.$transaction(async (tx) => {
+            await this.writeReceipt(tx, appt, scheduler, {
+              status: 'CONFIRMED',
+              providerRef: res.externalId,
+              confirmedStart: new Date(res.scheduledAtUtc),
+              rawStatus: res.rawStatus ?? res.providerStatus,
+              idempotencyKey,
+            });
+            return tx.appointment.update({
+              where: { id: appt.id },
+              data: {
+                status: AppointmentStatus.CONFIRMED,
+                availabilityVerified: true,
+                provider,
+                externalProviderId: res.externalId,
+                providerStatus: res.providerStatus,
+                scheduledAt: new Date(res.scheduledAtUtc),
+                confirmedAt: new Date(),
+                provenance: {
+                  ...prov,
+                  confirmedBy: provider,
+                  providerRequestId: res.providerRequestId ?? null,
+                },
+              },
+            });
+          });
+          this.metrics.increment('appointments.provider_confirmed');
+          return { appointment };
+        } catch (e: unknown) {
+          if (
+            !(
+              e instanceof Prisma.PrismaClientKnownRequestError &&
+              e.code === 'P2002'
+            )
+          )
+            throw e;
+          this.metrics.increment('appointments.provider_ref_conflict');
+          const appointment = await this.prisma.$transaction(async (tx) => {
+            await this.writeReceipt(tx, appt, scheduler, {
+              status: 'CONFLICT',
+              rawStatus: 'provider_ref_already_used',
+              idempotencyKey,
+            });
+            return tx.appointment.update({
+              where: { id: appt.id },
+              data: {
+                status: AppointmentStatus.CANCELLED,
+                canceledAt: new Date(),
+                cancelReason: 'provider_unavailable:provider_ref_conflict',
+                provider,
+              },
+            });
+          });
+          return { appointment, conflict: true };
+        }
+      }
       case 'pending':
-        return this.prisma.appointment.update({
-          where: { id: appt.id },
-          data: {
-            status: AppointmentStatus.PENDING_CONFIRMATION,
-            provider,
-            externalProviderId: res.externalId ?? null,
-            providerStatus: res.providerStatus,
-            provenance: {
-              ...prov,
-              providerRequestId: res.providerRequestId ?? null,
+        await this.writeReceipt(this.prisma, appt, scheduler, {
+          status: 'PENDING',
+          providerRef: res.externalId ?? null,
+          rawStatus: res.providerStatus,
+          idempotencyKey,
+        });
+        return this.prisma.appointment
+          .update({
+            where: { id: appt.id },
+            data: {
+              status: AppointmentStatus.PENDING_CONFIRMATION,
+              provider,
+              externalProviderId: res.externalId ?? null,
+              providerStatus: res.providerStatus,
+              provenance: {
+                ...prov,
+                providerRequestId: res.providerRequestId ?? null,
+              },
             },
-          },
-        });
+          })
+          .then((appointment) => ({ appointment }));
       case 'unavailable':
-        return this.prisma.appointment.update({
-          where: { id: appt.id },
-          data: {
-            status: AppointmentStatus.CANCELLED,
-            canceledAt: new Date(),
-            cancelReason: `provider_unavailable:${res.reason}`.slice(0, 200),
-            provider,
-          },
+        await this.writeReceipt(this.prisma, appt, scheduler, {
+          status: 'UNAVAILABLE',
+          rawStatus: res.reason,
+          idempotencyKey,
         });
+        return this.prisma.appointment
+          .update({
+            where: { id: appt.id },
+            data: {
+              status: AppointmentStatus.CANCELLED,
+              canceledAt: new Date(),
+              cancelReason: `provider_unavailable:${res.reason}`.slice(0, 200),
+              provider,
+            },
+          })
+          .then((appointment) => ({ appointment }));
       case 'failed':
         this.metrics.increment('appointments.provider_failed');
-        return this.prisma.appointment.update({
-          where: { id: appt.id },
-          data: {
-            provider,
-            providerStatus: `FAILED:${res.errorCode}`.slice(0, 120),
-          },
+        await this.writeReceipt(this.prisma, appt, scheduler, {
+          status: 'FAILED',
+          rawStatus: res.errorCode,
+          idempotencyKey,
         });
+        return this.prisma.appointment
+          .update({
+            where: { id: appt.id },
+            data: {
+              provider,
+              providerStatus: `FAILED:${res.errorCode}`.slice(0, 120),
+            },
+          })
+          .then((appointment) => ({ appointment }));
     }
   }
 
