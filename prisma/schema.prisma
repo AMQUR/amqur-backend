@@ -611,11 +611,44 @@ model Appointment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  providerReceipts AppointmentProviderReceipt[]
+
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status])
   @@index([tenantId, scheduledAt])
   @@index([tenantId, locationId, requestedAt])
   @@index([conversationId])
+}
+
+/// One row per scheduling-provider response for an appointment (append-only). An appointment
+/// may only be CONFIRMED by a provider in the same transaction that writes a CONFIRMED receipt.
+/// `providerRef` is unique per tenant+provider, so one provider booking can never back two
+/// appointments. `sandbox` marks demo-scheduler receipts — never a real dealership booking.
+model AppointmentProviderReceipt {
+  id String @id @default(cuid())
+
+  tenantId String
+
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  /// Scheduling provider id as registered in SchedulingProviderRegistry
+  provider       String
+  /// Provider booking reference (null when the provider did not issue one)
+  providerRef    String?
+  /// CONFIRMED | PENDING | UNAVAILABLE | FAILED | CONFLICT
+  status         String
+  /// Start the provider confirmed (UTC) — only with status CONFIRMED
+  confirmedStart DateTime?
+  /// Provider's own status string, verbatim (truncated)
+  rawStatus      String?
+  receivedAt     DateTime  @default(now())
+  idempotencyKey String?
+  sandbox        Boolean   @default(false)
+
+  @@unique([tenantId, provider, providerRef])
+  @@index([appointmentId])
+  @@index([tenantId, receivedAt])
 }
 
 enum AppointmentType {
