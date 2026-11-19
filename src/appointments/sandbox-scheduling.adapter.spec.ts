@@ -2,6 +2,7 @@ import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { SandboxSchedulerRegistrar } from './sandbox-scheduler.registrar';
 import {
   assertSandboxSchedulerAllowed,
+  sandboxSchedulerEnabled,
   SANDBOX_SCHEDULER_PROVIDER,
   SandboxSchedulingAdapter,
   sandboxReference,
@@ -10,6 +11,10 @@ import {
 } from './sandbox-scheduling.adapter';
 import type { SchedulingContext } from './scheduling-provider';
 import { SchedulingProviderRegistry } from './scheduling-provider.registry';
+import { envValidationSchema } from '../config/env.validation';
+
+// The sandbox scheduler needs an explicit opt-in (R13); these specs exercise it.
+process.env.SANDBOX_SCHEDULER_ENABLED = 'true';
 
 const now = new Date('2026-10-13T15:00:00.000Z');
 const ctx = (over: Partial<SchedulingContext> = {}): SchedulingContext => ({
@@ -294,5 +299,128 @@ describe('SchedulingProviderRegistry.resolve — gates', () => {
     await withEnv('production', async () => {
       expect(await r.resolve('t1', 'l1')).toBeNull();
     });
+  });
+});
+
+describe('R13 — the sandbox scheduler needs an explicit SANDBOX_SCHEDULER_ENABLED=true', () => {
+  const withSwitch = async (value: string | undefined, fn: () => unknown) => {
+    const prev = process.env.SANDBOX_SCHEDULER_ENABLED;
+    if (value === undefined) delete process.env.SANDBOX_SCHEDULER_ENABLED;
+    else process.env.SANDBOX_SCHEDULER_ENABLED = value;
+    try {
+      return await fn();
+    } finally {
+      process.env.SANDBOX_SCHEDULER_ENABLED = prev;
+    }
+  };
+  const conn = {
+    id: 'c1',
+    provider: 'MOCK',
+    locationId: 'l1',
+    config: { mode: 'sandbox' },
+  };
+  const registryWith = (rows: object[]) =>
+    new SchedulingProviderRegistry(
+      {
+        integrationConnection: { findMany: jest.fn().mockResolvedValue(rows) },
+      } as never,
+      { isOpen: () => false } as never,
+    );
+
+  it('sandboxSchedulerEnabled: needs the switch AND a non-production NODE_ENV (an unset NODE_ENV is not enough)', () => {
+    const on = (env: Record<string, string | undefined>) =>
+      sandboxSchedulerEnabled(env);
+    expect(on({ NODE_ENV: 'test', SANDBOX_SCHEDULER_ENABLED: 'true' })).toBe(
+      true,
+    );
+    expect(on({ SANDBOX_SCHEDULER_ENABLED: 'true' })).toBe(true); // dev box, opted in
+    expect(on({})).toBe(false); // NODE_ENV lost on a real host: still no demo scheduler
+    expect(on({ NODE_ENV: 'development' })).toBe(false);
+    expect(on({ NODE_ENV: 'test', SANDBOX_SCHEDULER_ENABLED: 'false' })).toBe(
+      false,
+    );
+    expect(on({ NODE_ENV: 'test', SANDBOX_SCHEDULER_ENABLED: 'TRUE' })).toBe(
+      false,
+    );
+    expect(
+      on({ NODE_ENV: 'production', SANDBOX_SCHEDULER_ENABLED: 'true' }),
+    ).toBe(false);
+  });
+
+  for (const value of [undefined, 'false', '1']) {
+    it(`switch=${String(value)}: not constructible, not registrable, not registered at boot, never resolved`, async () => {
+      const existing = new SandboxSchedulingAdapter(); // built while opted in
+      const armed = registryWith([conn]);
+      armed.register('MOCK', existing);
+      expect(await armed.resolve('t1', 'l1')).not.toBeNull();
+
+      await withSwitch(value, async () => {
+        expect(() => new SandboxSchedulingAdapter()).toThrow(
+          'sandbox_scheduler_not_enabled',
+        );
+        expect(() => assertSandboxSchedulerAllowed()).toThrow(
+          'sandbox_scheduler_not_enabled',
+        );
+        await expect(
+          existing.create(ctx(), {
+            department: 'SALES',
+            startUtc: sandboxSlots(now)[0].startUtc,
+          }),
+        ).rejects.toThrow('sandbox_scheduler_not_enabled');
+        const r = registryWith([conn]);
+        expect(() => r.register('MOCK', existing)).toThrow(
+          'sandbox_scheduler_not_enabled',
+        );
+        const registrar = new SandboxSchedulerRegistrar(
+          r,
+          {} as never,
+          {} as never,
+        );
+        expect(registrar.registerIfAllowed()).toBe(false);
+        expect(r.registeredProviders()).toEqual([]);
+        // An adapter registered earlier is not resolved once the switch is off.
+        expect(await armed.resolve('t1', 'l1')).toBeNull();
+      });
+    });
+  }
+
+  it('production stays a hard refusal even with the switch on', async () => {
+    await withEnv('production', () => {
+      expect(process.env.SANDBOX_SCHEDULER_ENABLED).toBe('true');
+      expect(() => new SandboxSchedulingAdapter()).toThrow(
+        'sandbox_scheduler_forbidden_in_production',
+      );
+      expect(sandboxSchedulerEnabled()).toBe(false);
+    });
+  });
+
+  it('env validation: default off; `true` is rejected in production', () => {
+    const base = {
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      JWT_SECRET: 'x'.repeat(40),
+    };
+    const v = (env: Record<string, string>) =>
+      envValidationSchema.validate(
+        { ...base, ...env },
+        { allowUnknown: true, abortEarly: false },
+      );
+    expect(v({ NODE_ENV: 'test' }).value.SANDBOX_SCHEDULER_ENABLED).toBe(
+      'false',
+    );
+    expect(
+      v({ NODE_ENV: 'test', SANDBOX_SCHEDULER_ENABLED: 'true' }).value
+        .SANDBOX_SCHEDULER_ENABLED,
+    ).toBe('true');
+    expect(
+      String(
+        v({ NODE_ENV: 'production', SANDBOX_SCHEDULER_ENABLED: 'true' }).error,
+      ),
+    ).toContain('SANDBOX_SCHEDULER_ENABLED');
+    expect(
+      String(
+        v({ NODE_ENV: 'production', SANDBOX_SCHEDULER_ENABLED: 'false' })
+          .error ?? '',
+      ),
+    ).not.toContain('SANDBOX_SCHEDULER_ENABLED');
   });
 });

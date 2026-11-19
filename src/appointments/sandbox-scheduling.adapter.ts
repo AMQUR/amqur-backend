@@ -10,8 +10,8 @@ import type {
 
 /**
  * SANDBOX scheduler — a labelled demo stand-in, NOT a dealership scheduling integration.
- * It talks to no vendor, books nothing real, and is impossible to construct or register when
- * NODE_ENV=production. Everything it produces is marked `sandbox: true` and its references
+ * It talks to no vendor, books nothing real, and is impossible to construct, register or resolve
+ * when NODE_ENV=production or when SANDBOX_SCHEDULER_ENABLED is not explicitly `true`. Everything it produces is marked `sandbox: true` and its references
  * are prefixed `SBX-` so a demo confirmation can never be mistaken for a real one.
  *
  * Behaviour is deterministic: a fixed UTC slot grid for the next few days, one designated
@@ -25,11 +25,28 @@ export const SANDBOX_HORIZON_DAYS = 4;
 export const SANDBOX_SLOT_MINUTES = 45;
 const TAKEN_HOUR_UTC = 17;
 
+/**
+ * The sandbox scheduler exists only when BOTH hold:
+ *   1. NODE_ENV is not `production` (hard refusal — nothing overrides it), and
+ *   2. SANDBOX_SCHEDULER_ENABLED is exactly `true` (explicit opt-in, default off).
+ * NODE_ENV alone is not enough: an unset NODE_ENV reads as "development", so a production host
+ * that lost the variable must still not grow a demo scheduler.
+ */
+export function sandboxSchedulerEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return (
+    env.NODE_ENV !== 'production' && env.SANDBOX_SCHEDULER_ENABLED === 'true'
+  );
+}
+
 export function assertSandboxSchedulerAllowed(
   nodeEnv: string | undefined = process.env.NODE_ENV,
+  enabled: string | undefined = process.env.SANDBOX_SCHEDULER_ENABLED,
 ): void {
   if (nodeEnv === 'production')
     throw new Error('sandbox_scheduler_forbidden_in_production');
+  if (enabled !== 'true') throw new Error('sandbox_scheduler_not_enabled');
 }
 
 function dayStartUtc(now: Date, plusDays: number): number {

@@ -132,6 +132,9 @@ function fakeDb() {
   return { db, appointments, receipts, outbox };
 }
 
+// The sandbox scheduler needs an explicit opt-in (R13); these specs exercise it.
+process.env.SANDBOX_SCHEDULER_ENABLED = 'true';
+
 const now = new Date('2026-10-13T15:00:00.000Z');
 const slotStart = sandboxSlots(now)[0].startUtc;
 

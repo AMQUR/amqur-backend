@@ -6,6 +6,10 @@ import type {
   ServiceSchedulingProviderAdapter,
 } from './scheduling-provider';
 import { CircuitBreakerService } from '../integrations/core/circuit-breaker.service';
+import {
+  assertSandboxSchedulerAllowed,
+  sandboxSchedulerEnabled,
+} from './sandbox-scheduling.adapter';
 
 export type ResolvedScheduler = {
   adapter: ServiceSchedulingProviderAdapter;
@@ -66,10 +70,9 @@ export class SchedulingProviderRegistry {
     adapter: ServiceSchedulingProviderAdapter,
     gate?: SchedulerGate,
   ): void {
-    // A sandbox scheduler can never be registered in production, whoever asks.
-    if (adapter.sandbox && process.env.NODE_ENV === 'production') {
-      throw new Error('sandbox_scheduler_forbidden_in_production');
-    }
+    // A sandbox scheduler can never be registered in production, whoever asks — nor anywhere
+    // without the explicit SANDBOX_SCHEDULER_ENABLED=true opt-in.
+    if (adapter.sandbox) assertSandboxSchedulerAllowed();
     // An adapter that can book must be able to find and cancel a booking by idempotency key,
     // otherwise a lost response would leave an orphan booking nobody can compensate.
     if (
@@ -125,7 +128,7 @@ export class SchedulingProviderRegistry {
         continue;
       }
       if (this.breaker.isOpen(`scheduler:${c.id}`)) continue;
-      if (adapter.sandbox && process.env.NODE_ENV === 'production') continue;
+      if (adapter.sandbox && !sandboxSchedulerEnabled()) continue;
       const gate = this.gates.get(c.provider);
       if (gate && !(await gate(tenantId, locationId).catch(() => false)))
         continue;

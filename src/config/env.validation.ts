@@ -206,6 +206,15 @@ export const envValidationSchema = Joi.object({
     .allow('')
     .default('AMQUR AI'),
   /**
+   * Explicit opt-in for the SANDBOX (demo) scheduler. Default off. It is additionally refused
+   * outright in production — setting it to `true` there fails validation at boot.
+   */
+  SANDBOX_SCHEDULER_ENABLED: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().valid('false').optional().default('false'),
+    otherwise: Joi.string().valid('true', 'false').optional().default('false'),
+  }),
+  /**
    * Hard overall deadline for one lead hand-off (connect to final reply), ms. Capped at 60 s so
    * the 90 s stale-SENT window always exceeds it by a 30 s margin.
    */

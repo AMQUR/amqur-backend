@@ -223,9 +223,14 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
   language model ("SANDBOX DEMO booking (not a real appointment)").
 - Every reply that reports a **confirmed** appointment — tapped slot or typed time, sandbox or
   not — is locked: its fixed wording is sent as is and is never handed to the model to rewrite.
-- It needs: non-production, the `sandboxScheduler` flag, and an enabled + liveReady `MOCK`
-  `appointments` connection (the local demo seed creates one). In production it cannot be
-  constructed, registered or resolved, and the flag is forced off.
+- It needs **all** of: non-production; the process started with
+  `SANDBOX_SCHEDULER_ENABLED=true` (explicit opt-in, default `false`; set in
+  `test-infra/.env.test` and by `scripts/start-local-demo.sh`); the `sandboxScheduler` flag; and
+  an enabled + liveReady `MOCK` `appointments` connection (the local demo seed creates one).
+  Without the opt-in it cannot be constructed, registered or resolved even outside production
+  — a host whose `NODE_ENV` is missing does not grow a demo scheduler. In production it is
+  refused outright regardless of the switch (and `SANDBOX_SCHEDULER_ENABLED=true` fails env
+  validation at boot); the flag is forced off.
 - It is **not** a Tekion (or any vendor) integration. No vendor endpoint, URL or payload was
   added; `src/integrations/tekion` is untouched and fail-closed. A real scheduler is
   **BLOCKED** on vendor API access.
