@@ -86,6 +86,14 @@ Rules (`transitionDelivery`):
   block can never erase an acknowledgement.
 - `CRM_REJECTED` and `CRM_MATCHED` are terminal.
 - Only `FAILED`, `DEAD` and `BLOCKED` can be replayed, and only by an operator.
+- A `SENT` row is another worker's attempt until it is stale (see "Idempotency and retries"). A
+  stale `SENT` row can be handed off again **or** become `BLOCKED` when a gate has closed in the
+  meantime; a fresh one is left alone and the outbox retries later (`delivery_in_flight`).
+- No row is left non-terminal behind a dead outbox event: whatever an attempt throws, the final
+  (8th) outbox attempt moves a `QUEUED` / `SENT` / `FAILED` row to `DEAD` with a PII-free code
+  (`handler_error` when the failure has no code of its own), so it is visible and replayable.
+  The one exception is a row whose send was accepted but not yet recorded
+  (`accepted_record_pending`): it is finalised, never dead-lettered.
 
 ## Routing
 

@@ -321,17 +321,41 @@ export class LeadDeliveryService implements OnModuleInit {
     return true;
   }
 
+  /**
+   * Extra compare-and-set predicate for acting on a row that is already SENT: only a STALE
+   * attempt (crashed worker) may be taken over, and never one whose send was accepted.
+   */
+  private staleSentWhere(
+    d: Pick<LeadDelivery, 'status'>,
+  ): Prisma.LeadDeliveryWhereInput | undefined {
+    if (d.status !== 'SENT') return undefined;
+    return {
+      updatedAt: { lt: new Date(Date.now() - SENT_STALE_MS) },
+      // Accepted-but-unrecorded rows are finalised, never re-sent.
+      OR: [
+        { lastErrorCode: null },
+        { lastErrorCode: { not: ACCEPT_RECORD_PENDING } },
+      ],
+    };
+  }
+
   private async block(
     d: LeadDelivery,
     reason: string,
   ): Promise<OutboxHandlerResult> {
-    await this.apply(
+    const blocked = await this.apply(
       this.prisma,
       d,
       'BLOCKED',
       { kind: 'gate_blocked', reason },
-      { data: { blockedReason: reason }, reasonCode: reason },
+      {
+        data: { blockedReason: reason },
+        reasonCode: reason,
+        where: this.staleSentWhere(d),
+      },
     );
+    // A SENT row that is NOT stale is another worker's live attempt: leave it alone, retry later.
+    if (!blocked && d.status === 'SENT') throw new Error('delivery_in_flight');
     this.logger.warn(
       `lead delivery ${d.id} BLOCKED reason=${reason} tenant=${d.tenantId}`,
     );
@@ -388,7 +412,62 @@ export class LeadDeliveryService implements OnModuleInit {
 
   // ───────────────────────────────────────── outbox handler
 
+  /**
+   * Outbox entry point. Whatever the attempt throws, the FINAL outbox attempt never leaves the
+   * row in a non-terminal state behind a DEAD outbox event: it becomes DEAD (replayable).
+   */
   async process(
+    deliveryId: string,
+    meta: { id: string; tenantId: string; attempts: number },
+  ): Promise<OutboxHandlerResult> {
+    try {
+      return await this.attempt(deliveryId, meta);
+    } catch (e: unknown) {
+      if (
+        !(e instanceof PermanentOutboxError) &&
+        meta.attempts >= OUTBOX_MAX_ATTEMPTS
+      )
+        await this.deadOnFinalAttempt(deliveryId, meta.tenantId, e);
+      throw e;
+    }
+  }
+
+  private async deadOnFinalAttempt(
+    deliveryId: string,
+    tenantId: string,
+    cause: unknown,
+  ): Promise<void> {
+    // Codes only: an arbitrary exception message could echo an address.
+    const msg = cause instanceof Error ? cause.message : '';
+    const code = /^[a-z0-9_]{1,60}$/.test(msg) ? msg : 'handler_error';
+    try {
+      const cur = await this.prisma.leadDelivery.findFirst({
+        where: { id: deliveryId, tenantId },
+      });
+      if (!cur || !['QUEUED', 'SENT', 'FAILED'].includes(cur.status)) return;
+      // The transport accepted this one; it is finalised, never dead-lettered for replay.
+      if (this.pendingReceipt(cur)) return;
+      await this.apply(
+        this.prisma,
+        cur,
+        'DEAD',
+        { kind: 'attempts_exhausted', code },
+        {
+          data: { lastErrorCode: code, lastErrorAt: new Date() },
+          reasonCode: code,
+        },
+      );
+      this.logger.error(
+        `lead delivery ${deliveryId} DEAD code=${code} (outbox attempts exhausted)`,
+      );
+    } catch {
+      this.logger.error(
+        `lead delivery ${deliveryId} could not be dead-lettered on the final attempt`,
+      );
+    }
+  }
+
+  private async attempt(
     deliveryId: string,
     meta: { id: string; tenantId: string; attempts: number },
   ): Promise<OutboxHandlerResult> {
@@ -546,17 +625,7 @@ export class LeadDeliveryService implements OnModuleInit {
       'SENT',
       { kind: 'transport_handoff', attempt },
       {
-        where:
-          d.status === 'SENT'
-            ? {
-                updatedAt: { lt: new Date(Date.now() - SENT_STALE_MS) },
-                // Accepted-but-unrecorded rows are finalised, never re-sent.
-                OR: [
-                  { lastErrorCode: null },
-                  { lastErrorCode: { not: ACCEPT_RECORD_PENDING } },
-                ],
-              }
-            : undefined,
+        where: this.staleSentWhere(d),
         data: {
           attempts: attempt,
           deliveryMode: gate.mode,

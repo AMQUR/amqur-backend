@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { createE2eApp, E2eCtx } from '../helpers/e2e-app';
 import { OutboxProcessorService } from '../../src/integrations/core/outbox-processor.service';
+import { OUTBOX_MAX_ATTEMPTS } from '../../src/integrations/core/outbox.service';
 import {
   ACCEPT_RECORD_PENDING,
   LeadDeliveryService,
@@ -44,6 +45,7 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
     { tenantId: string; locationId: string; routeId: string; address: string }
   >;
   let staffId = '';
+  let staffTwo = '';
   let seq = 0;
   const run = `${Date.now().toString(36)}`;
   const smtp = {
@@ -198,6 +200,25 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
         update: {},
       })
     ).id;
+    staffTwo = (
+      await ctx.prisma.user.upsert({
+        where: {
+          tenantId_email: {
+            tenantId: ids.two.tenantId,
+            email: 'admin@adfr-two.test',
+          },
+        },
+        create: {
+          tenantId: ids.two.tenantId,
+          email: 'admin@adfr-two.test',
+          password: 'not-a-login',
+          firstName: 'Adfr',
+          lastName: 'Admin',
+          role: 'ADMIN',
+        },
+        update: {},
+      })
+    ).id;
     await retireOutbox();
     // Synthetic 555-01xx numbers repeat between runs: start from an empty ledger.
     await ctx.prisma.consentRecord.deleteMany({
@@ -217,7 +238,9 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
     await ctx.app.close();
   });
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // Each test drives only its own deliveries through the worker.
+    await retireOutbox();
     process.env.NODE_ENV = prev.NODE_ENV ?? 'test';
     process.env.ADF_SEND_ENABLED = 'true';
     process.env.LEAD_DELIVERY_MODE = 'sandbox';
@@ -453,6 +476,108 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
         'QUEUED:sandbox_ack_superseded',
         'BLOCKED:route_not_production_environment',
       ]);
+    });
+  });
+
+  // ───────────────────────────────────────── R4: no stuck rows
+
+  describe('R4 — a delivery row never gets stuck behind a dead outbox event', () => {
+    /** Simulate a worker that crashed right after the hand-off: SENT, no outcome. */
+    const crashedSent = async (deliveryId: string, age: string) => {
+      await ctx.prisma.$executeRawUnsafe(
+        `UPDATE "LeadDelivery" SET "status" = 'SENT', "sentAt" = NOW(), "attempts" = 1, "updatedAt" = NOW() - interval '${age}' WHERE "id" = $1`,
+        deliveryId,
+      );
+    };
+    const setFlag = (k: Key, on: boolean) =>
+      ctx.prisma.tenant.update({
+        where: { id: ids[k].tenantId },
+        data: { featureFlags: { adfLeadDelivery: on } },
+      });
+
+    it('a STALE SENT row whose gate has since closed becomes BLOCKED (was: threw on every retry, stayed SENT)', async () => {
+      const d = (await submit('two', (await newLead('two')).id))!;
+      await crashedSent(d.id, '10 minutes');
+      await setFlag('two', false);
+      try {
+        const after = await attempt(d.id);
+        expect(after).toMatchObject({
+          status: 'BLOCKED',
+          blockedReason: 'flag_off',
+        });
+        expect(await outboxOf(d.id)).toMatchObject({
+          status: 'PUBLISHED',
+          lastError: 'blocked:flag_off',
+        });
+      } finally {
+        await setFlag('two', true);
+      }
+      expect(sinkFor(d.id)).toHaveLength(0);
+      // Terminal and replayable.
+      await deliveries.replay(
+        { tenantId: ids.two.tenantId, locationId: null },
+        d.id,
+        staffTwo,
+      );
+      expect((await attempt(d.id)).status).toBe('ACCEPTED');
+    });
+
+    it('a FRESH SENT row (another worker mid-send) is left alone when the gate closes', async () => {
+      const d = (await submit('two', (await newLead('two')).id))!;
+      await crashedSent(d.id, '1 second');
+      await setFlag('two', false);
+      try {
+        expect((await attempt(d.id)).status).toBe('SENT');
+        expect(await outboxOf(d.id)).toMatchObject({
+          status: 'PENDING',
+          lastError: 'delivery_in_flight',
+        });
+      } finally {
+        await setFlag('two', true);
+      }
+    });
+
+    it('whatever throws, the FINAL outbox attempt leaves the row DEAD (replayable), with a PII-free code', async () => {
+      const lead = await newLead('two');
+      const d = (await submit('two', lead.id))!;
+      await ctx.prisma.outboxEvent.update({
+        where: { id: d.outboxEventId as string },
+        data: { attempts: OUTBOX_MAX_ATTEMPTS - 1 },
+      });
+      // An unexpected failure nowhere near the transport, with an address in its message.
+      jest
+        .spyOn(routes, 'findForLead')
+        .mockRejectedValueOnce(new Error(`lookup failed for ${lead.email}`));
+      const dead = await attempt(d.id);
+      expect(dead).toMatchObject({
+        status: 'DEAD',
+        lastErrorCode: 'handler_error',
+        attempts: 0,
+      });
+      expect((await outboxOf(d.id)).status).toBe('DEAD');
+      expect(await history(d.id)).toEqual([
+        'QUEUED:enqueued',
+        'DEAD:handler_error',
+      ]);
+      expect(sinkFor(d.id)).toHaveLength(0);
+
+      await deliveries.replay(
+        { tenantId: ids.two.tenantId, locationId: null },
+        d.id,
+        staffTwo,
+      );
+      expect((await attempt(d.id)).status).toBe('ACCEPTED');
+      expect(sinkFor(d.id)).toHaveLength(1);
+    });
+
+    it('a non-final unexpected failure keeps the row retryable (not dead-lettered early)', async () => {
+      const d = (await submit('two', (await newLead('two')).id))!;
+      jest
+        .spyOn(routes, 'findForLead')
+        .mockRejectedValueOnce(new Error('transient'));
+      expect((await attempt(d.id)).status).toBe('QUEUED');
+      expect((await outboxOf(d.id)).status).toBe('PENDING');
+      expect((await attempt(d.id)).status).toBe('ACCEPTED');
     });
   });
 

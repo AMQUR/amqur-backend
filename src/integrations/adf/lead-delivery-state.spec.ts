@@ -205,6 +205,8 @@ describe('lead delivery state machine', () => {
     expect(go('QUEUED', 'DEAD', E.invalid)).toEqual(moved('DEAD'));
     expect(go('QUEUED', 'BLOCKED', E.blocked)).toEqual(moved('BLOCKED'));
     expect(go('FAILED', 'BLOCKED', E.blocked)).toEqual(moved('BLOCKED'));
+    // R4: a stale SENT row whose gate later closed can be blocked (caller enforces staleness).
+    expect(go('SENT', 'BLOCKED', E.blocked)).toEqual(moved('BLOCKED'));
     expect(go('ACCEPTED', 'DEAD', E.bounce)).toEqual(moved('DEAD'));
     // A crashed in-flight attempt may be handed off again (caller enforces staleness).
     expect(

@@ -205,7 +205,9 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
   ],
   BLOCKED: [
     {
-      from: [null, 'QUEUED', 'FAILED'],
+      // SENT → BLOCKED only for a stale (crashed) in-flight attempt whose gate has since closed;
+      // the caller enforces the age, exactly as for the SENT → SENT re-handoff.
+      from: [null, 'QUEUED', 'FAILED', 'SENT'],
       evidence: (e) => e.kind === 'gate_blocked' && nonEmpty(e.reason),
     },
   ],
