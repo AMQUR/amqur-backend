@@ -47,6 +47,7 @@
     "adf:sandbox-demo": "ts-node --transpile-only scripts/adf-sandbox-demo.ts",
     "seed:local-demo:lead-route": "ts-node --transpile-only scripts/seed-local-demo-lead-route.ts",
     "seed:group-rooftops": "ts-node --transpile-only scripts/seed-group-rooftops.ts",
+    "seed:isolated-staging": "ts-node --transpile-only scripts/seed-isolated-staging-five-rooftops.ts",
     "start:local-demo": "bash scripts/start-local-demo.sh",
     "test:simulator": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=simulator",
     "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",

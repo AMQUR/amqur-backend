@@ -24,6 +24,11 @@ COPY --from=build /app/command-center/dist ./command-center/dist
 COPY --from=build /app/prisma ./prisma
 # Non-secret five-rooftop readiness registry (evidence states only).
 COPY --from=build /app/config/rooftops ./config/rooftops
+# Isolated staging synthetic seed (fail-closed; never used in production tier).
+COPY --from=build /app/scripts/seed-isolated-staging-five-rooftops.ts ./scripts/
+COPY --from=build /app/scripts/lib ./scripts/lib
+COPY --from=build /app/src/config ./src/config
+COPY --from=build /app/tsconfig.json ./tsconfig.json
 COPY --from=build /app/package.json ./package.json
 # Optional deploy-time provenance stamp (glob keeps COPY happy when absent).
 COPY --from=build /app/release.jso[n] ./
