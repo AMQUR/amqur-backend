@@ -44,6 +44,7 @@ import {
   leadDeliveryIdempotencyKey,
   readLeadDeliveryEnv,
   REEVALUABLE_BLOCK_REASONS,
+  reservedRecipientRequired,
   SENT_STALE_MS,
 } from './lead-delivery-gates';
 import {
@@ -681,6 +682,7 @@ export class LeadDeliveryService implements OnModuleInit {
       transport: gate.transport,
       destination,
       smtpHost: env.smtp.host,
+      requireReservedRecipient: reservedRecipientRequired(env),
     });
     if (!destCheck.ok) return this.block(d, destCheck.reason);
 
@@ -799,6 +801,7 @@ export class LeadDeliveryService implements OnModuleInit {
             deliveryId: d.id,
             tenantId: d.tenantId,
             routeId: route.id,
+            routeEnvironment: route.environment,
             correlationId: d.correlationId,
             // Stable across retries so a receiver can de-duplicate an at-least-once resend.
             messageId: `<lead-delivery.${d.id}@${destinationDomain(env.fromAddress) || 'amqur.example.invalid'}>`,

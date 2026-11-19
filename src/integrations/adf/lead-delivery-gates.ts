@@ -4,9 +4,17 @@ import {
   isLoopbackHost,
   isReservedTestDomain,
 } from './destination';
+import {
+  DeploymentTier,
+  liveSendingPossible,
+  resolveDeploymentTier,
+  sandboxRequiresReservedRecipient,
+} from '../../config/deployment-tier';
 
 export type LeadDeliveryEnv = {
   nodeEnv: string;
+  /** Raw DEPLOYMENT_TIER (unset ⇒ the tier is derived from NODE_ENV). See deployment-tier.ts. */
+  deploymentTier?: string | null;
   /** ADF_SEND_ENABLED === 'true' — master switch, default off. */
   sendEnabled: boolean;
   /** LEAD_DELIVERY_MODE — anything other than exactly 'live' is sandbox. */
@@ -52,6 +60,7 @@ export function readLeadDeliveryEnv(
   const str = (v: string | undefined) => (v && v.trim() ? v.trim() : null);
   return {
     nodeEnv: env.NODE_ENV ?? 'development',
+    deploymentTier: str(env.DEPLOYMENT_TIER),
     sendEnabled: env.ADF_SEND_ENABLED === 'true',
     requestedMode: env.LEAD_DELIVERY_MODE === 'live' ? 'live' : 'sandbox',
     sandboxTransport: env.ADF_SANDBOX_TRANSPORT === 'smtp' ? 'smtp' : 'sink',
@@ -75,14 +84,25 @@ export function readLeadDeliveryEnv(
   };
 }
 
+const tierEnv = (env: LeadDeliveryEnv) => ({
+  NODE_ENV: env.nodeEnv,
+  DEPLOYMENT_TIER: env.deploymentTier ?? undefined,
+});
+
+/** The deployment tier this environment resolves to (see config/deployment-tier.ts). */
+export function deliveryTier(env: LeadDeliveryEnv): DeploymentTier {
+  return resolveDeploymentTier(tierEnv(env));
+}
+
 /**
- * Live is reachable ONLY when every environment-level switch agrees. Anything else — a
- * non-production NODE_ENV, a missing/other LEAD_DELIVERY_MODE, the master switch off — is
- * sandbox, no matter what a route says. In production the sandbox itself is refused
+ * Live is reachable ONLY when every environment-level switch agrees: the PRODUCTION deployment
+ * tier (of a production build), LEAD_DELIVERY_MODE=live and the master switch. Anything else — a
+ * staging/development/test tier, a missing/other LEAD_DELIVERY_MODE, the master switch off — is
+ * sandbox, no matter what a route says. In the production tier the sandbox itself is refused
  * (`sandbox_in_production`): production either sends live or sends nothing.
  */
 export function effectiveMode(env: LeadDeliveryEnv): 'sandbox' | 'live' {
-  return env.nodeEnv === 'production' &&
+  return liveSendingPossible(tierEnv(env)) &&
     env.requestedMode === 'live' &&
     env.sendEnabled
     ? 'live'
@@ -127,7 +147,8 @@ export type BlockReason =
   | 'route_unverified'
   | 'route_not_production_enabled'
   | 'route_not_production_environment'
-  | 'sandbox_in_production';
+  | 'sandbox_in_production'
+  | 'production_route_in_sandbox';
 
 export type GateDecision =
   | { open: true; mode: 'sandbox' | 'live'; transport: 'sink' | 'smtp' }
@@ -160,12 +181,17 @@ export function evaluateSendGates(i: GateInput): GateDecision {
   // delivered and would never be sent once live is switched on.
   if (sandboxRefused(i.env))
     return { open: false, reason: 'sandbox_in_production' };
+  // A PRODUCTION-environment route names a real CRM inbox. A sandbox transport must never
+  // "accept" a lead for it — the lead would look delivered and never reach the dealership —
+  // and its customer data must never be written to a sink. Refused in every non-production tier.
+  if (r.environment !== 'SANDBOX')
+    return { open: false, reason: 'production_route_in_sandbox' };
   return { open: true, mode, transport: i.env.sandboxTransport };
 }
 
-/** True when the process is production but live mode is not fully gated on. */
+/** True when this is the production tier but live mode is not fully gated on. */
 export function sandboxRefused(env: LeadDeliveryEnv): boolean {
-  return env.nodeEnv === 'production' && effectiveMode(env) !== 'live';
+  return deliveryTier(env) === 'production' && effectiveMode(env) !== 'live';
 }
 
 /**
@@ -208,13 +234,16 @@ export type DestinationBlockReason =
  *  - live: a reserved test domain is never a real CRM inbox;
  *  - sandbox SMTP: the host must be loopback AND the recipient a reserved test domain, so even a
  *    relaying MTA on localhost cannot reach a real mailbox;
- *  - sandbox sink: nothing leaves the process.
+ *  - sandbox sink: nothing leaves the process; on a hosted staging tier the recipient must
+ *    still be a reserved test domain (`requireReservedRecipient`).
  */
 export function checkDestinationForMode(p: {
   mode: 'sandbox' | 'live';
   transport: 'sink' | 'smtp';
   destination: string;
   smtpHost: string;
+  /** Hosted staging: a reserved test recipient is required whatever the sandbox transport. */
+  requireReservedRecipient?: boolean;
 }): { ok: true } | { ok: false; reason: DestinationBlockReason } {
   const reserved = isReservedTestDomain(destinationDomain(p.destination));
   if (p.mode === 'live')
@@ -227,6 +256,8 @@ export function checkDestinationForMode(p: {
     if (!reserved)
       return { ok: false, reason: 'sandbox_recipient_not_reserved' };
   }
+  if (p.requireReservedRecipient && !reserved)
+    return { ok: false, reason: 'sandbox_recipient_not_reserved' };
   return { ok: true };
 }
 
@@ -248,4 +279,9 @@ export function leadDeliveryIdempotencyKey(p: {
   // (location, channel, department) is the route's natural key within the tenant, and the key is
   // unique per tenant — so this is deterministic per (tenant, lead, channel, route).
   return `lead-delivery:v1:${p.leadId}:${p.channel}:${p.locationId ?? 'no-location'}:${p.department}`;
+}
+
+/** See sandboxRequiresReservedRecipient in config/deployment-tier.ts. */
+export function reservedRecipientRequired(env: LeadDeliveryEnv): boolean {
+  return sandboxRequiresReservedRecipient(tierEnv(env));
 }

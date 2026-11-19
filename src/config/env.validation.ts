@@ -1,9 +1,20 @@
 import * as Joi from 'joi';
+import { DEPLOYMENT_TIERS, deploymentTierProblem } from './deployment-tier';
 
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
     .default('development'),
+
+  /**
+   * Which deployment this is (config/deployment-tier.ts). Optional: unset derives the tier from
+   * NODE_ENV exactly as before (production ⇒ production). `staging` is valid with
+   * NODE_ENV=production (hosted staging). `production` requires NODE_ENV=production, and
+   * `development` / `test` are refused with NODE_ENV=production — both checked below.
+   */
+  DEPLOYMENT_TIER: Joi.string()
+    .valid(...DEPLOYMENT_TIERS)
+    .optional(),
 
   PORT: Joi.number().default(3000),
 
@@ -234,7 +245,13 @@ export const envValidationSchema = Joi.object({
    */
   SANDBOX_SCHEDULER_ENABLED: Joi.when('NODE_ENV', {
     is: 'production',
-    then: Joi.string().valid('false').optional().default('false'),
+    // Production tier (DEPLOYMENT_TIER unset or `production`): `true` fails boot, as before.
+    // Hosted staging (NODE_ENV=production + DEPLOYMENT_TIER=staging) may opt in.
+    then: Joi.when('DEPLOYMENT_TIER', {
+      is: 'staging',
+      then: Joi.string().valid('true', 'false').optional().default('false'),
+      otherwise: Joi.string().valid('false').optional().default('false'),
+    }),
     otherwise: Joi.string().valid('true', 'false').optional().default('false'),
   }),
   /**
@@ -264,4 +281,14 @@ export const envValidationSchema = Joi.object({
   .with('LLM_TENANT_DAILY_BUDGET_USD', [
     'LLM_COST_INPUT_PER_MTOK',
     'LLM_COST_OUTPUT_PER_MTOK',
-  ]);
+  ])
+  .custom((value: Record<string, unknown>, helpers) => {
+    const problem = deploymentTierProblem({
+      NODE_ENV: typeof value.NODE_ENV === 'string' ? value.NODE_ENV : undefined,
+      DEPLOYMENT_TIER:
+        typeof value.DEPLOYMENT_TIER === 'string'
+          ? value.DEPLOYMENT_TIER
+          : undefined,
+    });
+    return problem ? helpers.message({ custom: problem }) : value;
+  });

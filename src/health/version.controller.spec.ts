@@ -24,6 +24,7 @@ describe('VersionController', () => {
       version: '1.2.3',
       commitSha: 'abc123def456',
       environment: 'staging',
+      deploymentTier: 'test',
       buildTime: '2026-07-16T00:00:00.000Z',
       releaseId: 'rel-42',
       service: 'prod-api',
@@ -52,6 +53,7 @@ describe('VersionController', () => {
         'version',
         'commitSha',
         'environment',
+        'deploymentTier',
         'buildTime',
         'releaseId',
         'service',
@@ -70,5 +72,13 @@ describe('VersionController', () => {
     ]) {
       expect(raw).not.toContain(forbidden);
     }
+  });
+
+  it('exposes the resolved deployment tier (read-only) so a deployment can be checked', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.DEPLOYMENT_TIER;
+    expect(new VersionController().version().deploymentTier).toBe('production');
+    process.env.DEPLOYMENT_TIER = 'staging';
+    expect(new VersionController().version().deploymentTier).toBe('staging');
   });
 });

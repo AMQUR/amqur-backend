@@ -18,6 +18,7 @@
  * It refuses to run against a non-local database or with NODE_ENV=production, never reads the
  * operator's recipient candidates, and can never address a real mailbox.
  */
+import { isProductionTier } from '../src/config/deployment-tier';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -31,8 +32,8 @@ async function main() {
     .hostname;
   if (!['127.0.0.1', 'localhost'].includes(dbHost))
     fail(`Refusing to run: DATABASE_URL host '${dbHost}' is not local.`);
-  if (process.env.NODE_ENV === 'production')
-    fail('Refusing to run with NODE_ENV=production.');
+  if (isProductionTier())
+    fail('Refusing to run in the production deployment tier.');
   const useSmtp = process.argv.includes('--smtp');
   process.env.ADF_SEND_ENABLED = 'true';
   process.env.LEAD_DELIVERY_MODE = 'sandbox';

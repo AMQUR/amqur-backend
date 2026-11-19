@@ -11,6 +11,7 @@ import {
   acknowledgementCountsForMode,
   blockReasonStillApplies,
   sandboxRefused,
+  reservedRecipientRequired,
   SEND_DEADLINE_DEFAULT_MS,
   SEND_DEADLINE_MAX_MS,
   SENT_STALE_MARGIN_MS,
@@ -118,12 +119,14 @@ describe('lead delivery gates (all fail-closed)', () => {
     ).toEqual({ open: false, reason: 'route_tenant_mismatch' });
   });
 
-  it('a production route is still forced to the sandbox transport outside live mode', () => {
+  // Security review M4(a): this used to assert that a PRODUCTION route was "forced to the
+  // sandbox transport" (open, sink). That is the defect — a real CRM route "accepted" by the
+  // sink — so the expectation was changed: it is refused outright with its own reason.
+  it('a production route is REFUSED outside live mode (never handed to a sandbox transport)', () => {
     const prod = route({ environment: 'PRODUCTION', productionEnabled: true });
     expect(evaluateSendGates(input({ route: prod }))).toEqual({
-      open: true,
-      mode: 'sandbox',
-      transport: 'sink',
+      open: false,
+      reason: 'production_route_in_sandbox',
     });
     const smtpEnv = readLeadDeliveryEnv({
       NODE_ENV: 'production', // production but mode not live
@@ -317,5 +320,119 @@ describe('lead delivery gates (all fail-closed)', () => {
     expect(k({ locationId: 'loc-north' })).not.toBe(k());
     expect(k({ department: 'SERVICE' })).not.toBe(k());
     expect(k({ leadId: 'lead-2' })).not.toBe(k());
+  });
+});
+
+// ── security review M4: deployment tier
+describe('lead delivery gates — deployment tier', () => {
+  const sandboxRoute = route();
+  const prodRoute = route({
+    environment: 'PRODUCTION',
+    productionEnabled: true,
+  });
+  const envOf = (e: Record<string, string>) =>
+    readLeadDeliveryEnv({ ADF_SEND_ENABLED: 'true', ...e });
+
+  it('hosted staging (NODE_ENV=production + DEPLOYMENT_TIER=staging): sandbox for SANDBOX routes only, live impossible', () => {
+    const staging = envOf({
+      NODE_ENV: 'production',
+      DEPLOYMENT_TIER: 'staging',
+      LEAD_DELIVERY_MODE: 'live', // even when someone asks for live
+    });
+    expect(effectiveMode(staging)).toBe('sandbox');
+    expect(sandboxRefused(staging)).toBe(false);
+    expect(evaluateSendGates(input({ env: staging }))).toEqual({
+      open: true,
+      mode: 'sandbox',
+      transport: 'sink',
+    });
+    expect(
+      evaluateSendGates(input({ env: staging, route: prodRoute })),
+    ).toEqual({ open: false, reason: 'production_route_in_sandbox' });
+    expect(reservedRecipientRequired(staging)).toBe(true);
+  });
+
+  it('production tier is unchanged: live with every gate, otherwise sandbox_in_production', () => {
+    for (const tier of [undefined, 'production']) {
+      const live = envOf({
+        NODE_ENV: 'production',
+        LEAD_DELIVERY_MODE: 'live',
+        ...(tier ? { DEPLOYMENT_TIER: tier } : {}),
+      });
+      expect(effectiveMode(live)).toBe('live');
+      expect(evaluateSendGates(input({ env: live, route: prodRoute }))).toEqual(
+        { open: true, mode: 'live', transport: 'smtp' },
+      );
+      const notLive = envOf({
+        NODE_ENV: 'production',
+        ...(tier ? { DEPLOYMENT_TIER: tier } : {}),
+      });
+      for (const r of [sandboxRoute, prodRoute])
+        expect(evaluateSendGates(input({ env: notLive, route: r }))).toEqual({
+          open: false,
+          reason: 'sandbox_in_production',
+        });
+    }
+  });
+
+  it('an invalid tier combination fails closed (treated as production; never live off a production build)', () => {
+    const lying = envOf({
+      NODE_ENV: 'development',
+      DEPLOYMENT_TIER: 'production',
+      LEAD_DELIVERY_MODE: 'live',
+    });
+    expect(effectiveMode(lying)).toBe('sandbox');
+    expect(evaluateSendGates(input({ env: lying }))).toEqual({
+      open: false,
+      reason: 'sandbox_in_production',
+    });
+    const downgraded = envOf({
+      NODE_ENV: 'production',
+      DEPLOYMENT_TIER: 'development',
+    });
+    expect(evaluateSendGates(input({ env: downgraded }))).toEqual({
+      open: false,
+      reason: 'sandbox_in_production',
+    });
+  });
+
+  it('development / test: PRODUCTION routes are refused too; the sink does not need a reserved recipient', () => {
+    for (const NODE_ENV of ['development', 'test']) {
+      const env = envOf({ NODE_ENV });
+      expect(evaluateSendGates(input({ env, route: prodRoute }))).toEqual({
+        open: false,
+        reason: 'production_route_in_sandbox',
+      });
+      expect(reservedRecipientRequired(env)).toBe(false);
+    }
+  });
+
+  it('staging requires a reserved test recipient even for the in-process sink', () => {
+    const args = {
+      mode: 'sandbox' as const,
+      transport: 'sink' as const,
+      smtpHost: '127.0.0.1',
+    };
+    expect(
+      checkDestinationForMode({
+        ...args,
+        destination: 'leads@crm.realdealer.com',
+        requireReservedRecipient: true,
+      }),
+    ).toEqual({ ok: false, reason: 'sandbox_recipient_not_reserved' });
+    expect(
+      checkDestinationForMode({
+        ...args,
+        destination: 'leads@rooftop.example.invalid',
+        requireReservedRecipient: true,
+      }),
+    ).toEqual({ ok: true });
+    // unchanged without the requirement (local development / tests)
+    expect(
+      checkDestinationForMode({
+        ...args,
+        destination: 'leads@crm.realdealer.com',
+      }),
+    ).toEqual({ ok: true });
   });
 });

@@ -104,15 +104,22 @@ describe('production domains (Postgres)', () => {
         payload: {},
         idempotencyKey: `test-crashloop-${Date.now()}`,
       });
-      // The first claim is not an attempt yet; each later reclaim of the expired lease counts
-      // the abandoned one. (Negative lease = the worker "died" immediately.)
-      const mine = async () =>
-        (await outbox.claimPending(500, 'dying-worker', -1000)).find(
+      // A worker that STARTED the handler and then died: claim, begin handling, then the lease
+      // lapses (forced on the DB clock). Each reclaim charges that abandoned attempt. A row that
+      // never started its handler is not charged (see secfix-m1-outbox-lease.e2e-spec.ts).
+      const dieMidHandler = async () => {
+        const got = (await outbox.claimPending(500, 'dying-worker')).find(
           (r) => r.id === ev.id,
         );
-      expect((await mine())?.attempts).toBe(0);
-      for (let n = 1; n <= OUTBOX_MAX_ATTEMPTS; n += 1)
-        expect((await mine())?.attempts).toBe(n);
+        expect(got).toBeDefined();
+        expect(await outbox.beginHandling(ev.id, 'dying-worker')).toBe(true);
+        await ctx.prisma
+          .$executeRaw`UPDATE "OutboxEvent" SET "leaseExpiresAt" = NOW() - interval '1 second' WHERE "id" = ${ev.id}`;
+        return got!.attempts;
+      };
+      expect(await dieMidHandler()).toBe(0);
+      for (let n = 1; n < OUTBOX_MAX_ATTEMPTS; n += 1)
+        expect(await dieMidHandler()).toBe(n);
       // Leave it abandoned once more, then let a healthy worker pick it up: it must stop.
       await proc.processBatch(500, 'healthy-worker');
       const row = await ctx.prisma.outboxEvent.findUniqueOrThrow({

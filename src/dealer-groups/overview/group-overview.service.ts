@@ -16,6 +16,10 @@ import {
   CapabilityKey,
   capabilityMatrix,
 } from './capability-matrix';
+import {
+  NOT_REAL_DELIVERY,
+  REAL_DELIVERY,
+} from '../../integrations/adf/real-delivery';
 
 export type GroupOverviewStore = {
   tenant: { id: string; slug: string; name: string };
@@ -150,7 +154,8 @@ export class GroupOverviewService {
   }): Promise<CapabilityEvidence> {
     const tenantId = t.id;
     const prodRoute = { tenantId, environment: 'PRODUCTION' as const };
-    const onProd = { tenantId, route: { environment: 'PRODUCTION' as const } };
+    // Live evidence = sent by the live transport on a PRODUCTION route (never a sandbox ack).
+    const onProd = { tenantId, ...REAL_DELIVERY };
     const [
       real,
       synthetic,
@@ -202,7 +207,7 @@ export class GroupOverviewService {
       this.prisma.leadDelivery.count({
         where: {
           tenantId,
-          route: { environment: 'SANDBOX' },
+          ...NOT_REAL_DELIVERY,
           acceptedAt: { not: null },
         },
       }),

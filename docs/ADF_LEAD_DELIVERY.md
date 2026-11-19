@@ -138,18 +138,29 @@ A send happens only when every one of these is true:
 
 Transport selection:
 
-- **Live** requires `NODE_ENV=production` and `LEAD_DELIVERY_MODE=live` and
-  `ADF_SEND_ENABLED=true`, plus a `PRODUCTION` route that is `productionEnabled`. A reserved test
-  domain is refused in live mode.
-- **Production never uses a sandbox transport.** With `NODE_ENV=production` and live not fully
-  gated on (for example `LEAD_DELIVERY_MODE` unset), the delivery is `BLOCKED:
-  sandbox_in_production`; nothing is written to the sink or sent to any SMTP host. Both sandbox
-  transports also refuse on their own in production. Production either sends live or sends
-  nothing.
-- **Outside production, anything that is not live is sandbox**, whatever the route says: the in-process sink
-  (`ADF_SANDBOX_TRANSPORT=sink`, default) or the loopback mock SMTP (`smtp`). Sandbox SMTP
-  additionally requires a loopback host and a reserved-domain recipient, so even a relaying MTA
-  on localhost cannot reach a real mailbox.
+- The environment is decided by the **deployment tier** (`DEPLOYMENT_TIER`, see
+  `docs/deployment/DEPLOYMENT_TIER.md`), not by `NODE_ENV` alone. Unset, the tier is derived from
+  `NODE_ENV` (`production` ⇒ production tier), so existing deployments behave as before.
+- **Live** requires the production tier (which itself requires `NODE_ENV=production`) and
+  `LEAD_DELIVERY_MODE=live` and `ADF_SEND_ENABLED=true`, plus a `PRODUCTION` route that is
+  `productionEnabled`. A reserved test domain is refused in live mode. Live is impossible in the
+  staging, development and test tiers.
+- **The production tier never uses a sandbox transport.** With live not fully gated on (for
+  example `LEAD_DELIVERY_MODE` unset), the delivery is `BLOCKED: sandbox_in_production`; nothing
+  is written to the sink or sent to any SMTP host. Both sandbox transports also refuse on their
+  own. Production either sends live or sends nothing.
+- **Outside the production tier, anything that is not live is sandbox** — and the sandbox only
+  takes `SANDBOX` routes. A `PRODUCTION`-environment route is refused outright
+  (`BLOCKED: production_route_in_sandbox`): a sandbox transport "accepting" a lead for a real CRM
+  inbox would make it look delivered when it never left, and would put customer data in the sink.
+  Nothing is written to the sink or sent; both sandbox transports refuse such a message on their
+  own as well. Sandbox transports are the in-process sink (`ADF_SANDBOX_TRANSPORT=sink`, default)
+  or the loopback mock SMTP (`smtp`). Sandbox SMTP additionally requires a loopback host and a
+  reserved-domain recipient, so even a relaying MTA on localhost cannot reach a real mailbox.
+- **Hosted staging** (`DEPLOYMENT_TIER=staging`, typically with `NODE_ENV=production`) may run
+  the sandbox sink for `SANDBOX` routes only, the recipient must be a reserved test domain even
+  for the sink (`sandbox_recipient_not_reserved`), and — because `NODE_ENV=production` — the sink
+  keeps metadata only (no message body in memory, nothing on disk).
 - The SMTP transport itself refuses any non-loopback host unless live is fully gated on.
 - `SANDBOX` routes may only point at reserved test domains and can never be production-enabled.
 - `LeadDelivery.deliveryMode` (`sandbox` / `live`) records the mode of the latest transport
@@ -168,7 +179,8 @@ Block reasons an operator can see: `send_disabled`, `flag_off`, `no_consent_basi
 `no_contact_method`, `no_location`, `no_route`, `route_disabled`, `route_unverified`,
 `route_tenant_mismatch`, `route_not_production_environment`, `route_not_production_enabled`,
 `destination_unavailable`, `reserved_destination_in_live`, `sandbox_recipient_not_reserved`,
-`smtp_host_not_loopback`, `sandbox_in_production`, `lead_location_changed`.
+`smtp_host_not_loopback`, `sandbox_in_production`, `production_route_in_sandbox`,
+`lead_location_changed`.
 
 ## Consent
 
@@ -325,7 +337,14 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
   are stripped of anything address-like before they are stored.
 - Destination addresses never appear in any API response. Operator responses show the masked
   display only; public and widget endpoints show nothing.
-- In production the sandbox sink refuses every message (`sandbox_in_production`); it stores nothing.
+- In the production tier the sandbox sink refuses every message (`sandbox_in_production`); it
+  stores nothing. In every tier it refuses a `PRODUCTION`-route message. With
+  `NODE_ENV=production` (hosted staging included) it keeps metadata only.
+- Reports and readiness evidence count a delivery as real only when it was sent by the live
+  transport on a `PRODUCTION` route (`deliveryMode = 'live'`, `src/integrations/adf/real-delivery.ts`).
+  The funnel's MAIL_ACCEPTED / CRM_RECEIVED / CRM_MATCHED stages and the capability matrix's
+  LIVE VERIFIED cells use that predicate; anything a sandbox transport acknowledged is reported
+  under "not proven".
 
 ## Operator API
 

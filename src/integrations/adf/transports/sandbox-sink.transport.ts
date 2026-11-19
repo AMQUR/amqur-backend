@@ -10,6 +10,7 @@ import {
   OutboundLeadMessage,
   TransportReceipt,
 } from './lead-delivery-transport';
+import { isProductionTier } from '../../../config/deployment-tier';
 
 export type SinkRecord = {
   deliveryId: string;
@@ -41,8 +42,12 @@ export class SandboxSinkTransport implements LeadDeliveryTransport {
   async send(message: OutboundLeadMessage): Promise<TransportReceipt> {
     // Defence in depth behind the `sandbox_in_production` gate: production never records a
     // lead in the sink, so a real lead can never look "accepted" without having been sent.
-    if (process.env.NODE_ENV === 'production')
+    if (isProductionTier())
       throw new LeadTransportError('sandbox_in_production', false);
+    // …and behind the `production_route_in_sandbox` gate: a lead for a PRODUCTION route (a real
+    // CRM inbox) is never recorded here, in any tier.
+    if (message.routeEnvironment === 'PRODUCTION')
+      throw new LeadTransportError('production_route_in_sandbox', false);
     const options = buildLeadMailOptions(message);
     const raw = (await new MailComposer(options).compile().build()).toString(
       'utf8',
