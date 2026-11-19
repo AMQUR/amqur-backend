@@ -34,18 +34,19 @@ const events = []; // { t, phase, kind, status, ms, leaks, sample }
 const healthLog = []; // { t, phase, ready, live, status, redis, database }
 let stop = false;
 let seq = 700_000;
-function note(kind, r) {
+function note(kind, r, startedAt) {
   const bad = r.status < 200 || r.status >= 300;
   const text = r.streamError ? JSON.stringify(r.streamError) : r.text;
-  events.push({ t: Date.now(), phase, kind, status: r.status === 0 ? `0:${r.error || 'transport'}` : r.streamError ? '200:turn.error' : String(r.status), ms: r.ms, leaks: bad || r.streamError ? leakMarkers(text) : [], sample: bad || r.streamError ? String(text || '').slice(0, 240) : undefined });
+  events.push({ t: Date.now(), startedAt, phase, kind, status: r.status === 0 ? `0:${r.error || 'transport'}` : r.streamError ? '200:turn.error' : String(r.status), ms: r.ms, leaks: bad || r.streamError ? leakMarkers(text) : [], sample: bad || r.streamError ? String(text || '').slice(0, 240) : undefined });
 }
 async function shopperLoop() {
   while (!stop) {
     const t = pick([...ROOFTOPS, GROUP]);
     let cid;
     const send = async (kind, body, stream = false) => {
+      const startedAt = Date.now();
       const r = stream ? await chatStream(t, { ...body, conversationId: cid }, { timeoutMs: 15_000 }) : await chat(t, { ...body, conversationId: cid }, { timeoutMs: 15_000 });
-      note(kind, r);
+      note(kind, r, startedAt);
       cid = r.data?.conversationId ?? cid;
       return r.data;
     };
@@ -76,8 +77,9 @@ async function healthLoop() {
 /** A fresh widget token needs the database: record what that endpoint does during an outage. */
 async function tokenLoop() {
   while (!stop) {
+    const startedAt = Date.now();
     const r = await request('POST', `${BASE}/api/public/widget-token`, { headers: { origin: ORIGIN }, body: { tenantSlug: 'jeep-of-chicago', locationSlug: 'main' }, timeoutMs: 15_000, useAgent: false });
-    note('widget_token', r);
+    note('widget_token', r, startedAt);
     await sleep(2000);
   }
 }
@@ -114,10 +116,12 @@ async function outage(name, container, { holdS }) {
   phase = `${name}_down`;
   const stoppedAt = Date.now();
   const s = await docker('stop', '-t', '2', container);
+  if (!s.ok) throw new Error(`failed to stop ${container}`);
+  const confirmedDownAt = Date.now();
   console.log(`   ${container} stopped (${s.ok ? 'ok' : 'FAILED'}) — holding ${holdS} s`);
   await sleep(holdS * 1000);
   const startedAt = Date.now();
-  await docker('start', container);
+  if (!(await docker('start', container)).ok) throw new Error(`failed to restart ${container}`);
   phase = `${name}_recovering`;
   let healthyAfter = null;
   for (let i = 0; i < 120; i += 1) {
@@ -131,7 +135,7 @@ async function outage(name, container, { holdS }) {
   await sleep(25_000);
   phase = `${name}_after`;
   await sleep(10_000);
-  return { stoppedAt, startedAt, downSeconds: Math.round((startedAt - stoppedAt) / 1000), containerHealthyAfterS: healthyAfter };
+  return { stoppedAt, confirmedDownAt, startedAt, downSeconds: Math.round((startedAt - stoppedAt) / 1000), containerHealthyAfterS: healthyAfter };
 }
 
 async function main() {
@@ -177,14 +181,18 @@ async function main() {
   const alive = pid ? await pidAlive(pid) : null;
   L.check('D.api_process_survived', alive === true, `api pid ${pid} alive at the end: ${alive} (it was never restarted)`);
   L.check('D.no_internals_in_any_body', all.every((p) => p.bodiesWithInternals === 0 && p.healthBodiesWithInternals === 0), `error bodies with stack traces / driver messages / hosts: ${all.reduce((a, p) => a + p.bodiesWithInternals + p.healthBodiesWithInternals, 0)} ${JSON.stringify([...new Set(all.flatMap((p) => p.leakKinds))])}`);
-  L.check('D.redis_loss_does_not_fail_chat', phases.redis_down.requests > 0 && ok2xx(phases.redis_down) === phases.redis_down.requests, `Redis down: ${phases.redis_down.requests} requests ${JSON.stringify(phases.redis_down.byStatus)}, p95 ${phases.redis_down.latencyMs.p95} ms (baseline p95 ${phases.baseline.latencyMs.p95} ms)`);
+  const rejectedWindow = events.filter((e) => e.kind !== 'widget_token' && e.startedAt >= redis.confirmedDownAt && e.t < redis.startedAt);
+  const redisChat = rejectedWindow.filter((e) => e.kind !== 'stream');
+  const redisStream = rejectedWindow.filter((e) => e.kind === 'stream');
+  const redisWindowCounts = { chat: redisChat.length, stream: redisStream.length };
+  L.check('D.redis_loss_fails_closed', redisChat.length > 0 && redisChat.every((e) => e.status === '503' && e.sample?.includes('conversation_temporarily_unavailable')) && redisStream.length > 0 && redisStream.every((e) => e.status === '200:turn.error' || e.status === '503'), `Redis down within confirmed window: ${JSON.stringify(redisWindowCounts)}; overall ${JSON.stringify(phases.redis_down.byKind)}`);
   L.check('D.health_degraded_not_down_without_redis', Object.keys(phases.redis_down.health).some((k) => k.startsWith('200/degraded')) && !Object.keys(phases.redis_down.health).some((k) => k.startsWith('503')), JSON.stringify(phases.redis_down.health));
-  L.check('D.redis_recovers_without_restart', recovery.redis.healthReportsRedisUpAfterS !== null, `health reports redis up ${recovery.redis.healthReportsRedisUpAfterS} s after docker start`);
+  L.check('D.redis_recovers_without_restart', recovery.redis.healthReportsRedisUpAfterS !== null && recovery.redis.firstCleanWindowAfterS !== null, `health reports redis up ${recovery.redis.healthReportsRedisUpAfterS} s after docker start; error-free window from ${recovery.redis.firstCleanWindowAfterS} s`);
   L.check('D.postgres_loss_reported_as_503', Object.keys(phases.postgres_down.health).some((k) => k.startsWith('503')) && phases.postgres_down.live['200'] > 0 && !phases.postgres_down.live['0'], `ready: ${JSON.stringify(phases.postgres_down.health)}; live: ${JSON.stringify(phases.postgres_down.live)}`);
   L.check('D.postgres_loss_gives_clean_errors', phases.postgres_down.requests > 0 && phases.postgres_down.bodiesWithInternals === 0 && !Object.keys(phases.postgres_down.byStatus).some((k) => k.startsWith('0:')), `Postgres down: ${JSON.stringify(phases.postgres_down.byStatus)}; samples ${JSON.stringify(phases.postgres_down.errorBodySamples.slice(0, 3))}`);
   L.check('D.postgres_recovers_without_restart', recovery.postgres.firstCleanWindowAfterS !== null && ok2xx(phases.tail) === phases.tail.requests && phases.tail.requests > 0, `first health 200 after ${recovery.postgres.firstHealth200AfterS} s, first chat 2xx after ${recovery.postgres.firstChat2xxAfterS} s, error-free from ${recovery.postgres.firstCleanWindowAfterS} s after docker start; tail: ${JSON.stringify(phases.tail.byStatus)}`);
 
-  const result = { ...L.result(), at: new Date().toISOString(), outageSeconds: OUTAGE_S, phases, recovery };
+  const result = { ...L.result(), at: new Date().toISOString(), outageSeconds: OUTAGE_S, phases, recovery, redisWindowCounts };
   if (OUT) {
     mkdirSync(path.join(OUT, 'out'), { recursive: true });
     const f = path.join(OUT, 'out', `dependency-loss-${result.at.replace(/[:.]/g, '-')}.json`);

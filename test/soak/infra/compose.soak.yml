@@ -17,7 +17,7 @@ services:
       POSTGRES_PASSWORD: amqur_test_pw
       POSTGRES_DB: amqur_test
     ports:
-      - "127.0.0.1:57432:5432"
+      - "127.0.0.1:${SOAK_PG_PORT:-57432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U amqur_test -d amqur_test"]
       interval: 3s
@@ -28,7 +28,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "127.0.0.1:57379:6379"
+      - "127.0.0.1:${SOAK_REDIS_PORT:-57379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 3s
@@ -42,7 +42,7 @@ services:
       - ./test-infra/mocks:/app:ro
     command: ["node", "mock-crm.mjs"]
     ports:
-      - "127.0.0.1:19081:8081"
+      - "127.0.0.1:${SOAK_CRM_PORT:-19081}:8081"
     environment:
       PORT: "8081"
       FAIL_MODE: "none"
@@ -53,8 +53,8 @@ services:
       - ./test-infra/mocks:/app:ro
     command: ["node", "mock-smtp.mjs"]
     ports:
-      - "127.0.0.1:12025:1025"
-      - "127.0.0.1:19085:8085"
+      - "127.0.0.1:${SOAK_SMTP_PORT:-12025}:1025"
+      - "127.0.0.1:${SOAK_SMTP_HTTP_PORT:-19085}:8085"
     environment:
       SMTP_PORT: "1025"
       HTTP_PORT: "8085"

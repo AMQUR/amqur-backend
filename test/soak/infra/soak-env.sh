@@ -18,7 +18,14 @@ export SOAK_SMTP_API="http://127.0.0.1:${SOAK_SMTP_HTTP_PORT}"
 # SOAK_NODE_ENV=test lifts the per-minute rate limits (load phases); development keeps them.
 export NODE_ENV="${SOAK_NODE_ENV:-test}"
 export PORT="${PORT:-$SOAK_API_PORT}"
-export DATABASE_URL="postgresql://amqur_test:amqur_test_pw@127.0.0.1:${SOAK_PG_PORT}/amqur_test?schema=public"
+SOAK_DB_NAME="${SOAK_DB_NAME:-amqur_test}"
+case "$SOAK_DB_NAME" in
+  amqur_test) ;;
+  amqur_soak_*) [[ "$SOAK_DB_NAME" =~ ^amqur_soak_[a-z0-9_]+$ ]] || exit 1 ;;
+  *) echo 'soak-env: use amqur_test or a dedicated amqur_soak_* database' >&2; exit 1 ;;
+esac
+export SOAK_DB_NAME
+export DATABASE_URL="postgresql://amqur_test:amqur_test_pw@127.0.0.1:${SOAK_PG_PORT}/${SOAK_DB_NAME}?schema=public"
 export REDIS_URL="redis://127.0.0.1:${SOAK_REDIS_PORT}"
 export JWT_SECRET='test-jwt-secret-at-least-32-characters-long!!'
 export JWT_EXPIRES_IN=15m JWT_REFRESH_EXPIRES_IN=7d WIDGET_TOKEN_EXPIRES_IN=4h

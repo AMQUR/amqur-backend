@@ -5,9 +5,9 @@
  *   SOAK_NODE_ENV=development SOAK_OUT=… bash test/soak/infra/start-api.sh 3215 api-rl
  *   SOAK_BASE_URL=http://127.0.0.1:3215 SOAK_OUT=… bash test/soak/infra/soak-env.sh node test/soak/rate-limit.mjs
  *
- * Limits under test (src/chat/chat.controller.ts, src/public/public.controller.ts, app.module.ts):
- * chat 40/min, widget-token 30/min, global default 120/min — per route and per tracker, where
- * the tracker is `${tenantSlug}:${ip}` only when the request body/query carries a tenant slug.
+ * See docs/operations/rate-limits.md in the backend. The globally registered auth bucket
+ * caps these routes at 20/min each, per verified tracker. Public token mints share one IP
+ * bucket across rooftops; authenticated chat uses the signed tenant and IP.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -39,7 +39,7 @@ async function main() {
   if (!L.check('R.service_up', first.status === 201, `first chat → ${first.status}`)) process.exit(2);
   const cid = first.data.conversationId;
 
-  // 1. Burst well past the 40/min chat limit.
+  // The global auth bucket caps each route at 20/min even with a higher default limit.
   const t0 = Date.now();
   const rs = await burst(150, 10, () => chat(A, { message: 'Show me trucks', language: 'en', conversationId: cid }));
   const seconds = Math.round((Date.now() - t0) / 100) / 10;
@@ -47,27 +47,28 @@ async function main() {
   const ok = rs.filter((r) => r.status === 201);
   const sample = limited[0];
   const leaks = limited.flatMap((r) => leakMarkers(r.text));
-  L.check('R.burst_is_limited_with_429', limited.length > 0 && ok.length + limited.length === rs.length && ok.length <= 40, `150 chat turns in ${seconds} s → ${JSON.stringify(tally(rs))} (limit 40/min; the first turn above counts too)`);
-  L.check('R.429_body_is_clean_json', limited.every((r) => r.body && r.body.success === false) && leaks.length === 0, `sample: ${sample ? sample.text.slice(0, 200) : 'n/a'}; bodies with internals: ${leaks.length}`);
-  L.check('R.429_has_retry_after', limited.every((r) => Number(r.headers?.['retry-after']) > 0), `Retry-After on the sample: ${sample?.headers?.['retry-after'] ?? 'missing'} s; 429 latency ${JSON.stringify(summarize(limited.map((r) => r.ms)))}`);
+  L.check('R.burst_is_limited_with_429', ok.length === 19 && limited.length === rs.length - ok.length, `150 chat turns in ${seconds} s → ${JSON.stringify(tally(rs))} (20/min effective, including the first turn)`);
+  L.check('R.429_body_is_clean_json', limited.length > 0 && limited.every((r) => r.body?.success === false) && leaks.length === 0, `sample: ${sample ? sample.text.slice(0, 200) : 'n/a'}; bodies with internals: ${leaks.length}`);
+  L.check('R.429_has_retry_after', limited.length > 0 && limited.every((r) => Number(r.headers?.['retry-after']) > 0), `standard Retry-After: ${sample?.headers?.['retry-after'] ?? 'missing'}; Retry-After-auth: ${sample?.headers?.['retry-after-auth'] ?? 'missing'}; 429 latency ${JSON.stringify(summarize(limited.map((r) => r.ms)))}`);
 
-  // 2. While limited: the stream route answers with a plain JSON 429 (no half-open stream).
-  const s = await chatStream(A, { message: 'Show me trucks', language: 'en', conversationId: cid });
-  L.check('R.stream_route_limited_as_json', s.status === 429 && s.body?.success === false && (s.events ?? []).length === 0, `POST /api/chat/stream → ${s.status}, content-type ${s.headers?.['content-type']}`);
+  const streams = await burst(22, 1, () => chatStream(A, { message: 'Show me trucks', language: 'en', conversationId: cid }));
+  const throttledStreams = streams.filter((r) => r.status === 429);
+  L.check('R.stream_route_limited_as_json', streams.filter((r) => r.status === 200 && r.data).length === 20 && throttledStreams.length === 2 && throttledStreams.every((r) => r.body?.success === false && (r.events ?? []).length === 0), `POST /api/chat/stream → ${JSON.stringify(tally(streams))}`);
 
   // 3. While limited: health stays reachable; another tenant from the same address.
   const h = await request('GET', `${BASE}/api/health`, { useAgent: false });
   L.check('R.health_reachable_while_limited', h.status === 200, `GET /api/health → ${h.status}`);
   const other = await burst(5, 1, () => chat(B, { message: 'Do you have any SUVs?', language: 'en' }));
   const otherTally = tally(other);
-  // Recorded, not asserted: chat requests carry no tenant slug, so the bucket is per client address.
-  console.log(`INFO  R.other_tenant_same_address  tenant ${B.slug} right after tenant ${A.slug}'s burst → ${JSON.stringify(otherTally)}`);
+  L.check('R.chat_bucket_is_tenant_scoped', other.every((r) => r.status === 201), `tenant ${B.slug} after ${A.slug}'s burst → ${JSON.stringify(otherTally)}`);
 
-  // 4. Widget-token limit (30/min per tenant + address).
-  const C = ROOFTOPS[2];
-  const tokens = await burst(45, 5, () => request('POST', `${BASE}/api/public/widget-token`, { headers: { origin: ORIGIN }, body: { tenantSlug: C.slug, locationSlug: C.location } }));
-  const tokOther = await request('POST', `${BASE}/api/public/widget-token`, { headers: { origin: ORIGIN }, body: { tenantSlug: ROOFTOPS[3].slug, locationSlug: 'main' } });
-  L.check('R.widget_token_limited_per_tenant', tokens.filter((r) => r.status === 429).length > 0 && tokens.filter((r) => r.status === 201).length <= 30 && tokOther.status === 201, `45 token requests for ${C.slug} → ${JSON.stringify(tally(tokens))}; another tenant's token right after → ${tokOther.status}`);
+  // The public widget-token bucket is shared by callers on the same IP, across rooftops.
+  const mint = (tenant) => request('POST', `${BASE}/api/public/widget-token`, { headers: { origin: ORIGIN }, body: { tenantSlug: tenant.slug, locationSlug: tenant.location } });
+  let tokenIndex = 0;
+  const rotation = ROOFTOPS.slice(0, -1);
+  const tokens = await burst(45, 5, () => mint(rotation[tokenIndex++ % rotation.length]));
+  const tokOther = await mint(ROOFTOPS.at(-1));
+  L.check('R.widget_token_limited_per_ip', tokens.filter((r) => r.status === 201).length === 18 && tokens.filter((r) => r.status === 429).length === 27 && tokOther.status === 429, `45 token requests rotating ${rotation.length} rooftops, after two initial mints → ${JSON.stringify(tally(tokens))}; previously unused rooftop → ${tokOther.status}`);
 
   // 5. Recovery: once the window has passed, the same client is served again.
   const retryAfter = Math.max(...limited.map((r) => Number(r.headers?.['retry-after']) || 0), 60);
@@ -77,7 +78,7 @@ async function main() {
   const afterOther = await chat(B, { message: 'Do you have any SUVs?', language: 'en' });
   L.check('R.recovers_after_window', after.every((r) => r.status === 201 && r.data?.conversationId === cid) && afterOther.status === 201, `10 turns after the window → ${JSON.stringify(tally(after))}, same conversation kept; other tenant → ${afterOther.status}; latency ${JSON.stringify(summarize(after.map((r) => r.ms)))}`);
 
-  const result = { ...L.result(), at: new Date().toISOString(), burst: { requests: rs.length, seconds, byStatus: tally(rs) }, otherTenantSameAddressDuringLimit: otherTally, sample429: sample ? { body: sample.text.slice(0, 300), retryAfter: sample.headers?.['retry-after'] } : null };
+  const result = { ...L.result(), at: new Date().toISOString(), burst: { requests: rs.length, seconds, byStatus: tally(rs) }, streams: tally(streams), widgetTokenBurst: tally(tokens), previouslyUnusedRooftopTokenStatus: tokOther.status, otherTenantSameAddressDuringLimit: otherTally, sample429: sample ? { body: sample.text.slice(0, 300), retryAfter: sample.headers?.['retry-after'] ?? null, retryAfterAuth: sample.headers?.['retry-after-auth'] ?? null } : null };
   if (OUT) {
     mkdirSync(path.join(OUT, 'out'), { recursive: true });
     const f = path.join(OUT, 'out', `rate-limit-${result.at.replace(/[:.]/g, '-')}.json`);

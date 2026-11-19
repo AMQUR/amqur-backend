@@ -21,6 +21,7 @@ const OUT = process.env.SOAK_OUT;
 const WAVES = Number(process.env.SOAK_ABORT_WAVES || 5);
 const STREAMS = Number(process.env.SOAK_ABORT_STREAMS || 2000);
 const CONCURRENCY = Number(process.env.SOAK_ABORT_CONCURRENCY || 100);
+const PERSIST_WAIT_MS = Number(process.env.SOAK_ABORT_PERSIST_WAIT_MS || 15_000);
 const pid = Number(process.env.SOAK_API_PID) || (OUT ? pidFromFile(process.env.SOAK_API_PIDFILE || path.join(OUT, 'api-a.pid')) : null);
 const inspector = process.env.SOAK_INSPECT_PORT ? new Inspector(Number(process.env.SOAK_INSPECT_PORT)) : null;
 const db = new Db();
@@ -33,8 +34,9 @@ async function measure(label) {
   const heapAfterGc = inspector ? await inspector.gc() : null;
   const live = inspector ? await inspector.liveObjects() : null;
   const rt = inspector ? await inspector.runtimeStats() : null;
-  const proc = await processStats(pid);
-  const m = { label, at: new Date().toISOString(), heapAfterGc, rssBytes: proc.rssBytes, fds: proc.fds, tcpFds: proc.tcpFds, live, activeResources: rt?.res ?? null };
+  const proc = await processStats(pid, { postgresPort: process.env.SOAK_PG_PORT || '57432' });
+  const nonPostgresFds = proc.fds == null || proc.postgresFds == null ? null : proc.fds - proc.postgresFds;
+  const m = { label, at: new Date().toISOString(), heapAfterGc, rssBytes: proc.rssBytes, fds: proc.fds, tcpFds: proc.tcpFds, postgresFds: proc.postgresFds, nonPostgresFds, live, activeResources: rt?.res ?? null };
   const mb = (x) => (x == null ? '—' : (x / 1048576).toFixed(1));
   console.log(`   ${label.padEnd(28)} heap(after GC) ${mb(heapAfterGc)} MB | rss ${mb(proc.rssBytes)} MB | fds ${proc.fds} (tcp ${proc.tcpFds}) | timers ${live?.timeouts ?? '—'} responses ${live?.serverResponses ?? '—'} requests ${live?.incomingMessages ?? '—'} sockets ${live?.sockets ?? '—'}`);
   return m;
@@ -57,7 +59,7 @@ async function wave(n) {
         const r = await chatStream(t, { message: MESSAGES[k % MESSAGES.length], language: MESSAGES[k % MESSAGES.length].startsWith('¿') ? 'es' : 'en' }, { abortAfter });
         if (mode === 'complete') bump(r.data ? 'completed_ok' : `completed_bad_${r.status}`);
         else bump(`aborted_${mode}${r.status && r.status !== 200 ? `_status_${r.status}` : ''}`);
-        if (mode === 'first-event' && abandoned.length < 40) {
+        if (mode === 'first-event' && r.aborted && r.status === 200 && abandoned.length < 40) {
           const id = r.events?.find((e) => e.type === 'turn.started')?.conversationId;
           if (id) abandoned.push({ slug: t.slug, id });
         }
@@ -66,6 +68,33 @@ async function wave(n) {
   );
   console.log(`   wave ${n}: ${JSON.stringify(counts)}`);
   return { counts, abandoned };
+}
+
+async function persistedReplies(samples) {
+  const row = await db.one(`
+    SELECT COUNT(*) FILTER (WHERE t.id IS NOT NULL)::int AS tenants,
+           COUNT(*) FILTER (WHERE c.id IS NOT NULL)::int AS conversations,
+           COUNT(*) FILTER (WHERE EXISTS (
+             SELECT 1 FROM "Message" m WHERE m."conversationId" = c.id AND m.role = 'ASSISTANT'
+           ))::int AS replies
+    FROM jsonb_to_recordset($1::jsonb) AS sample(slug text, id text)
+    LEFT JOIN "Tenant" t ON t.slug = sample.slug
+    LEFT JOIN "Conversation" c ON c."tenantId" = t.id AND c."externalKey" = sample.id`, JSON.stringify(samples));
+  return row;
+}
+
+async function pollReplies(samples) {
+  const deadline = Date.now() + PERSIST_WAIT_MS;
+  let snapshot;
+  let queryFailures = 0;
+  do {
+    const row = await persistedReplies(samples);
+    if (row) snapshot = row;
+    else queryFailures += 1;
+    if (snapshot?.replies === samples.length) break;
+    await sleep(250);
+  } while (Date.now() < deadline);
+  return { sampled: samples.length, ...snapshot, queryFailures };
 }
 
 async function main() {
@@ -94,14 +123,12 @@ async function main() {
   const health = await request('GET', `${BASE}/api/health`, { useAgent: false });
   L.check('S.health_ready_after_storm', health.status === 200, `GET /api/health → ${health.status}`);
 
-  // A turn whose client left must still have been completed and stored.
-  const tenantIds = Object.fromEntries(((await db.q(`SELECT id, slug FROM "Tenant"`)) ?? []).map((r) => [r.slug, r.id]));
-  let persisted = 0;
-  for (const a of abandoned) {
-    const r = await db.one(`SELECT COUNT(*) FILTER (WHERE m.role = 'ASSISTANT')::int AS n FROM "Conversation" c JOIN "Message" m ON m."conversationId" = c.id WHERE c."tenantId" = $1 AND c."externalKey" = $2`, tenantIds[a.slug], a.id);
-    if ((r?.n ?? 0) >= 1) persisted += 1;
-  }
-  L.check('S.abandoned_turns_completed_server_side', abandoned.length > 0 && persisted === abandoned.length, `${persisted}/${abandoned.length} sampled streams aborted after turn.started have their assistant reply stored`);
+  const control = await chatStream(GROUP, { message: 'Do you have any SUVs?', language: 'en' });
+  const controlId = control.events?.find((event) => event.type === 'turn.started')?.conversationId;
+  const controlPersistence = control.data && controlId ? await pollReplies([{ slug: GROUP.slug, id: controlId }]) : null;
+  L.check('S.persistence_probe_control', controlPersistence?.replies === 1, `completed stream database control: ${JSON.stringify(controlPersistence)}`);
+  const persistence = await pollReplies(abandoned);
+  L.check('S.abandoned_turns_completed_server_side', controlPersistence?.replies === 1 && persistence.sampled > 0 && persistence.replies === persistence.sampled, `aborted after turn.started: ${JSON.stringify(persistence)}`);
 
   await sleep(5000);
   const settled = await measure('settled (+5 s)');
@@ -118,9 +145,9 @@ async function main() {
     L.check('S.no_leaked_timers', final.live.timeouts <= baseline.live.timeouts + 10, `live Timeout objects: baseline ${baseline.live.timeouts} → +5 s ${settled.live.timeouts} → +75 s ${final.live.timeouts} (a leaked heartbeat would leave one per abandoned stream: ${WAVES * STREAMS})`);
     L.check('S.no_leaked_responses_or_sockets', final.live.serverResponses <= baseline.live.serverResponses + 5 && final.live.sockets <= baseline.live.sockets + 10, `ServerResponse ${baseline.live.serverResponses} → ${final.live.serverResponses}, IncomingMessage ${baseline.live.incomingMessages} → ${final.live.incomingMessages}, Socket ${baseline.live.sockets} → ${final.live.sockets}`);
   } else L.check('S.inspector_available', false, 'no inspector connection — heap/timer/socket checks were NOT run');
-  L.check('S.fds_return_to_baseline', final.fds !== null && final.fds <= baseline.fds + 5, `open descriptors: baseline ${baseline.fds} → peak ${Math.max(...series.map((s) => s.fds ?? 0))} → final ${final.fds}`);
+  L.check('S.non_postgres_fds_return_to_baseline', baseline.nonPostgresFds !== null && final.nonPostgresFds !== null && final.nonPostgresFds <= baseline.nonPostgresFds + 5, `non-Postgres descriptors: baseline ${baseline.nonPostgresFds} → final ${final.nonPostgresFds}; Postgres pool: ${baseline.postgresFds} → ${final.postgresFds}; total peak ${Math.max(...series.map((sample) => sample.fds ?? 0))}`);
 
-  const result = { ...L.result(), at: new Date().toISOString(), waves, streams: WAVES * STREAMS, stormSeconds, series };
+  const result = { ...L.result(), at: new Date().toISOString(), waves, streams: WAVES * STREAMS, stormSeconds, controlPersistence, persistence, series };
   if (OUT) {
     mkdirSync(path.join(OUT, 'out'), { recursive: true });
     const f = path.join(OUT, 'out', `sse-abort-${result.at.replace(/[:.]/g, '-')}.json`);

@@ -5,8 +5,8 @@
  *
  *   SOAK_OUT=… bash test/soak/infra/soak-env.sh node test/soak/concurrency.mjs
  *
- * Env: SOAK_RACE_N (30 shoppers per slot race) · SOAK_BASE_URL_B (a second API process: adds a
- * cross-process slot race) · SOAK_ISOLATION_N (300 parallel conversations).
+ * Env: SOAK_RACE_N (30 shoppers per slot race) · SOAK_BASE_URL_B (required second API process
+ * sharing Postgres and Redis) · SOAK_ISOLATION_N (300 parallel conversations).
  *
  *  C1  N shoppers race for the SAME sandbox slot      → exactly one CONFIRMED receipt
  *  C2  the same lead form submitted concurrently/again → one lead, one consent set, one delivery
@@ -20,7 +20,12 @@ import { Db, smtp } from './lib/probe.mjs';
 
 assertLoopback();
 const BASE_B = process.env.SOAK_BASE_URL_B?.replace(/\/$/, '');
-if (BASE_B) assertLoopback(BASE_B);
+if (!BASE_B || new URL(BASE_B).port === new URL(BASE).port) {
+  throw new Error('SOAK_BASE_URL_B must point to a second API process on a different port');
+}
+assertLoopback(BASE_B);
+const TURN_BASES = [BASE, BASE_B];
+const turnOptions = (index) => ({ base: TURN_BASES[index % TURN_BASES.length] });
 const RACE_N = Number(process.env.SOAK_RACE_N || 30);
 const ISOLATION_N = Number(process.env.SOAK_ISOLATION_N || 300);
 const db = new Db();
@@ -77,15 +82,16 @@ async function slotRace(id, t, { bases, slotIndex }) {
   const told = results.filter((r) => r.data && card(r.data, 'appointment')?.outcome !== 'confirmed' && NOT_BOOKED.test(r.data.reply || ''));
   const other = results.length - confirmed.length - told.length;
   await sleep(500);
-  const receipts = await db.one(
-    `SELECT COUNT(*) FILTER (WHERE status = 'CONFIRMED')::int AS confirmed, COUNT(*) FILTER (WHERE status = 'UNAVAILABLE')::int AS unavailable, COUNT(*)::int AS total
+  const [receipts] = await db.prisma.$queryRaw`
+    SELECT COUNT(*) FILTER (WHERE r.status = 'CONFIRMED')::int AS confirmed,
+           COUNT(*) FILTER (WHERE r.status = 'UNAVAILABLE')::int AS unavailable,
+           array_agg(r."providerRef") FILTER (WHERE r.status = 'CONFIRMED') AS confirmed_refs
        FROM "AppointmentProviderReceipt" r JOIN "Appointment" a ON a.id = r."appointmentId"
-      WHERE r."tenantId" = $1 AND (r."confirmedStart" = $2::timestamptz OR a."scheduledAt" = $2::timestamptz)`,
-    tid, start,
-  );
+      WHERE r."tenantId" = ${tid} AND a."tenantId" = ${tid}
+        AND (r."confirmedStart" = ${start}::timestamptz OR a."scheduledAt" = ${start}::timestamptz)`;
   const appts = await db.one(`SELECT COUNT(*) FILTER (WHERE status = 'CONFIRMED')::int AS confirmed, COUNT(*)::int AS total FROM "Appointment" WHERE "tenantId" = $1 AND "scheduledAt" = $2::timestamptz`, tid, start);
   const detail = { tenant: t.slug, slot: start, shoppers: RACE_N, processes: bases.length, api: { confirmed: confirmed.length, toldNothingBooked: told.length, other, status5xx: results.filter(is5xx).length }, db: { confirmedReceipts: receipts?.confirmed, unavailableReceipts: receipts?.unavailable, confirmedAppointments: appts?.confirmed, appointmentRowsAtSlot: appts?.total } };
-  L.check(`${id}.exactly_one_confirmed_receipt`, receipts?.confirmed === 1 && appts?.confirmed === 1, detail);
+  L.check(`${id}.exactly_one_confirmed_receipt`, receipts?.confirmed === 1 && appts?.confirmed === 1 && confirmed.length === 1 && receipts.confirmed_refs?.[0] === card(confirmed[0].data, 'appointment')?.providerRef, detail);
   L.check(`${id}.one_winner_told_confirmed`, confirmed.length === 1 && confirmed.every((r) => card(r.data, 'appointment').verified === true && /^SBX-/.test(card(r.data, 'appointment').providerRef || '')), `${confirmed.length} confirmed card(s)`);
   L.check(`${id}.losers_told_nothing_booked`, told.length === RACE_N - 1 && other === 0, `${told.length} told "nothing was booked", ${other} other${other ? `: "${(results.find((r) => !confirmed.includes(r) && !told.includes(r))?.data?.reply ?? results.find((r) => !r.data)?.text ?? '').slice(0, 160)}"` : ''}`);
   L.check(`${id}.no_5xx`, results.every((r) => !is5xx(r)), `${results.filter(is5xx).length} 5xx/transport failures`);
@@ -106,13 +112,13 @@ async function leadFormIdempotency() {
   await Promise.all(
     convs.filter((c) => c.form).map(async (c) => {
       const body = { action: 'lead_capture', conversationId: c.conversationId, language: c.lang, lead: leadPayload(c.form.id, c.who) };
-      const burst = await Promise.all(Array.from({ length: K }, () => chat(t, body)));
+      const burst = await Promise.all(Array.from({ length: K }, (_, index) => chat(t, body, turnOptions(index))));
       const retries = [];
-      for (let i = 0; i < 3; i += 1) retries.push(await chat(t, body));
+      for (let i = 0; i < 3; i += 1) retries.push(await chat(t, body, turnOptions(i + 1)));
       all.push(...burst, ...retries);
     }),
   );
-  L.check('C2.no_5xx', all.every((r) => !is5xx(r)), `${all.length} submissions (${M} forms × ${K} concurrent + 3 retries), ${all.filter(is5xx).length} 5xx, statuses ${JSON.stringify(all.reduce((o, r) => ((o[r.status] = (o[r.status] || 0) + 1), o), {}))}`);
+  L.check('C2.all_submissions_ok', all.length === M * (K + 3) && all.every((r) => r.status === 201), `${all.length} submissions (${M} forms × ${K} concurrent + 3 retries), statuses ${JSON.stringify(all.reduce((o, r) => ((o[r.status] = (o[r.status] || 0) + 1), o), {}))}`);
 
   // Deliveries are sent by the outbox tick (every 10 s); wait for them to settle.
   let rows = [];
@@ -136,13 +142,13 @@ async function leadFormIdempotency() {
   );
   L.check('C2.one_lead_per_form', rows.length === M && rows.every((r) => r.leads === 1), `${rows.length}/${M} shoppers have a lead; leads per shopper: ${JSON.stringify(rows.map((r) => r.leads))}`);
   L.check('C2.one_consent_set_per_form', rows.every((r) => r.consents === 2 && r.consent_channels === 2) && orphanConsents?.n === M * 2, `consent rows per shopper ${JSON.stringify(rows.map((r) => r.consents))} (expected 2 = EMAIL + CALL); ${orphanConsents?.n} rows across the ${M} conversations (expected ${M * 2})`);
-  L.check('C2.one_delivery_row_per_lead', rows.every((r) => r.deliveries === 1), `delivery rows per lead ${JSON.stringify(rows.map((r) => r.deliveries))}`);
+  L.check('C2.one_delivery_row_per_lead', rows.length === M && rows.every((r) => r.deliveries === 1), `delivery rows per lead ${JSON.stringify(rows.map((r) => r.deliveries))}`);
   const mail = await smtp.byDelivery();
   const perDelivery = rows.map((r) => {
     const [id, status] = String(r.delivery_states || ':').split(':');
     return { id, status, accepted: mail.get(id)?.length ?? 0 };
   });
-  L.check('C2.one_accepted_send_per_delivery', perDelivery.every((d) => d.status === 'ACCEPTED' && d.accepted === 1), `status/accepted-at-mock per delivery: ${JSON.stringify(perDelivery.map((d) => `${d.status}/${d.accepted}`))}`);
+  L.check('C2.one_accepted_send_per_delivery', perDelivery.length === M && perDelivery.every((d) => d.status === 'ACCEPTED' && d.accepted === 1), `status/accepted-at-mock per delivery: ${JSON.stringify(perDelivery.map((d) => `${d.status}/${d.accepted}`))}`);
 }
 
 async function identicalTurns() {
@@ -153,8 +159,8 @@ async function identicalTurns() {
   if (L.check('C3a.prepared', !p.error, p.error ?? 'picker ready')) {
     const slot = p.picker.slots.find((s) => s.start === commonStart([p.picker], -3));
     const body = { action: 'appointment_select', conversationId: p.conversationId, appointment: { pickerId: p.picker.id, slotId: slot.id } };
-    const burst = await Promise.all(Array.from({ length: 8 }, () => chat(t, body)));
-    const replay = await chat(t, body);
+    const burst = await Promise.all(Array.from({ length: 8 }, (_, index) => chat(t, body, turnOptions(index))));
+    const replay = await chat(t, body, turnOptions(1));
     const all = [...burst, replay];
     const refs = new Set(all.map((r) => card(r.data, 'appointment')?.providerRef).filter(Boolean));
     const conv = await db.one(`SELECT id FROM "Conversation" WHERE "tenantId" = $1 AND "externalKey" = $2`, tid, p.conversationId);
@@ -166,12 +172,12 @@ async function identicalTurns() {
     );
     const confirmedCards = all.filter((r) => card(r.data, 'appointment')?.outcome === 'confirmed').length;
     L.check('C3a.same_selection_books_once', a?.confirmed === 1 && a?.receipts === 1 && refs.size === 1, { slot: slot.start, requests: all.length, confirmedCards, distinctProviderRefs: refs.size, db: a, status5xx: all.filter(is5xx).length, statuses: all.map((r) => r.status).join(',') });
-    L.check('C3a.no_5xx', all.every((r) => !is5xx(r)), `${all.filter(is5xx).length} 5xx; non-confirmed replies: ${JSON.stringify([...new Set(all.filter((r) => card(r.data, 'appointment')?.outcome !== 'confirmed').map((r) => (r.data?.reply ?? r.text ?? '').slice(0, 90)))])}`);
+    L.check('C3a.all_selections_ok', all.every((r) => r.status === 201), `statuses ${all.map((r) => r.status).join(',')}`);
   }
   // (b) the same free-text turn, eight times at once, on one conversation.
   const first = await chat(t, { message: 'Hello', language: 'en' });
   const cid = first.data?.conversationId;
-  const burst = await Promise.all(Array.from({ length: 8 }, () => chat(t, { message: 'Do you have any SUVs?', language: 'en', conversationId: cid })));
+  const burst = await Promise.all(Array.from({ length: 8 }, (_, index) => chat(t, { message: 'Do you have any SUVs?', language: 'en', conversationId: cid }, turnOptions(index))));
   await sleep(300);
   const conv = await db.one(
     `SELECT COUNT(*)::int AS rows, MAX(c."stateVersion")::int AS state_version,
@@ -241,14 +247,14 @@ async function isolation() {
 }
 
 async function main() {
-  console.log(`concurrency checks → ${BASE}${BASE_B ? ` + ${BASE_B}` : ''} (deterministic engine, sandbox scheduler, synthetic shoppers)`);
+  console.log(`concurrency checks → ${TURN_BASES.join(' + ')} (deterministic engine, sandbox scheduler, synthetic shoppers)`);
   const races = [];
   races.push(await slotRace('C1', ROOFTOPS[0], { bases: [BASE], slotIndex: -1 }));
-  if (BASE_B) races.push(await slotRace('C1x', ROOFTOPS[4], { bases: [BASE, BASE_B], slotIndex: -2 }));
+  races.push(await slotRace('C1x', ROOFTOPS[4], { bases: TURN_BASES, slotIndex: -2 }));
   await leadFormIdempotency();
   await identicalTurns();
   await isolation();
-  const result = { ...L.result(), at: new Date().toISOString(), races };
+  const result = { ...L.result(), at: new Date().toISOString(), apiEndpoints: TURN_BASES, races };
   if (process.env.SOAK_OUT) {
     mkdirSync(path.join(process.env.SOAK_OUT, 'out'), { recursive: true });
     const f = path.join(process.env.SOAK_OUT, 'out', `concurrency-${result.at.replace(/[:.]/g, '-')}.json`);

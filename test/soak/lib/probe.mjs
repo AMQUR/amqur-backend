@@ -29,19 +29,24 @@ export async function pidAlive(pid) {
 }
 
 /** RSS (bytes), %CPU and open file descriptors of a process, from `ps` and `lsof`. */
-export async function processStats(pid) {
-  if (!pid) return { rssBytes: null, cpuPct: null, fds: null };
+export async function processStats(pid, { postgresPort } = {}) {
+  if (!pid) return { rssBytes: null, cpuPct: null, fds: null, postgresFds: null };
   const ps = await sh('ps', ['-o', 'rss=,%cpu=', '-p', String(pid)]);
   const [rssKb, cpu] = (ps ?? '').trim().split(/\s+/);
   // -a ANDs the selections; without -n/-P lsof resolves names and is slow.
   const lsof = await sh('lsof', ['-a', '-n', '-P', '-p', String(pid)], 15000);
   const lines = lsof ? lsof.trim().split('\n').slice(1) : null;
   const numeric = lines ? lines.filter((l) => /^\S+\s+\d+\s+\S+\s+\d+[a-zA-Z]*\s/.test(l)) : null;
+  const tcp = numeric?.filter((line) => /\sTCP\s/.test(line));
+  const postgresFds = postgresPort
+    ? tcp?.filter((line) => line.endsWith(`->127.0.0.1:${postgresPort} (ESTABLISHED)`)).length
+    : null;
   return {
     rssBytes: rssKb ? Number(rssKb) * 1024 : null,
     cpuPct: cpu ? Number(cpu) : null,
     fds: numeric ? numeric.length : null,
-    tcpFds: numeric ? numeric.filter((l) => /\sTCP\s/.test(l)).length : null,
+    tcpFds: tcp?.length ?? null,
+    postgresFds: postgresFds ?? null,
   };
 }
 

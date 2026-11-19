@@ -117,7 +117,7 @@ async function makeLeads(count, tag, { parallel = 8 } = {}) {
 const deliveries = (emails) =>
   db.q(
     `SELECT d.id, d.status::text AS status, d.attempts, d."lastErrorCode" AS err, d."sentAt", d."acceptedAt", d."updatedAt",
-            o.id AS outbox_id, o.status::text AS outbox_status, o.attempts AS outbox_attempts, o."claimedBy" AS claimed_by, o."lastError" AS outbox_error, o."leaseExpiresAt" AS lease
+            o.id AS outbox_id, o.status::text AS outbox_status, o.attempts AS outbox_attempts, o."claimedBy" AS claimed_by, o."lastError" AS outbox_error, o."leaseExpiresAt" AS lease, o."handlerStartedAt" AS handler_started_at
        FROM "LeadDelivery" d JOIN "Lead" l ON l.id = d."leadId" LEFT JOIN "OutboxEvent" o ON o.id = d."outboxEventId"
       WHERE l.email = ANY($1::text[]) ORDER BY d."createdAt"`,
     emails,
@@ -224,6 +224,7 @@ async function phaseSlowKill() {
   const withMail = await acceptedCounts(rows);
   noteDuplicates('slowkill', withMail);
   const recovered = withMail.filter((r) => victimRows.some((v) => v.id === r.id));
+  const expectedAttempts = new Map(victimRows.map((r) => [r.id, r.outbox_attempts + (r.handler_started_at ? 1 : 0)]));
   report.phases.slowkill = {
     leads: emails.length, victim, victimPid, killedAt: killedAt.toISOString(), eventsHeldByVictim: victimRows.length,
     stateAfterKill: tally(stuck, (r) => `${r.status}/${r.outbox_status}`),
@@ -233,7 +234,7 @@ async function phaseSlowKill() {
   L.check('F4.rows_stayed_claimed_until_lease_expiry', stuck.length > 0 && stuck.every((r) => r.outbox_status === 'PROCESSING'), `3 s after the kill: ${JSON.stringify(report.phases.slowkill.stateAfterKill)} (nothing else may take a live lease)`);
   L.check('F4.all_terminal_after_recovery', rows.length === emails.length && rows.every((r) => r.status === 'ACCEPTED'), report.phases.slowkill);
   L.check('F4.no_duplicate_accepted_send', withMail.every((r) => r.accepted === 1), `accepted sends per delivery ${JSON.stringify(tally(withMail, (r) => r.accepted))}`);
-  L.check('F4.abandoned_attempt_counted_on_reclaim', recovered.length > 0 && recovered.every((r) => r.outbox_attempts >= 1), `outbox attempts of the ${recovered.length} event(s) the killed process held: ${JSON.stringify(tally(recovered, (r) => r.outbox_attempts))} (the abandoned attempt is counted when the expired lease is reclaimed)`);
+  L.check('F4.abandoned_attempt_counted_on_reclaim', victimRows.some((r) => r.handler_started_at) && recovered.length === victimRows.length && recovered.every((r) => r.outbox_attempts === expectedAttempts.get(r.id)), `attempts after reclaim: ${JSON.stringify(tally(recovered, (r) => r.outbox_attempts))}; expected ${JSON.stringify(tally([...expectedAttempts.values()], (attempts) => attempts))} (only handlers that started consume an attempt)`);
   L.check('F4.recovery_time_matches_lease', report.phases.slowkill.secondsFromKillToAllTerminal >= OUTBOX_LEASE_S - 15 && report.phases.slowkill.secondsFromKillToAllTerminal <= OUTBOX_LEASE_S + 90, `${report.phases.slowkill.secondsFromKillToAllTerminal} s from SIGKILL to every delivery terminal (lease ${OUTBOX_LEASE_S} s + tick ≤ 10 s + retry backoff)`);
 }
 
