@@ -63,6 +63,16 @@ export class OutboxProcessorService {
       const rows = await this.outbox.claimPending(limit, workerId);
       this.metrics.increment('outbox.claimed', rows.length);
       for (const row of rows) {
+        // Rows are handled serially under the lease taken at claim time. By the time this row's
+        // turn comes the lease may have lapsed and another worker may own it: re-check on the DB
+        // clock (and renew for this row) before doing anything with the in-memory copy.
+        if (!(await this.outbox.beginHandling(row.id, workerId))) {
+          this.metrics.increment('outbox.lease_lost');
+          this.logger.warn(
+            `Outbox ${row.id} topic=${row.topic} no longer owned by this worker — skipped`,
+          );
+          continue;
+        }
         const handler = this.handlers.get(row.topic);
         // Only abandoned (lease-expired) attempts can bring a claimed row to the limit:
         // handled failures are dead-lettered in markFailed. Stop instead of crashing again.

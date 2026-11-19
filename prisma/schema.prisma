@@ -1040,6 +1040,8 @@ model OutboxEvent {
   claimedAt      DateTime?
   claimedBy      String?
   leaseExpiresAt DateTime?
+  /// Set when THIS claim's handler started (after an ownership re-check). NULL = claimed only.
+  handlerStartedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

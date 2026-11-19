@@ -83,8 +83,10 @@ export class OutboxService {
   /**
    * Atomically claim due events for THIS worker. Uses a single UPDATE … WHERE id IN
    * (SELECT … FOR UPDATE SKIP LOCKED) so concurrent workers can never claim the same row.
-   * Rows stuck in PROCESSING with an expired lease (crashed worker) are reclaimed, and the
-   * abandoned attempt is counted.
+   * Rows stuck in PROCESSING with an expired lease are reclaimed. The abandoned claim counts
+   * as an attempt ONLY if its handler had actually started (`handlerStartedAt`, set by
+   * beginHandling): a row that merely waited in a slow worker's batch until its lease lapsed
+   * was never attempted and is not charged.
    */
   async claimPending(
     limit = 50,
@@ -103,7 +105,8 @@ export class OutboxService {
              -- A row reclaimed after its lease expired was being handled by a worker that died
              -- or hung: that counts as an attempt. Without this, an event that crashes its
              -- worker every time is retried forever and never reaches the attempt limit.
-             "attempts" = o."attempts" + CASE WHEN o."status" = 'PROCESSING'::"OutboxStatus" THEN 1 ELSE 0 END,
+             "attempts" = o."attempts" + CASE WHEN o."status" = 'PROCESSING'::"OutboxStatus" AND o."handlerStartedAt" IS NOT NULL THEN 1 ELSE 0 END,
+             "handlerStartedAt" = NULL,
              "updatedAt" = NOW()
        WHERE o."id" IN (
          SELECT "id" FROM "OutboxEvent"
@@ -114,6 +117,33 @@ export class OutboxService {
           FOR UPDATE SKIP LOCKED
        )
       RETURNING o.*`;
+  }
+
+  /**
+   * Called immediately before a claimed row's handler runs. In ONE statement, on the DATABASE
+   * clock: confirms this worker still holds an unexpired lease, records that the handler
+   * started, and renews the lease for this row (rows are handled serially, so a row late in a
+   * batch gets a full lease from the moment its own handler starts).
+   *
+   * Returns false when the row is no longer this worker's (lease lapsed and/or another worker
+   * reclaimed it): the caller must skip it — its in-memory copy is stale.
+   */
+  async beginHandling(
+    id: string,
+    workerId = OUTBOX_WORKER_ID,
+    leaseMs = OUTBOX_LEASE_MS,
+  ): Promise<boolean> {
+    const leaseSeconds = leaseMs / 1000;
+    const count = await this.prisma.$executeRaw`
+      UPDATE "OutboxEvent"
+         SET "handlerStartedAt" = NOW(),
+             "leaseExpiresAt" = NOW() + make_interval(secs => ${leaseSeconds}::double precision),
+             "updatedAt" = NOW()
+       WHERE "id" = ${id}
+         AND "status" = 'PROCESSING'::"OutboxStatus"
+         AND "claimedBy" = ${workerId}
+         AND "leaseExpiresAt" > NOW()`;
+    return count === 1;
   }
 
   /** Only the lease holder may complete an event (guards against a slow worker after lease expiry). */
