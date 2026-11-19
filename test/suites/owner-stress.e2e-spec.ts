@@ -160,6 +160,26 @@ describe('owner stress — safety, pricing, trade, tools, verified answers', () 
     expect(rows[0].summary).toMatch(/Do not assign to reported staff/);
   });
 
+  it.each([
+    ['en', 'My brakes failed while I was driving'],
+    ['es', 'Se me fueron los frenos mientras manejaba'],
+  ])(
+    'a failed-brakes report (%s) gets safety guidance only — no parts request, no VIN ask',
+    async (_lang, text) => {
+      const s = await session();
+      const r = await s.say(text);
+      expect(r.reply).toMatch(/911/);
+      expect(r.reply).toMatch(/stop driving|deje de manejar/i);
+      // The same words read like a parts or service request; neither flow may start.
+      expect(r.reply).not.toMatch(
+        /parts request|solicitud de refacciones|\bVIN\b|17 caracteres|17-character/i,
+      );
+      expect(r.cards.map((c) => c.kind)).not.toContain('parts');
+      expect(r.cards.map((c) => c.kind)).not.toContain('appointment');
+      expect(r.reply).not.toMatch(/safe to keep driving|es seguro seguir/i);
+    },
+  );
+
   it('disambiguates an out-the-door figure and answers tax directly', async () => {
     const s = await session();
     await s.say('Jeep Compass');

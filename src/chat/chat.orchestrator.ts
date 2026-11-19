@@ -1007,6 +1007,20 @@ export class ChatOrchestrator {
     };
     const forced = input.action ? actionMap[input.action] : undefined;
     if (forced && !list.includes(forced)) list.unshift(forced);
+    // An urgent safety report is handled on its own. "My brakes failed" also reads like a parts
+    // or service request, but opening a parts inquiry and asking for a VIN in the same breath
+    // as "stop driving" is wrong: the customer needs help, not a form. Staff follow up.
+    if (list.includes('SAFETY_URGENT')) {
+      const deferred = new Set<TurnIntent>([
+        'PARTS_INQUIRY',
+        'SERVICE_APPOINTMENT',
+        'INVENTORY_SEARCH',
+        'PAYMENT_ESTIMATE',
+      ]);
+      const kept = list.filter((i) => !deferred.has(i));
+      list.length = 0;
+      list.push(...kept);
+    }
     // Department chips with no free text open a department-specific greeting.
     if (
       (input.action === 'service' ||
