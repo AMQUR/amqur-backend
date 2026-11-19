@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { ChatOrchestrator } from './chat.orchestrator';
-import type { PageContextDto } from './dto/chat.dto';
+import type { ChatStatusEvent } from './chat.orchestrator';
+import type {
+  AppointmentSelectionDto,
+  LeadSubmissionDto,
+  PageContextDto,
+} from './dto/chat.dto';
 
 @Injectable()
 export class ChatService {
@@ -12,6 +17,10 @@ export class ChatService {
     vin?: string;
     language?: string;
     pageContext?: PageContextDto;
+    lead?: LeadSubmissionDto;
+    appointment?: AppointmentSelectionDto;
+    /** Real engine progress, surfaced by the streaming endpoint only. */
+    onStatus?: (e: ChatStatusEvent) => void;
     tenantId: string;
     locationId?: string | null;
     userId: string;
@@ -23,6 +32,9 @@ export class ChatService {
       vin: input.vin,
       language: input.language,
       pageContext: input.pageContext,
+      lead: input.lead,
+      appointment: input.appointment,
+      onStatus: input.onStatus,
       tenantId: input.tenantId,
       locationId: input.locationId ?? null,
       userId: input.userId,

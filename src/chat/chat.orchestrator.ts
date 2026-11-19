@@ -108,6 +108,41 @@ import { incidentRank } from './safety/customer-incident';
 import { seedOf, socialLine, vary } from './dialogue/social';
 import { CampaignEngine } from '../messaging/campaign.engine';
 import { ConsentService } from '../messaging/consent.service';
+import { departmentFor } from '../appointments/appointment.service';
+import type { Appointment } from '@prisma/client';
+import { isoDate } from '../common/time/zoned-time';
+import type {
+  AppointmentPickerCard,
+  LeadFormCard,
+  LeadFormPurpose,
+  PickerAppointmentType,
+} from './sales-desk/sales-desk.types';
+import {
+  APPOINTMENT_SELECTED_MARKER,
+  buildLeadForm,
+  LEAD_SUBMITTED_MARKER,
+  leadFormChannels,
+  leadRefusalText,
+  LeadSubmissionInput,
+  validateLeadSubmission,
+} from './sales-desk/lead-form';
+import {
+  buildPicker,
+  departmentLabel,
+  rememberPicker,
+  requestOnlyDays,
+  resolveSelection,
+  selectionRefusalText,
+  usableProviderSlots,
+} from './sales-desk/appointment-picker';
+import {
+  priceIncludesDealerFees,
+  verifiedVdpUrl,
+} from './sales-desk/vehicle-enrichment';
+import type { ChatStreamStatusPhase } from './stream/chat-stream';
+
+/** Real engine progress (inventory read, scheduler call, model compose) for the stream. */
+export type ChatStatusEvent = { phase: ChatStreamStatusPhase; label?: string };
 
 export type ChatProvenance = {
   sources: string[];
@@ -144,7 +179,17 @@ export type ChatCard =
       time: string | null;
       label: string;
       verified: boolean;
+      /** Sales-desk fields (flag `salesDeskCards`); provider fields only with a receipt. */
+      providerRef?: string | null;
+      providerName?: string | null;
+      rooftopName?: string | null;
+      department?: string | null;
+      timezone?: string | null;
+      startsAt?: string | null;
+      sandbox?: boolean;
     }
+  | LeadFormCard
+  | AppointmentPickerCard
   | {
       kind: 'credit_application';
       label: string;
@@ -401,6 +446,19 @@ type Turn = {
   conversationExtra: { handoffState?: string; aiPaused?: boolean };
   /** One-line vehicle ack folded into the next service scheduling question. */
   serviceVehicleAck?: string;
+  // ── sales desk / stream (all optional; unset on a plain text turn) ──
+  onStatus?: (e: ChatStatusEvent) => void;
+  statusSent?: Set<string>;
+  salesDeskFlag?: Promise<boolean>;
+  rooftopInfo?: { name: string; timezone: string };
+  /** A provider slot picked from an appointment picker (booked through the adapter). */
+  slotBooking?: {
+    idempotencyKey: string;
+    startUtc: string;
+    providerSlotId?: string;
+  };
+  /** Why the scheduler/engine did not save the picked slot (set by the result narration). */
+  slotRejected?: string;
 };
 
 /** "red Wrangler" → "Wrangler rojo" for Spanish replies (plain colors only). */
@@ -558,13 +616,30 @@ export class ChatOrchestrator {
       utmCampaign?: string;
       referrerClass?: string;
     };
+    /** Structured lead-form submission (action lead_capture). */
+    lead?: LeadSubmissionInput;
+    /** Structured appointment-picker choice (action appointment_select). */
+    appointment?: {
+      pickerId: string;
+      slotId?: string;
+      requestedDate?: string;
+      requestedWindow?: string;
+    };
+    onStatus?: (e: ChatStatusEvent) => void;
   }): Promise<ChatResponse> {
     const started = Date.now();
     const tenantId = input.tenantId;
     const s = await this.store.load(tenantId, input.locationId, input.userId);
     const st = s.state;
-    const rawMessage = (input.message ?? '').trim();
-    const redacted = redactCreditSensitive(rawMessage);
+    // ── sales-desk hook 1/7: a structured submission is never treated (or stored) as text.
+    // The transcript gets a neutral marker; contact details never enter a message row.
+    const structured = input.lead
+      ? LEAD_SUBMITTED_MARKER
+      : input.appointment
+        ? APPOINTMENT_SELECTED_MARKER
+        : null;
+    const rawMessage = structured ? '' : (input.message ?? '').trim();
+    const redacted = structured ?? redactCreditSensitive(rawMessage);
 
     // Critical: the customer's message is persisted before any processing (redacted).
     await this.store.appendMessage(s, 'USER', redacted, {
@@ -719,6 +794,7 @@ export class ChatOrchestrator {
       capCache: new Map(),
       handled: new Set(),
       conversationExtra: {},
+      onStatus: input.onStatus,
     };
 
     // Language: explicit choice or confident detection; stays sticky once chosen.
@@ -749,6 +825,12 @@ export class ChatOrchestrator {
         forcedReply: chat.customerMessage ?? 'Chat is unavailable right now.',
         started,
       });
+    }
+
+    // ── sales-desk hook 2/7: structured card submissions (lead form / appointment picker).
+    if (input.lead || input.appointment) {
+      await this.handleStructuredSubmission(t, input);
+      return this.finish(t, { started });
     }
 
     if (u.entities.sensitive?.length) {
@@ -954,6 +1036,20 @@ export class ChatOrchestrator {
   }
 
   private async runIntent(t: Turn, intent: TurnIntent) {
+    // stream hook: a real "checking inventory" status when an inventory read is starting.
+    if (
+      intent === 'INVENTORY_SEARCH' ||
+      intent === 'FEATURE_FILTER' ||
+      intent === 'SELECT_VEHICLE' ||
+      intent === 'COMPARE' ||
+      intent === 'RESUME_VEHICLE'
+    )
+      this.emitStatus(
+        t,
+        'checking',
+        'Checking inventory',
+        'Revisando inventario',
+      );
     switch (intent) {
       case 'SAFETY_URGENT':
         return this.handleSafety(t);
@@ -3715,6 +3811,7 @@ export class ChatOrchestrator {
     rescheduled = false,
   ) {
     if (res.status === 'incomplete') return;
+    if (t.slotBooking && res.status === 'rejected') t.slotRejected = res.code;
     if (res.status === 'rejected') {
       const hours = await this.getHours(t);
       const demoPrefix = hours?.synthetic
@@ -3836,11 +3933,18 @@ export class ChatOrchestrator {
           : tr(t.lang, 'visit', 'visita');
     if (res.outcome === 'confirmed') {
       t.narration.push(
-        tr(
-          t.lang,
-          `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
-          `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
-        ),
+        // A sandbox confirmation is always labelled as a demo booking.
+        res.provider?.sandbox
+          ? tr(
+              t.lang,
+              `The sandbox scheduler confirmed a ${what} ${label}. This is a demo booking, not a real appointment.`,
+              `El sistema de citas de demostración confirmó su ${what} para el ${label}. Es una reserva de prueba, no una cita real.`,
+            )
+          : tr(
+              t.lang,
+              `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
+              `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
+            ),
       );
     } else if (res.outcome === 'pending') {
       t.narration.push(
@@ -3888,6 +3992,8 @@ export class ChatOrchestrator {
       time: a.requestedTime,
       label,
       verified: res.outcome === 'confirmed',
+      // sales-desk hook 5/7: rooftop/department/provider-receipt fields (flag-gated).
+      ...(await this.appointmentCardExtras(t, a, res)),
     });
     this.signal(
       t,
@@ -3998,6 +4104,7 @@ export class ChatOrchestrator {
     if (
       active &&
       t.u.entities.when &&
+      !t.slotBooking &&
       !hasIntent(t.u, 'APPOINTMENT_RESCHEDULE')
     ) {
       return this.handleReschedule(t);
@@ -4114,6 +4221,8 @@ export class ChatOrchestrator {
         return;
       }
     }
+    // ── sales-desk hook 3/7: a scheduler booking needs the customer's identity first.
+    if (await this.salesDeskNeedsContactFirst(t, type)) return;
     const when = t.u.entities.when;
     if (!when?.date) {
       st.draftAppointment = {
@@ -4215,6 +4324,17 @@ export class ChatOrchestrator {
           .join(' | ') || null,
       source: 'chat',
       now: referenceNow(),
+      // sales-desk hook 4/7: a picked provider slot is booked idempotently per
+      // (conversation, picker, slot) through the scheduling adapter.
+      ...(t.slotBooking
+        ? {
+            idempotencyKey: t.slotBooking.idempotencyKey,
+            providerSlot: {
+              startUtc: t.slotBooking.startUtc,
+              providerSlotId: t.slotBooking.providerSlotId,
+            },
+          }
+        : {}),
     });
     if (res.status === 'saved' && st.parts?.inquiryId && type === 'SERVICE') {
       await this.parts.linkInstallAppointment(
@@ -5511,6 +5631,8 @@ export class ChatOrchestrator {
         ),
       );
     }
+    // ── sales-desk hook 6/7: resume a booking that was waiting on contact details.
+    await this.resumeDraftAfterContact(t);
   }
 
   private async handleAffirm(t: Turn) {
@@ -6642,6 +6764,603 @@ export class ChatOrchestrator {
     this.ask(t, 'none', text, 9);
   }
 
+  // ───────────────────────────────────────── sales desk (structured cards)
+  //
+  // Everything below is gated on the `salesDeskCards` flag (default off) and is reached only
+  // from the seven marked hook points above. Pure logic lives in ./sales-desk/*.
+
+  private salesDeskOn(t: Turn): Promise<boolean> {
+    if (!t.salesDeskFlag)
+      t.salesDeskFlag = this.capabilities
+        .flags(t.tenantId, t.locationId)
+        .then((f) => f.salesDeskCards === true);
+    return t.salesDeskFlag;
+  }
+
+  private emitStatus(
+    t: Turn,
+    phase: ChatStreamStatusPhase,
+    en?: string,
+    es?: string,
+  ) {
+    if (!t.onStatus) return;
+    const label = en ? tr(t.lang, en, es ?? en) : undefined;
+    const key = `${phase}:${label ?? ''}`;
+    t.statusSent = t.statusSent ?? new Set();
+    if (t.statusSent.has(key)) return;
+    t.statusSent.add(key);
+    try {
+      t.onStatus({ phase, ...(label ? { label } : {}) });
+    } catch {
+      // a status listener must never break the turn
+    }
+  }
+
+  /** Display name and timezone of the rooftop this conversation is bound to (server-side). */
+  private async rooftop(t: Turn): Promise<{ name: string; timezone: string }> {
+    if (!t.rooftopInfo) {
+      const loc = t.locationId
+        ? await this.prisma.location.findFirst({
+            where: { id: t.locationId, tenantId: t.tenantId },
+            select: { name: true, timezone: true },
+          })
+        : null;
+      const tenant = loc
+        ? null
+        : await this.prisma.tenant.findUnique({
+            where: { id: t.tenantId },
+            select: { name: true },
+          });
+      t.rooftopInfo = {
+        name: loc?.name ?? tenant?.name ?? '',
+        timezone: loc?.timezone ?? 'America/Chicago',
+      };
+    }
+    return t.rooftopInfo;
+  }
+
+  private contactComplete(t: Turn): boolean {
+    const c = t.st.contact;
+    return !!(c.firstName && (c.phone || c.email));
+  }
+
+  private activeAppointmentOfType(t: Turn, type: string): boolean {
+    const a = t.st.appointment;
+    return (
+      !!a &&
+      ['REQUESTED', 'PENDING_CONFIRMATION', 'CONFIRMED'].includes(a.status) &&
+      a.type === type
+    );
+  }
+
+  private async handleStructuredSubmission(
+    t: Turn,
+    input: {
+      lead?: LeadSubmissionInput;
+      appointment?: {
+        pickerId: string;
+        slotId?: string;
+        requestedDate?: string;
+        requestedWindow?: string;
+      };
+    },
+  ) {
+    // Consent, contact storage and bookings keep their fixed wording (no model rewrite).
+    t.lockReply = true;
+    if (input.lead) await this.submitLead(t, input.lead);
+    else if (input.appointment)
+      await this.selectAppointment(t, input.appointment);
+    await this.syncTradeTarget(t);
+    await this.syncLead(t);
+  }
+
+  /**
+   * Lead-form submission. Validated server-side against the form this conversation was
+   * offered; on any failure NOTHING is stored and the form is offered again. On success the
+   * contact goes into the journey exactly like the conversational path (and through the same
+   * `handleContact` propagation and lead sync), and one append-only consent record is written
+   * per channel the customer actually ticked.
+   */
+  private async submitLead(t: Turn, lead: LeadSubmissionInput) {
+    const st = t.st;
+    const on =
+      (await this.salesDeskOn(t)) &&
+      (await this.cap(t, 'leadCapture')).allowed &&
+      !st.incident?.withholdContact;
+    const offered = on ? st.salesDesk?.leadForm : undefined;
+    if (offered?.submittedAt && offered.id === lead.formId) {
+      t.narration.push(
+        tr(
+          t.lang,
+          'I already have your details from that form — the team will use those.',
+          'Ya tengo sus datos de ese formulario — el equipo usará esos.',
+        ),
+      );
+      return;
+    }
+    const v = validateLeadSubmission(lead, offered, t.lang);
+    if (!v.ok) {
+      this.metrics.increment(`chat.lead_form.refused.${v.reason}`);
+      t.answers.push(leadRefusalText(v.reason, t.lang));
+      if (on && !this.contactComplete(t))
+        this.ask(
+          t,
+          st.contact.firstName ? 'contact_method' : 'contact_name',
+          tr(
+            t.lang,
+            'Could you check the form and send it again?',
+            '¿Puede revisar el formulario y enviarlo de nuevo?',
+          ),
+          1,
+          'contact',
+        );
+      return;
+    }
+    // Consent first (append-only), so contact is never held without its consent record.
+    for (const g of v.grants) {
+      await this.consent.record({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        leadId: st.leadId ?? null,
+        conversationExternalKey: t.s.externalKey,
+        channel: g.ledgerChannel,
+        endpoint: g.endpoint,
+        purpose: 'CONVERSATIONAL',
+        granted: true,
+        wording: g.wording,
+        wordingVersion: g.version,
+        source: 'WIDGET',
+        evidence: {
+          capturedVia: 'lead_form',
+          formId: offered!.id,
+          formPurpose: offered!.purpose,
+          formChannel: g.channel,
+          preferredChannel: lead.preferredChannel,
+          language: t.lang,
+        },
+      });
+    }
+    const c = v.contact;
+    // Same shape absorbEntities() produces for a typed "John Smith, 555…" turn.
+    t.u.entities.contact = {
+      firstName: c.firstName,
+      lastName: c.lastName,
+      ...(c.phone ? { phone: c.phone } : {}),
+      ...(c.email ? { email: c.email } : {}),
+    };
+    st.contact = {
+      ...st.contact,
+      ...t.u.entities.contact,
+      preferredContact: c.preferredContact,
+      ...(c.consentToText ? { consentToText: true } : {}),
+    };
+    this.signal(t, 'contact_name');
+    this.signal(t, 'contact_method');
+    if (c.consentToText) this.signal(t, 'text_consent');
+    offered!.submittedAt = referenceNow().toISOString();
+    this.metrics.increment('chat.lead_form.submitted');
+    void this.analytics.trackEvent(
+      t.tenantId,
+      t.locationId,
+      'lead_form_submitted',
+      {
+        purpose: offered!.purpose,
+        preferredChannel: lead.preferredChannel,
+        grantedChannels: v.grants.map((g) => g.channel),
+      },
+      t.s.externalKey,
+    );
+    await this.handleContact(t);
+  }
+
+  /**
+   * Appointment-picker choice. The picker/slot must be one this conversation was offered, for
+   * this rooftop, and still on offer. A day + window goes down the existing REQUEST path; a
+   * provider slot is booked through the scheduling adapter and is only ever reported as
+   * confirmed from the adapter's receipt.
+   */
+  private async selectAppointment(
+    t: Turn,
+    sel: {
+      pickerId: string;
+      slotId?: string;
+      requestedDate?: string;
+      requestedWindow?: string;
+    },
+  ) {
+    const st = t.st;
+    const on = await this.salesDeskOn(t);
+    const now = referenceNow();
+    const { timezone } = await this.rooftop(t);
+    const r = resolveSelection({
+      selection: sel,
+      state: on ? st.salesDesk : undefined,
+      locationId: t.locationId,
+      timezone,
+      now,
+    });
+    const reoffer = (type: PickerAppointmentType, en: string, es: string) => {
+      st.draftAppointment = { type, serviceNeed: st.service?.need };
+      this.ask(t, 'appointment_date', tr(t.lang, en, es), 1, 'date');
+    };
+    if (!r.ok) {
+      this.metrics.increment(`chat.appointment_picker.refused.${r.reason}`);
+      t.answers.push(selectionRefusalText(r.reason, t.lang));
+      if (on && r.type && r.reason !== 'wrong_location')
+        reoffer(
+          r.type,
+          'Which of these works for you?',
+          '¿Cuál de estas opciones le funciona?',
+        );
+      return;
+    }
+    const type = r.picker.type;
+    if (r.kind === 'request') {
+      // A repeated submit of the same choice is a no-op, not a reschedule to the same time.
+      const a = st.appointment;
+      if (
+        a &&
+        this.activeAppointmentOfType(t, a.type) &&
+        a.requestedDate === isoDate(r.date) &&
+        a.requestedTime === r.window
+      ) {
+        t.narration.push(
+          tr(
+            t.lang,
+            'That request is already in — the team will confirm the time with you.',
+            'Esa solicitud ya está registrada — el equipo le confirmará la hora.',
+          ),
+        );
+        return;
+      }
+      t.u.entities.when = {
+        date: r.date,
+        partOfDay: r.window,
+        phrase: `${isoDate(r.date)} ${r.window}`,
+        inferred: false,
+      };
+      return this.handleAppointment(t, type);
+    }
+    this.emitStatus(
+      t,
+      'checking',
+      'Checking with the scheduler',
+      'Consultando el sistema de citas',
+    );
+    t.u.entities.when = {
+      date: r.date,
+      time: r.time,
+      phrase: 'selected slot',
+      inferred: false,
+    };
+    t.slotBooking = {
+      idempotencyKey: `slot:${t.s.conversationId}:${r.picker.id}:${r.slot.id}`,
+      startUtc: r.slot.startUtc,
+      providerSlotId: r.slot.providerSlotId,
+    };
+    const mark = {
+      answers: t.answers.length,
+      narration: t.narration.length,
+      questions: t.questions.length,
+    };
+    await this.handleAppointment(t, type);
+    if (t.slotRejected) {
+      // The scheduler did not take it: say so plainly, book nothing, offer fresh times.
+      t.answers.length = mark.answers;
+      t.narration.length = mark.narration;
+      t.questions.length = mark.questions;
+      t.answers.push(
+        t.slotRejected === 'unavailable'
+          ? tr(
+              t.lang,
+              'That time was just taken, so nothing was booked.',
+              'Ese horario se acaba de ocupar, así que no se reservó nada.',
+            )
+          : tr(
+              t.lang,
+              'That time can’t be booked anymore, so nothing was booked.',
+              'Ese horario ya no se puede reservar, así que no se reservó nada.',
+            ),
+      );
+      reoffer(
+        type,
+        'Which other time works for you?',
+        '¿Qué otro horario le funciona?',
+      );
+    }
+  }
+
+  /**
+   * True (and the contact question is asked) when an authorised scheduler would offer real
+   * slots but we do not yet know who is booking. Without a scheduler the engine's own order
+   * stands: request first, contact afterwards.
+   */
+  private async salesDeskNeedsContactFirst(
+    t: Turn,
+    type: 'SALES' | 'TEST_DRIVE' | 'SERVICE',
+  ): Promise<boolean> {
+    const st = t.st;
+    if (
+      t.slotBooking ||
+      t.u.entities.when?.date ||
+      this.contactComplete(t) ||
+      st.incident?.withholdContact ||
+      this.activeAppointmentOfType(t, type)
+    )
+      return false;
+    if (!(await this.salesDeskOn(t))) return false;
+    if (!(await this.cap(t, 'leadCapture')).allowed) return false;
+    const offer = await this.appointments.offerableSlots({
+      tenantId: t.tenantId,
+      locationId: t.locationId,
+      type,
+      now: referenceNow(),
+    });
+    if (!offer?.slots.length) return false;
+    st.draftAppointment = {
+      type,
+      serviceNeed: st.service?.need,
+      when: t.u.entities.when,
+      resumeAfterContact: true,
+    };
+    this.serviceSchedulingAsk(
+      t,
+      st.contact.firstName ? 'contact_method' : 'contact_name',
+      st.contact.firstName
+        ? tr(
+            t.lang,
+            "What's the best number or email to confirm with you?",
+            '¿Cuál es el mejor número o correo para confirmarle?',
+          )
+        : tr(
+            t.lang,
+            'Happy to set that up. Who should the team ask for?',
+            'Con gusto. ¿A nombre de quién lo dejo?',
+          ),
+      2,
+      'contact',
+    );
+    return true;
+  }
+
+  private async resumeDraftAfterContact(t: Turn) {
+    const d = t.st.draftAppointment;
+    if (
+      !d?.resumeAfterContact ||
+      !this.contactComplete(t) ||
+      t.handled.has('DRAFT_RESUMED') ||
+      t.handled.has('SALES_APPOINTMENT') ||
+      t.handled.has('SERVICE_APPOINTMENT')
+    )
+      return;
+    if (d.type !== 'SALES' && d.type !== 'TEST_DRIVE' && d.type !== 'SERVICE')
+      return;
+    if (!(await this.salesDeskOn(t))) return;
+    t.handled.add('DRAFT_RESUMED');
+    await this.handleAppointment(t, d.type);
+  }
+
+  private async appointmentCardExtras(
+    t: Turn,
+    a: Appointment,
+    res: Extract<AppointmentRequestResult, { status: 'saved' }>,
+  ) {
+    // Provider fields come from the adapter receipt and only with a confirmation.
+    const p = res.outcome === 'confirmed' ? res.provider : undefined;
+    // A sandbox booking is labelled even when the structured cards are off.
+    if (!(await this.salesDeskOn(t)))
+      return p?.sandbox ? { sandbox: true } : {};
+    const r = await this.rooftop(t);
+    return {
+      rooftopName: r.name,
+      department: departmentLabel(
+        a.type === 'SERVICE'
+          ? 'service'
+          : a.type === 'PARTS'
+            ? 'parts'
+            : 'sales',
+        t.lang,
+      ),
+      timezone: a.timezone ?? r.timezone,
+      ...(p
+        ? {
+            providerRef: p.ref,
+            providerName: p.name,
+            startsAt: p.startsAt,
+            ...(p.sandbox ? { sandbox: true } : {}),
+          }
+        : {}),
+    };
+  }
+
+  private async attachSalesDeskCards(t: Turn, q: Question | undefined) {
+    if (!(await this.salesDeskOn(t))) return;
+    if (t.vehicles?.length) t.vehicles = await this.enrichVehicles(t);
+    if (!q) return;
+    if (q.key === 'contact_name' || q.key === 'contact_method')
+      await this.attachLeadForm(t);
+    else if (q.key === 'appointment_date' || q.key === 'appointment_time')
+      await this.attachPicker(t);
+  }
+
+  private async attachLeadForm(t: Turn) {
+    const st = t.st;
+    if (st.incident?.withholdContact || this.contactComplete(t)) return;
+    if (!(await this.cap(t, 'leadCapture')).allowed) return;
+    // TEXT is offered only when SMS is really enabled for this tenant/location.
+    const channels = leadFormChannels((await this.cap(t, 'sms')).allowed);
+    const apptType = st.appointment?.type ?? st.draftAppointment?.type;
+    const purpose: LeadFormPurpose =
+      apptType === 'TEST_DRIVE'
+        ? 'test_drive'
+        : apptType === 'SERVICE'
+          ? 'service'
+          : apptType
+            ? 'sales'
+            : st.parts?.inquiryId
+              ? 'parts'
+              : st.handoff?.escalationId
+                ? 'callback'
+                : 'sales';
+    const prev = st.salesDesk?.leadForm;
+    const { card, offered } = buildLeadForm({
+      purpose,
+      rooftopName: (await this.rooftop(t)).name,
+      vehicleLabel:
+        purpose === 'sales' || purpose === 'test_drive'
+          ? (st.selectedLabel ?? null)
+          : null,
+      vin:
+        purpose === 'sales' || purpose === 'test_drive'
+          ? (st.selectedVin ?? null)
+          : null,
+      channels,
+      lang: t.lang,
+      now: referenceNow(),
+      // A form still waiting for an answer keeps its id, so the one on screen stays valid.
+      reuse:
+        prev &&
+        !prev.submittedAt &&
+        prev.purpose === purpose &&
+        prev.channels.join() === channels.join()
+          ? prev
+          : undefined,
+    });
+    st.salesDesk = { ...st.salesDesk, leadForm: offered };
+    t.cards.push(card);
+  }
+
+  private async attachPicker(t: Turn) {
+    const st = t.st;
+    if (!(await this.cap(t, 'appointments')).allowed) return;
+    const active = st.appointment
+      ? this.activeAppointmentOfType(t, st.appointment.type)
+      : false;
+    const raw =
+      st.draftAppointment?.type ?? (active ? st.appointment!.type : null);
+    if (raw !== 'SALES' && raw !== 'TEST_DRIVE' && raw !== 'SERVICE') return;
+    const type: PickerAppointmentType = raw;
+    if (type === 'SERVICE' && !(await this.cap(t, 'service')).allowed) return;
+    const now = referenceNow();
+    const rooftop = await this.rooftop(t);
+    const hours = await this.getHours(t);
+    const department = departmentFor(type);
+    const startFrom = st.draftAppointment?.when?.date ?? null;
+    const days = requestOnlyDays({
+      now,
+      timezone: rooftop.timezone,
+      hours,
+      department,
+      startFrom,
+    });
+    // Real slots only from an authorised scheduler, only for a known customer, and never
+    // while an existing request of this type is being moved (that stays a request).
+    let provider: Parameters<typeof buildPicker>[0]['provider'];
+    if (!this.activeAppointmentOfType(t, type) && this.contactComplete(t)) {
+      const offer = await this.appointments.offerableSlots({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        type,
+        now,
+      });
+      if (offer) {
+        let slots = usableProviderSlots({
+          slots: offer.slots,
+          now,
+          timezone: rooftop.timezone,
+          hours,
+          department,
+          max: 48,
+        });
+        if (startFrom) {
+          const sameDay = slots.filter(
+            (s) =>
+              s.startUtc &&
+              this.localIso(s.startUtc, rooftop.timezone) ===
+                isoDate(startFrom),
+          );
+          if (sameDay.length) slots = sameDay;
+        }
+        slots = slots.slice(0, 12);
+        if (slots.length)
+          provider = {
+            connectionId: offer.connectionId,
+            provider: offer.provider,
+            sandbox: offer.sandbox,
+            slots,
+          };
+      }
+    }
+    if (!provider && !days.length) return;
+    const { card, offered } = buildPicker({
+      type,
+      lang: t.lang,
+      rooftopName: rooftop.name,
+      timezone: rooftop.timezone,
+      locationId: t.locationId,
+      vehicleLabel: st.selectedLabel ?? null,
+      vin: st.selectedVin ?? null,
+      serviceNeed: st.service?.need ?? null,
+      now,
+      days,
+      provider,
+    });
+    st.salesDesk = rememberPicker(st.salesDesk, offered);
+    t.cards.push(card);
+  }
+
+  private localIso(utc: string, timeZone: string): string {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(utc));
+  }
+
+  /** Additive vehicle fields: owning rooftop, verified listing URL, fee inclusion. */
+  private async enrichVehicles(t: Turn): Promise<InventoryVehicle[]> {
+    const list = t.vehicles ?? [];
+    const locationIds = [
+      ...new Set(list.map((v) => v.locationId).filter((x): x is string => !!x)),
+    ];
+    const locations = locationIds.length
+      ? await this.prisma.location.findMany({
+          where: { tenantId: t.tenantId, id: { in: locationIds } },
+          select: { id: true, name: true, publicConfig: true },
+        })
+      : [];
+    const rows = await this.prisma.vehicle.findMany({
+      where: { tenantId: t.tenantId, vin: { in: list.map((v) => v.vin) } },
+      select: { vin: true, rawSource: true },
+    });
+    const policy = await this.getPolicy(t).catch(() => null);
+    const byId = new Map(locations.map((l) => [l.id, l]));
+    const raw = new Map(rows.map((r) => [r.vin, r.rawSource]));
+    return list.map((v) => {
+      const loc = v.locationId ? byId.get(v.locationId) : undefined;
+      const site =
+        loc?.publicConfig && typeof loc.publicConfig === 'object'
+          ? (loc.publicConfig as Record<string, unknown>).websiteUrl
+          : null;
+      return {
+        ...v,
+        vdpUrl: v.simulated
+          ? null
+          : verifiedVdpUrl(
+              raw.get(v.vin),
+              typeof site === 'string' ? site : null,
+            ),
+        rooftopName: loc?.name ?? null,
+        // The pricing policy is the conversation rooftop's; it says nothing about others.
+        priceIncludesDealerFees:
+          v.locationId && v.locationId === t.locationId
+            ? priceIncludesDealerFees(policy)
+            : null,
+      };
+    });
+  }
+
   // ───────────────────────────────────────── lead sync
 
   /** Point the trade at the vehicle being bought, never at the trade itself. */
@@ -7161,6 +7880,7 @@ export class ChatOrchestrator {
           st.department ? deptMap[st.department] : PlaybookDepartment.GENERAL,
         )
         .catch(() => null);
+      this.emitStatus(t, 'composing');
       const res = await this.composer.compose({
         message: t.message,
         transcript,
@@ -7260,6 +7980,10 @@ export class ChatOrchestrator {
       }
     }
     st.turnCount += 1;
+
+    // ── sales-desk hook 7/7: structured cards for the question being asked, and the
+    // additive vehicle fields. A no-op (byte-identical response) when the flag is off.
+    if (!opts.forcedReply) await this.attachSalesDeskCards(t, q);
 
     // Mid-turn ownership: if staff claimed the thread while we were composing, do not send AI.
     const owned = await this.prisma.conversation

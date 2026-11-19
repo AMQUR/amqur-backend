@@ -131,6 +131,8 @@ export type JourneyState = {
     note?: string;
     /** Date/time pieces already given ("Friday", then "morning") — merged across turns. */
     when?: import('../../common/time/date-phrase').ResolvedWhen;
+    /** Set when the booking paused to collect contact first (scheduler slots need it). */
+    resumeAfterContact?: boolean;
   };
   service?: {
     need?: string;
@@ -207,6 +209,8 @@ export type JourneyState = {
     landingVin?: string;
   };
   timeline?: string;
+  /** Structured cards offered to this conversation (flag `salesDeskCards`). */
+  salesDesk?: import('../sales-desk/sales-desk.types').SalesDeskState;
 };
 
 export function emptyJourney(): JourneyState {
