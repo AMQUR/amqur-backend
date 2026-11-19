@@ -20,6 +20,9 @@ import { IntegrationsModule } from '../integrations/integrations.module';
 import { ConversationIdService } from './conversation-id.service';
 import { PlaybookService } from './playbooks/playbook.service';
 import { PlaybooksController } from './playbooks/playbooks.controller';
+import { GroupRoutingService } from '../group-routing/group-routing.service';
+import { GroupMembershipService } from '../group-routing/group-membership.service';
+import { GroupInventoryService } from '../group-routing/group-inventory.service';
 
 @Module({
   imports: [
@@ -45,6 +48,9 @@ import { PlaybooksController } from './playbooks/playbooks.controller';
     VinDecoderService,
     ConversationIdService,
     PlaybookService,
+    GroupMembershipService,
+    GroupInventoryService,
+    GroupRoutingService,
   ],
   exports: [
     ChatOrchestrator,

@@ -160,6 +160,15 @@ export class ChatDto {
   @Length(11, 17)
   vin?: string;
 
+  /**
+   * Opaque rooftop reference from a group-site vehicle card, echoed back with its VIN. Only
+   * its shape is checked here; it is verified server-side and ignored outside a group site.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  rooftopRef?: string;
+
   @IsOptional()
   @IsIn(['en', 'es'])
   language?: string;

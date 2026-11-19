@@ -3,6 +3,10 @@ import { Prisma, Vehicle } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { InventoryVehicle } from '../types/vehicle.types';
 import { FEATURE_SYNONYMS } from '../understanding/turn-understanding';
+import {
+  groupScopeFor,
+  groupVehicleScope,
+} from '../../group-routing/group-read-scope';
 
 export type InventoryCriteria = {
   tenantId: string;
@@ -59,14 +63,35 @@ export class InventoryEngine {
       : {};
   }
 
+  /**
+   * Which tenant's vehicles a customer-facing read covers: always exactly `tenantId` — except
+   * inside a group-site conversation's read scope, where a read for the GROUP SITE tenant
+   * covers the group's listed rooftops (each with its own location filter) instead. The
+   * widening itself lives in group-routing/group-read-scope.ts; this is its only caller, and
+   * staff browse never uses it.
+   */
+  private static ownerScope(tenantId: string): Prisma.VehicleWhereInput {
+    const group = groupScopeFor(tenantId);
+    if (!group) return { tenantId };
+    group.outcome.reads += 1;
+    return groupVehicleScope(group.searchable);
+  }
+
+  /** True when this read is a group-site read (the member clause carries the locations). */
+  private static groupRead(tenantId: string): boolean {
+    return !!groupScopeFor(tenantId);
+  }
+
   /** What kind of inventory backs this rooftop — drives honest "no match" wording. */
   async sourceKind(
     tenantId: string,
     locationId: string | null | undefined,
   ): Promise<'synthetic' | 'live' | 'mixed' | 'empty'> {
     const where: Prisma.VehicleWhereInput = {
-      tenantId,
-      ...(locationId ? { OR: [{ locationId }, { locationId: null }] } : {}),
+      ...(locationId && !InventoryEngine.groupRead(tenantId)
+        ? { OR: [{ locationId }, { locationId: null }] }
+        : {}),
+      ...InventoryEngine.ownerScope(tenantId),
       ...InventoryEngine.liveOnly(),
     };
     const [synthetic, total] = await Promise.all([
@@ -122,7 +147,7 @@ export class InventoryEngine {
 
   async searchVehicles(c: InventoryCriteria) {
     const AND: Prisma.VehicleWhereInput[] = [
-      { tenantId: c.tenantId },
+      InventoryEngine.ownerScope(c.tenantId),
       InventoryEngine.liveOnly(),
       {
         status: {
@@ -133,7 +158,10 @@ export class InventoryEngine {
         },
       },
     ];
-    if (c.locationIds?.length) AND.push({ locationId: { in: c.locationIds } });
+    if (InventoryEngine.groupRead(c.tenantId)) {
+      // group-site read: each rooftop's own locations are already in the member clause
+    } else if (c.locationIds?.length)
+      AND.push({ locationId: { in: c.locationIds } });
     else if (c.locationId)
       AND.push({ OR: [{ locationId: c.locationId }, { locationId: null }] });
     if (c.make) AND.push({ make: { equals: c.make, mode: 'insensitive' } });
@@ -230,7 +258,7 @@ export class InventoryEngine {
   async getVehiclesByVin(tenantId: string, vins: string[]) {
     const rows = await this.prisma.vehicle.findMany({
       where: {
-        tenantId,
+        ...InventoryEngine.ownerScope(tenantId),
         vin: { in: vins.map((v) => v.toUpperCase()) },
         ...InventoryEngine.liveOnly(),
       },
@@ -245,7 +273,7 @@ export class InventoryEngine {
   async getVehicleByVin(tenantId: string, vin: string) {
     const row = await this.prisma.vehicle.findFirst({
       where: {
-        tenantId,
+        ...InventoryEngine.ownerScope(tenantId),
         vin: vin.toUpperCase(),
         ...InventoryEngine.liveOnly(),
       },
@@ -256,7 +284,7 @@ export class InventoryEngine {
   async getVehicleByStock(tenantId: string, stock: string) {
     const row = await this.prisma.vehicle.findFirst({
       where: {
-        tenantId,
+        ...InventoryEngine.ownerScope(tenantId),
         stock: { equals: stock, mode: 'insensitive' },
         ...InventoryEngine.liveOnly(),
       },

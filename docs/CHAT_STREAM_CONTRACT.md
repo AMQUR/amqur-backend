@@ -181,3 +181,53 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
 - The lead-form consent wording is new (derived from the existing `sms-continuation-v1`
   wording). It has not had legal/owner sign-off; keep `salesDeskCards` off on real rooftops
   until it has.
+
+## 6. Group-site rooftop routing (flags `groupSiteShopping` + `groupInventoryListed`, default off)
+
+Code: `src/group-routing/`. A visitor on a dealer group's own site may shop across the group's
+rooftops; every vehicle, lead, consent record, appointment and delivery still belongs to
+exactly one rooftop — the one that holds the vehicle.
+
+**When it applies (all must hold, resolved from the database for the authenticated tenant):**
+`DealerGroup.groupSiteTenantId` designates the conversation's tenant; that tenant is linked to
+the same group; `groupSiteShopping` is on for it; a rooftop is searched only if it is in the
+same group, has `groupInventoryListed` on and passes its own `inventory` capability check.
+Otherwise `ChatService` passes the turn straight to the engine (unchanged behaviour).
+`crossStoreInventory` stays reserved and forced off.
+
+**Two conversations.** The *group conversation* (group tenant) only searches and chats; its
+capability gate refuses anything that would create a record. Anything about a chosen vehicle or
+store runs in a *rooftop conversation* in the owning rooftop's own tenant with the unmodified
+engine, so the lead, consent, appointment, provider receipt and ADF delivery are created and
+routed by that tenant. The only link is the rooftop conversation's key, `grp1.<keyed hash of
+group tenant, group conversation id, rooftop tenant>` — recomputed server-side each turn,
+stored nowhere in the group tenant, and not a valid widget conversation id. The group
+conversation's state holds the bound rooftop and the last listed VINs; never contact details
+or the id of a rooftop lead, appointment or delivery.
+
+**Contract additions (group site only):**
+
+- `Vehicle.rooftopName` is always set: public name plus side where two stores could be
+  confused — `Jeep of Chicago (North Side)` / `(Lado Norte)`.
+- `Vehicle.rooftopRef`: opaque `rr1.<expiry>.<hash>` bound to this conversation and group,
+  valid about 24 h. The widget may echo it as `rooftopRef` with `vin`. Optional; when sent it
+  must verify and match the rooftop holding the VIN, otherwise the turn is refused and nothing
+  is created. On any other tenant the field is ignored.
+- When a named make/model is in stock at more than one searchable rooftop and the customer
+  has not chosen, the reply asks once (`quickReplies`: `North Side`, `South Side`, `Either` /
+  `Lado Norte`, `Lado Sur`, `Cualquiera`) and returns no vehicles. The choice is remembered
+  and can be changed ("south instead", "both stores").
+- With no rooftop known, a request that needs one (person, service, parts, trade, finance,
+  hours, contact details) is answered with "which store?" and the store list as
+  `quickReplies`. Contact details typed at that point are not stored. If the group tenant has
+  `groupHandoffQueue` on, a handoff with no store goes to the group tenant's own queue instead.
+- Moving to a vehicle at another rooftop never carries contact details or consent: the second
+  rooftop offers its own lead form, and the reply says so once.
+
+**Records at the rooftop.** A sales lead created this way has `source = group_site`
+(service/parts keep `widget_service` / `widget_parts`, which lead delivery uses to pick the
+department); appointments get `provenance.origin = group_site`; each created lead, consent
+record and appointment writes an `AuditLog` row (`group_site.*`, ids only) in the rooftop's
+tenant.
+
+Seed for local/demo/test: `npm run seed:group-rooftops` (five synthetic rooftops + group site).

@@ -15,6 +15,11 @@ import {
   understandTurn,
 } from './understanding/turn-understanding';
 import { InventoryEngine, vehicleHasFeature } from './engines/inventory.engine';
+import {
+  groupConversationCapability,
+  groupSearchGate,
+} from '../group-routing/group-read-scope';
+import { leadSourceFor } from '../group-routing/group-origin';
 import type { InventoryVehicle } from './types/vehicle.types';
 import { PaymentService, PolicyEstimate } from '../payment/payment.service';
 import {
@@ -459,6 +464,10 @@ type Turn = {
   };
   /** Why the scheduler/engine did not save the picked slot (set by the result narration). */
   slotRejected?: string;
+  /** group-routing: the vehicle the group router resolved the customer's reference to. */
+  pinnedVin?: string;
+  /** group-routing: re-run the standing search after the customer chose a store. */
+  resumeSearch?: boolean;
 };
 
 /** "red Wrangler" → "Wrangler rojo" for Spanish replies (plain colors only). */
@@ -626,6 +635,9 @@ export class ChatOrchestrator {
       requestedWindow?: string;
     };
     onStatus?: (e: ChatStatusEvent) => void;
+    /** Set only by the group-site router (never from the request body). */
+    pinnedVin?: string;
+    resumeSearch?: boolean;
   }): Promise<ChatResponse> {
     const started = Date.now();
     const tenantId = input.tenantId;
@@ -795,6 +807,8 @@ export class ChatOrchestrator {
       handled: new Set(),
       conversationExtra: {},
       onStatus: input.onStatus,
+      pinnedVin: input.pinnedVin,
+      resumeSearch: input.resumeSearch,
     };
 
     // Language: explicit choice or confident detection; stays sticky once chosen.
@@ -987,6 +1001,9 @@ export class ChatOrchestrator {
   }
 
   private planIntents(t: Turn, input: { action?: string }): TurnIntent[] {
+    // ── group-routing hook 1/5: the customer just answered "which store?" — run the search
+    // they already asked for (their criteria are in state) instead of parsing the answer.
+    if (t.resumeSearch) return ['INVENTORY_SEARCH'];
     const list = t.u.intents
       .filter((i) => i.confidence >= 0.6)
       .map((i) => i.intent);
@@ -1157,7 +1174,12 @@ export class ChatOrchestrator {
   private cap(t: Turn, c: CapabilityName) {
     let p = t.capCache.get(c);
     if (!p) {
-      p = this.capabilities.check(t.tenantId, t.locationId, c);
+      // ── group-routing hook 2/5: the group site's own conversation only chats and searches.
+      // No-op (undefined) for every rooftop conversation.
+      const group = groupConversationCapability(t.tenantId, c);
+      p = group
+        ? Promise.resolve(group)
+        : this.capabilities.check(t.tenantId, t.locationId, c);
       t.capCache.set(c, p);
     }
     return p;
@@ -1326,6 +1348,12 @@ export class ChatOrchestrator {
     t: Turn,
   ): Promise<{ v?: InventoryVehicle; ambiguous?: InventoryVehicle[] }> {
     const e = t.u.entities;
+    // ── group-routing hook 3/5: the reference was already resolved on the group site's
+    // mixed-rooftop list ("the second one" there is not this rooftop's second one).
+    if (t.pinnedVin) {
+      const v = await this.inventory.getVehicleByVin(t.tenantId, t.pinnedVin);
+      return v ? { v } : {};
+    }
     if (e.vin) {
       const v = await this.inventory.getVehicleByVin(t.tenantId, e.vin);
       return v ? { v } : {};
@@ -2352,6 +2380,15 @@ export class ChatOrchestrator {
     if (await this.capBlocked(t, 'inventory')) return;
     this.mergeCriteria(t);
     const c = t.st.criteria;
+    // ── group-routing hook 4/5: on the group site, ask which store before a search that more
+    // than one rooftop can answer. Always null for a rooftop conversation.
+    const storeAsk = await groupSearchGate(t.tenantId, c);
+    if (storeAsk) {
+      t.answers.push(storeAsk.text);
+      t.quickReplies.push(...storeAsk.quickReplies);
+      t.lockReply = true;
+      return;
+    }
     t.toolCount += 1;
     this.signal(t, 'inventory_search');
     void this.analytics.trackEvent(
@@ -7448,12 +7485,15 @@ export class ChatOrchestrator {
       utmSource: st.attribution?.utmSource,
       utmMedium: st.attribution?.utmMedium,
       utmCampaign: st.attribution?.utmCampaign,
-      source:
+      // ── group-routing hook 5/5: a sales lead that came through the group site says so.
+      source: leadSourceFor(
+        st.groupOrigin,
         st.department === 'service'
           ? 'widget_service'
           : st.department === 'parts'
             ? 'widget_parts'
             : 'widget',
+      ),
       score: score.score,
       stage: score.stage,
       scoreReasons: score.reasons,

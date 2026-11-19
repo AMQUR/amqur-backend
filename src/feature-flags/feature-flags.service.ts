@@ -84,7 +84,7 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
    */
   sandboxScheduler: false,
   /**
-   * Group-site shopping across member rooftops (docs/GROUP_ROOFTOP_ROUTING.md). Has an effect
+   * Group-site shopping across member rooftops (docs/CHAT_STREAM_CONTRACT.md §6). Has an effect
    * ONLY on the tenant a DealerGroup designates as its group site (`groupSiteTenantId`); on
    * any other tenant it does nothing. Default off. `crossStoreInventory` stays reserved.
    */

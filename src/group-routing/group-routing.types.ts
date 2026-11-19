@@ -1,10 +1,11 @@
 /**
- * Group-site rooftop routing — shared types. See docs/GROUP_ROOFTOP_ROUTING.md.
+ * Group-site rooftop routing — shared types. See docs/CHAT_STREAM_CONTRACT.md §6.
  *
  * A visitor on a dealer group's own website may shop across the group's rooftops, but every
  * vehicle, lead, consent record, appointment and delivery belongs to exactly one rooftop.
  */
 export type RooftopSide = 'north' | 'south';
+export type Lang = 'en' | 'es';
 
 /** One rooftop that has opted in to appear on its group's site. Server-resolved only. */
 export type GroupMember = {
@@ -53,7 +54,10 @@ export type PendingGroupAsk =
   /** "North Side, South Side, or either?" before a search more than one rooftop can answer. */
   | { kind: 'search_store'; options: string[] }
   /** "Which store?" before anything that would create a record. */
-  | { kind: 'request_store'; replay?: { message: string; action?: string } }
+  | {
+      kind: 'request_store';
+      replay?: { message: string; action?: string; vin?: string };
+    }
   /** The customer asked for a vehicle at a store that does not hold it. */
   | { kind: 'owner_offer'; vin: string; tenantId: string }
   | { kind: 'which_vehicle' };
@@ -80,9 +84,9 @@ export type GroupRoutingState = {
   listSurface?: 'group' | 'owner';
   /** Who answered the previous turn. */
   lastSurface?: 'group' | 'owner';
+  /** Language of the last reply, carried between the group and rooftop conversations. */
+  lang?: Lang;
 };
 
 /** Marks a ROOFTOP conversation that was opened from the group site (server-written only). */
 export type GroupOrigin = { v: 1; groupSlug: string; groupName: string };
-
-export type Lang = 'en' | 'es';

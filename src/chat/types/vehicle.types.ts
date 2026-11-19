@@ -47,6 +47,11 @@ export type InventoryVehicle = {
   vdpUrl?: string | null;
   /** Display name of the rooftop (location) that holds the vehicle. */
   rooftopName?: string | null;
+  /**
+   * Group site only: opaque, conversation-bound reference to the rooftop that holds the
+   * vehicle, for the widget to echo back with it. Never a tenant or location id.
+   */
+  rooftopRef?: string;
   /** true/false only when the dealer-configured pricing policy states it; null = unknown. */
   priceIncludesDealerFees?: boolean | null;
 };

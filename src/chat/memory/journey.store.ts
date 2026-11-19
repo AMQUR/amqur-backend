@@ -211,6 +211,10 @@ export type JourneyState = {
   timeline?: string;
   /** Structured cards offered to this conversation (flag `salesDeskCards`). */
   salesDesk?: import('../sales-desk/sales-desk.types').SalesDeskState;
+  /** GROUP-SITE conversation only: store preference, bound rooftop, last listed vehicles. */
+  groupRouting?: import('../../group-routing/group-routing.types').GroupRoutingState;
+  /** ROOFTOP conversation opened from the group site (written by the server only). */
+  groupOrigin?: import('../../group-routing/group-routing.types').GroupOrigin;
 };
 
 export function emptyJourney(): JourneyState {

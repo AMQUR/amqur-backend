@@ -20,12 +20,14 @@ function list(items: string[], lang: Lang): string {
   return `${items.slice(0, -1).join(', ')} ${tr(lang, 'and', 'y')} ${last}`;
 }
 
-export function vehicleName(v: {
-  year?: number;
-  make?: string;
-  model?: string;
-  trim?: string;
-}): string {
+export type NamedVehicle = {
+  year?: number | null;
+  make?: string | null;
+  model?: string | null;
+  trim?: string | null;
+};
+
+export function vehicleName(v: NamedVehicle): string {
   return [v.year, v.make, v.model, v.trim].filter(Boolean).join(' ');
 }
 
@@ -169,7 +171,7 @@ export function switchNotice(
 
 /** "Book me at the South store for this North VIN" — truthful, nothing moved. */
 export function vehicleAtOtherStore(
-  v: { year?: number; make?: string; model?: string; trim?: string },
+  v: NamedVehicle,
   owner: GroupMember,
   asked: GroupMember,
   lang: Lang,

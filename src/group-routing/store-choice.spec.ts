@@ -1,5 +1,10 @@
 import { fixtureGrant } from './group-routing.fixtures';
-import { parseStoreChoice, preferenceFor, sideIn } from './store-choice';
+import {
+  parseStoreChoice,
+  preferenceFor,
+  sideIn,
+  storesMentioned,
+} from './store-choice';
 
 const members = fixtureGrant().members;
 const parse = (m: string, expectingStore = false) =>
@@ -113,5 +118,21 @@ describe('preferenceFor', () => {
   });
   it('an ambiguous choice sets no preference', () => {
     expect(preferenceFor(parse('the Jeep store')!, members, null)).toBeNull();
+  });
+});
+
+describe('storesMentioned', () => {
+  it('finds both stores in a cross-store request, EN and ES', () => {
+    expect(
+      storesMentioned(
+        'I saw it at the North store, book me at the South store',
+        members,
+      ).sort(),
+    ).toEqual(['t_north', 't_south']);
+    expect(storesMentioned('agéndeme en la sur', members)).toEqual(['t_south']);
+    expect(storesMentioned('book me at Dial Jeep', members)).toEqual([
+      't_south',
+    ]);
+    expect(storesMentioned('book a test drive', members)).toEqual([]);
   });
 });

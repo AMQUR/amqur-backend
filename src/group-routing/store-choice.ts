@@ -131,3 +131,24 @@ export function preferenceFor(
         : [choice.tenantId];
   return { exclude: pool.filter((id) => id !== choice.tenantId) };
 }
+
+/**
+ * Every rooftop a message points at by side, full name or alias — used to notice "book me at
+ * the South store for this North vehicle", where two stores are named in one breath.
+ */
+export function storesMentioned(
+  message: string,
+  members: readonly GroupMember[],
+): string[] {
+  const m = norm(message);
+  const north = / (north|northside|norte) /.test(m);
+  const south = / (south|southside|sur) /.test(m);
+  return members
+    .filter(
+      (mb) =>
+        (mb.side === 'north' && north) ||
+        (mb.side === 'south' && south) ||
+        [mb.name, ...mb.aliases].some((n) => m.includes(norm(n))),
+    )
+    .map((mb) => mb.tenantId);
+}

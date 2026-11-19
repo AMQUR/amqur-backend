@@ -117,17 +117,26 @@ export function decideRoute(input: {
   // Contact details are only ever handed to a rooftop — never stored against the group.
   if (input.carriesContact) return input.bound ? owner : { to: 'ask_store' };
 
-  const explicitSearch = any(SEARCH);
-  if (input.bound && input.ownerAwaitingAnswer && !explicitSearch) return owner;
-  if (explicitSearch) return { to: 'group' };
+  if (any(SEARCH)) return { to: 'group' };
 
   const groupList = input.listSurface === 'group' && input.hasShown;
   if (any(LIST_WORK))
     return groupList || !input.bound ? { to: 'group' } : owner;
 
-  if (groupList && input.reference === 'one')
+  // The customer is looking at the group list: "the first one" is a vehicle on it, even while
+  // a rooftop is waiting on an unrelated answer.
+  const lookingAtGroupList = groupList && input.lastSurface !== 'owner';
+  if (
+    groupList &&
+    input.reference === 'one' &&
+    (lookingAtGroupList || !input.ownerAwaitingAnswer)
+  )
     return { to: 'owner_of_reference' };
-  if (groupList && i.has('SELECT_VEHICLE')) {
+  if (
+    groupList &&
+    i.has('SELECT_VEHICLE') &&
+    !(input.bound && input.ownerAwaitingAnswer && !lookingAtGroupList)
+  ) {
     if (input.reference === 'ambiguous') return { to: 'ask_vehicle' };
     return input.bound ? owner : { to: 'ask_vehicle' };
   }
@@ -136,7 +145,10 @@ export function decideRoute(input: {
     // "yes" / "no" to something the group search just asked belongs to the group search.
     if (
       input.lastSurface === 'group' &&
-      input.intents.every((x) => SHORT_REPLY.has(x))
+      input.intents.every(
+        (x) =>
+          SHORT_REPLY.has(x) && (x !== 'UNKNOWN' || !input.ownerAwaitingAnswer),
+      )
     )
       return { to: 'group' };
     return owner;

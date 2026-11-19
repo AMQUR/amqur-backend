@@ -85,6 +85,7 @@ export class ChatController {
         pageContext: body.pageContext,
         lead: body.lead,
         appointment: body.appointment,
+        rooftopRef: body.rooftopRef,
         onStatus,
         tenantId: user.tenantId!,
         locationId: user.locationId,

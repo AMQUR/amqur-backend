@@ -21,7 +21,7 @@ model DealerGroup {
   /// The ONE tenant that is this group's own website ("group site"). Only a conversation in
   /// this tenant can ever shop across the group's rooftops, and only with the
   /// `groupSiteShopping` flag on it and `groupInventoryListed` on each rooftop. Null = no
-  /// group shopping at all. See docs/GROUP_ROOFTOP_ROUTING.md.
+  /// group shopping at all. See docs/CHAT_STREAM_CONTRACT.md §6.
   groupSiteTenantId String? @unique
   groupSiteTenant   Tenant? @relation("DealerGroupSite", fields: [groupSiteTenantId], references: [id], onDelete: SetNull)
 

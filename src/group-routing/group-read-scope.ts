@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import type { Prisma } from '@prisma/client';
 import type { GroupGrant, GroupMember, Lang } from './group-routing.types';
+import { needsStoreFirst } from './group-copy';
+import { GROUP_CONVERSATION_CAPABILITIES } from './route-decision';
 
 /**
  * THE cross-rooftop read path.
@@ -65,4 +67,41 @@ export function groupVehicleScope(
       OR: [{ locationId: { in: [...m.locationIds] } }, { locationId: null }],
     })),
   };
+}
+
+/**
+ * Capability gate for the group site's OWN conversation: it may chat, search and compare.
+ * Everything that would create a customer record (lead, appointment, handoff, finance,
+ * service, parts…) is refused here, whatever the group tenant's flags say — those are
+ * answered inside the owning rooftop's tenant. Returns undefined outside a group read scope
+ * (every rooftop conversation), so the normal capability check runs unchanged.
+ */
+export function groupConversationCapability(
+  tenantId: string,
+  capability: string,
+): { allowed: boolean; reason?: string; customerMessage?: string } | undefined {
+  const scope = groupScopeFor(tenantId);
+  if (!scope) return undefined;
+  // Each listed rooftop already passed its own inventory capability check.
+  if (capability === 'inventory') return { allowed: true };
+  if (GROUP_CONVERSATION_CAPABILITIES.has(capability)) return undefined;
+  if (
+    scope.grant.handoffQueue &&
+    (capability === 'handoff' || capability === 'leadCapture')
+  )
+    return undefined;
+  return {
+    allowed: false,
+    reason: 'group_site_needs_rooftop',
+    customerMessage: needsStoreFirst(scope.lang),
+  };
+}
+
+/** "Which store?" before a group search more than one rooftop can answer; null otherwise. */
+export async function groupSearchGate(
+  tenantId: string,
+  criteria: Record<string, unknown>,
+): Promise<{ text: string; quickReplies: string[] } | null> {
+  const scope = groupScopeFor(tenantId);
+  return scope?.beforeSearch ? scope.beforeSearch(criteria) : null;
 }

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ChatOrchestrator } from './chat.orchestrator';
+import { GroupRoutingService } from '../group-routing/group-routing.service';
 import type { ChatStatusEvent } from './chat.orchestrator';
 import type {
   AppointmentSelectionDto,
@@ -9,7 +10,10 @@ import type {
 
 @Injectable()
 export class ChatService {
-  constructor(private readonly orchestrator: ChatOrchestrator) {}
+  constructor(
+    private readonly orchestrator: ChatOrchestrator,
+    private readonly groupRouting: GroupRoutingService,
+  ) {}
 
   chat(input: {
     message: string;
@@ -21,24 +25,34 @@ export class ChatService {
     appointment?: AppointmentSelectionDto;
     /** Real engine progress, surfaced by the streaming endpoint only. */
     onStatus?: (e: ChatStatusEvent) => void;
+    /** Opaque rooftop reference echoed by a group-site widget; ignored everywhere else. */
+    rooftopRef?: string;
     tenantId: string;
     locationId?: string | null;
     userId: string;
     role: string;
   }) {
-    return this.orchestrator.handleMessage({
-      message: input.message,
-      action: input.action,
-      vin: input.vin,
-      language: input.language,
-      pageContext: input.pageContext,
-      lead: input.lead,
-      appointment: input.appointment,
-      onStatus: input.onStatus,
-      tenantId: input.tenantId,
-      locationId: input.locationId ?? null,
-      userId: input.userId,
-      role: input.role,
-    });
+    // Group-site rooftop routing: a pass-through for every tenant that is not a designated,
+    // enabled group site (docs/CHAT_STREAM_CONTRACT.md §6).
+    return this.groupRouting.handle(
+      { ...input, locationId: input.locationId ?? null },
+      (turn) =>
+        this.orchestrator.handleMessage({
+          message: turn.message,
+          action: turn.action,
+          vin: turn.vin,
+          language: turn.language,
+          pageContext: turn.pageContext as PageContextDto | undefined,
+          lead: turn.lead as LeadSubmissionDto | undefined,
+          appointment: turn.appointment as AppointmentSelectionDto | undefined,
+          onStatus: turn.onStatus as ((e: ChatStatusEvent) => void) | undefined,
+          tenantId: turn.tenantId,
+          locationId: turn.locationId ?? null,
+          userId: turn.userId,
+          role: turn.role,
+          pinnedVin: turn.pinnedVin,
+          resumeSearch: turn.resumeSearch,
+        }),
+    );
   }
 }

@@ -1,6 +1,6 @@
 /**
  * LOCAL / DEMO / TEST ONLY — five SYNTHETIC rooftop tenants plus the group-site tenant, for
- * trying group-site rooftop routing (docs/GROUP_ROOFTOP_ROUTING.md) and running the golden
+ * trying group-site rooftop routing (docs/CHAT_STREAM_CONTRACT.md §6) and running the golden
  * evaluation set with one tenant per rooftop slug.
  *
  *   set -a; . ./test-infra/.env.test; set +a        # or your own local DATABASE_URL
