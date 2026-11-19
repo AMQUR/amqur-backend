@@ -21,7 +21,10 @@ async function bootstrap() {
   // Behind Railway's edge proxy: without this, req.ip is the (varying)
   // edge hop, which breaks rate-limit buckets (every request looks like a
   // new client) and audit logging. First X-Forwarded-For hop = real client.
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  const express = app.getHttpAdapter().getInstance();
+  express.set('trust proxy', 1);
+  // Do not advertise the Node framework to clients.
+  express.disable('x-powered-by');
 
   app.setGlobalPrefix('api');
 
