@@ -1342,7 +1342,14 @@ export class LeadDeliveryService implements OnModuleInit {
   async assertAccepted(
     scope: { tenantId: string; locationId: string | null },
     id: string,
-    input: { note: string },
+    input: {
+      note: string;
+      evidenceKind:
+        | 'mailbox_message_id'
+        | 'smtp_relay_log'
+        | 'crm_ingest_receipt';
+      evidenceReference: string;
+    },
     userId: string,
   ) {
     const d = await this.owned(scope, id);
@@ -1356,6 +1363,26 @@ export class LeadDeliveryService implements OnModuleInit {
       throw new BadRequestException(
         'note must explain how acceptance was verified (min 8 chars)',
       );
+    const evidenceKind = input.evidenceKind;
+    const evidenceReference = input.evidenceReference?.trim() ?? '';
+    if (
+      evidenceKind !== 'mailbox_message_id' &&
+      evidenceKind !== 'smtp_relay_log' &&
+      evidenceKind !== 'crm_ingest_receipt'
+    )
+      throw new BadRequestException('unknown_evidence_kind');
+    if (
+      (evidenceKind === 'mailbox_message_id' ||
+        evidenceKind === 'smtp_relay_log') &&
+      evidenceReference !== messageId
+    )
+      throw new BadRequestException(
+        'evidenceReference must equal the durable Message-ID for mailbox/smtp evidence',
+      );
+    if (evidenceKind === 'crm_ingest_receipt' && evidenceReference.length < 8)
+      throw new BadRequestException(
+        'crm_ingest_receipt evidenceReference must be at least 8 characters',
+      );
     await this.prisma.$transaction(async (tx) => {
       const moved = await this.apply(
         tx,
@@ -1365,6 +1392,8 @@ export class LeadDeliveryService implements OnModuleInit {
           kind: 'operator_accept_assertion',
           actor: userId,
           providerMessageId: messageId,
+          evidenceKind,
+          evidenceReference,
           note: redactForLog(note).slice(0, 300),
         },
         {
@@ -1372,7 +1401,7 @@ export class LeadDeliveryService implements OnModuleInit {
           data: {
             providerName: d.providerName ?? 'operator-asserted',
             providerMessageId: messageId,
-            providerRawStatus: 'operator_asserted',
+            providerRawStatus: `operator_asserted:${evidenceKind}`,
             acceptedAt: new Date(),
             lastErrorCode: null,
             lastErrorAt: null,
@@ -1390,6 +1419,8 @@ export class LeadDeliveryService implements OnModuleInit {
           metadata: {
             fromStatus: d.status,
             providerMessageId: messageId,
+            evidenceKind,
+            evidenceReference: redactForLog(evidenceReference).slice(0, 128),
             note: redactForLog(note).slice(0, 300),
           },
         },

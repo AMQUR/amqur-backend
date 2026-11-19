@@ -56,12 +56,20 @@ export type DeliveryEvidence =
   /**
    * Staff assertion that a previously dispatched SMTP message was accepted by the relay
    * (e.g. verified in the dealership mailbox after a crash between SMTP 250 and the ACCEPTED
-   * write). Never implies CRM match. Requires the durable pre-declared Message-ID.
+   * write). Never implies CRM match. Requires the durable pre-declared Message-ID AND an
+   * external evidence reference that matches it (or another allowed receipt id).
    */
   | {
       kind: 'operator_accept_assertion';
       actor: string;
       providerMessageId: string;
+      /** How acceptance was observed outside AMQUR (mailbox / relay log / CRM ingest). */
+      evidenceKind:
+        | 'mailbox_message_id'
+        | 'smtp_relay_log'
+        | 'crm_ingest_receipt';
+      /** Must equal the durable Message-ID for mailbox/smtp kinds; opaque id for CRM ingest. */
+      evidenceReference: string;
       note?: string | null;
     }
   | { kind: 'operator_replay'; actor: string }
@@ -155,10 +163,25 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
     },
     {
       from: ['SENT'],
-      evidence: (e) =>
-        e.kind === 'operator_accept_assertion' &&
-        nonEmpty(e.actor) &&
-        nonEmpty(e.providerMessageId),
+      evidence: (e) => {
+        if (e.kind !== 'operator_accept_assertion') return false;
+        if (!nonEmpty(e.actor) || !nonEmpty(e.providerMessageId)) return false;
+        if (!nonEmpty(e.evidenceReference)) return false;
+        if (
+          e.evidenceKind !== 'mailbox_message_id' &&
+          e.evidenceKind !== 'smtp_relay_log' &&
+          e.evidenceKind !== 'crm_ingest_receipt'
+        )
+          return false;
+        // Mailbox / SMTP evidence must cite the same durable Message-ID we dispatched.
+        if (
+          e.evidenceKind === 'mailbox_message_id' ||
+          e.evidenceKind === 'smtp_relay_log'
+        )
+          return e.evidenceReference.trim() === e.providerMessageId.trim();
+        // CRM ingest receipt is an opaque external id (not inventable as "accepted").
+        return e.evidenceReference.trim().length >= 8;
+      },
     },
   ],
   DELIVERED: [

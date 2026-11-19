@@ -222,11 +222,42 @@ export function reconcileBody(result: 'CRM_PARSED' | 'CRM_MATCHED' | 'CRM_REJECT
   return { result, ...(ref ? { crmRecordRef: ref } : {}), ...(n ? { note: n } : {}) };
 }
 
-/** Body for assert-accepted. Note must explain how acceptance was verified (server min 8 chars). */
-export function assertAcceptedBody(note: string) {
-  const n = note.trim().slice(0, 300);
+export type AssertEvidenceKind =
+  | 'mailbox_message_id'
+  | 'smtp_relay_log'
+  | 'crm_ingest_receipt';
+
+/**
+ * Body for assert-accepted. Requires external evidence that cites the durable Message-ID
+ * (mailbox/smtp) or an opaque CRM ingest receipt — a free-text note alone is not enough.
+ */
+export function assertAcceptedBody(input: {
+  note: string;
+  evidenceKind: AssertEvidenceKind;
+  evidenceReference: string;
+  /** Durable Message-ID on the SENT row; required for mailbox/smtp kinds. */
+  durableMessageId?: string | null;
+}) {
+  const n = input.note.trim().slice(0, 300);
   if (n.length < 8) throw new Error('Explain how you verified acceptance (at least 8 characters).');
-  return { note: n };
+  const kind = input.evidenceKind;
+  if (
+    kind !== 'mailbox_message_id' &&
+    kind !== 'smtp_relay_log' &&
+    kind !== 'crm_ingest_receipt'
+  )
+    throw new Error('Choose how acceptance was verified.');
+  const ref = input.evidenceReference.trim().slice(0, 200);
+  if (!ref) throw new Error('Evidence reference is required.');
+  if (kind === 'mailbox_message_id' || kind === 'smtp_relay_log') {
+    const durable = (input.durableMessageId ?? '').trim();
+    if (!durable) throw new Error('This delivery has no durable Message-ID to match.');
+    if (ref !== durable)
+      throw new Error('Evidence reference must exactly match the durable Message-ID.');
+  } else if (ref.length < 8) {
+    throw new Error('CRM ingest receipt must be at least 8 characters.');
+  }
+  return { note: n, evidenceKind: kind, evidenceReference: ref };
 }
 
 export function routeReadiness(r: LeadDeliveryRoute): { label: string; tone: 'ok' | 'warn' | 'neutral' } {

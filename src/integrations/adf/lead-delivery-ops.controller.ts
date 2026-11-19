@@ -33,8 +33,18 @@ class ReconcileDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 
+const ASSERT_EVIDENCE_KINDS = [
+  'mailbox_message_id',
+  'smtp_relay_log',
+  'crm_ingest_receipt',
+] as const;
+
 class AssertAcceptedDto {
   @IsString() @MaxLength(300) note!: string;
+  @IsIn(ASSERT_EVIDENCE_KINDS)
+  evidenceKind!: (typeof ASSERT_EVIDENCE_KINDS)[number];
+  /** Durable Message-ID (mailbox/smtp) or opaque CRM ingest id. */
+  @IsString() @MaxLength(200) evidenceReference!: string;
 }
 
 const STAFF = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] as const;

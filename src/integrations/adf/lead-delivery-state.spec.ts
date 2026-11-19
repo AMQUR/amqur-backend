@@ -40,6 +40,8 @@ const E = {
     kind: 'operator_accept_assertion',
     actor: 'user-1',
     providerMessageId: '<lead-delivery.d1@amqur.example.invalid>',
+    evidenceKind: 'mailbox_message_id',
+    evidenceReference: '<lead-delivery.d1@amqur.example.invalid>',
     note: 'verified in mailbox',
   } as DeliveryEvidence,
   retryable: {
@@ -101,15 +103,31 @@ describe('lead delivery state machine', () => {
     );
   });
 
-  it('an operator may assert ACCEPTED from SENT with the durable Message-ID (no transport call)', () => {
+  it('an operator may assert ACCEPTED from SENT only with matching external evidence', () => {
     expect(go('SENT', 'ACCEPTED', E.operatorAccept)).toEqual(moved('ACCEPTED'));
     expect(
       go('SENT', 'ACCEPTED', {
         kind: 'operator_accept_assertion',
         actor: 'user-1',
         providerMessageId: '',
+        evidenceKind: 'mailbox_message_id',
+        evidenceReference: '<lead-delivery.d1@amqur.example.invalid>',
       }).ok,
     ).toBe(false);
+    // A free-text note alone is not evidence — Message-ID mismatch fails closed.
+    expect(
+      go('SENT', 'ACCEPTED', {
+        ...E.operatorAccept,
+        evidenceReference: '<other@amqur.example.invalid>',
+      }).ok,
+    ).toBe(false);
+    expect(
+      go('SENT', 'ACCEPTED', {
+        ...E.operatorAccept,
+        evidenceKind: 'crm_ingest_receipt',
+        evidenceReference: 'CRM-INGEST-99',
+      }),
+    ).toEqual(moved('ACCEPTED'));
     expect(go('QUEUED', 'ACCEPTED', E.operatorAccept).ok).toBe(false);
     // Operator assertion is not a CRM match.
     expect(go('SENT', 'CRM_MATCHED', E.operatorAccept).ok).toBe(false);

@@ -34,6 +34,10 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const [crmRef, setCrmRef] = useState<Record<string, string>>({});
   const [assertNote, setAssertNote] = useState<Record<string, string>>({});
+  const [assertKind, setAssertKind] = useState<
+    Record<string, 'mailbox_message_id' | 'smtp_relay_log' | 'crm_ingest_receipt'>
+  >({});
+  const [assertRef, setAssertRef] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -165,8 +169,36 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                   <div className="stack">
                     <p className="small">
                       Mail may already have been accepted (durable Message-ID on file). Asserting
-                      acceptance records that fact without sending again. It is not a CRM match.
+                      acceptance requires citing that Message-ID from an external mailbox or relay
+                      log — a note alone is not enough. It is not a CRM match.
                     </p>
+                    <p className="small muted">
+                      Durable Message-ID: <code>{r.providerMessageId}</code>
+                    </p>
+                    <label className="small">
+                      Evidence source
+                      <select
+                        value={assertKind[r.id] ?? 'mailbox_message_id'}
+                        onChange={(e) =>
+                          setAssertKind({
+                            ...assertKind,
+                            [r.id]: e.target.value as 'mailbox_message_id' | 'smtp_relay_log' | 'crm_ingest_receipt',
+                          })
+                        }
+                      >
+                        <option value="mailbox_message_id">Seen in mailbox (Message-ID)</option>
+                        <option value="smtp_relay_log">Seen in SMTP relay log (Message-ID)</option>
+                        <option value="crm_ingest_receipt">CRM ingest receipt id</option>
+                      </select>
+                    </label>
+                    <label className="small">
+                      Evidence reference (must match Message-ID unless CRM ingest)
+                      <input
+                        maxLength={200}
+                        value={assertRef[r.id] ?? r.providerMessageId ?? ''}
+                        onChange={(e) => setAssertRef({ ...assertRef, [r.id]: e.target.value })}
+                      />
+                    </label>
                     <label className="small">
                       How you verified acceptance
                       <input
@@ -184,7 +216,14 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                           () =>
                             api(`${DELIVERIES_BASE}/${r.id}/assert-accepted`, {
                               method: 'POST',
-                              body: JSON.stringify(assertAcceptedBody(assertNote[r.id] ?? '')),
+                              body: JSON.stringify(
+                                assertAcceptedBody({
+                                  note: assertNote[r.id] ?? '',
+                                  evidenceKind: assertKind[r.id] ?? 'mailbox_message_id',
+                                  evidenceReference: assertRef[r.id] ?? r.providerMessageId ?? '',
+                                  durableMessageId: r.providerMessageId,
+                                }),
+                              ),
                             }),
                           'Marked accepted (no resend)',
                         )
