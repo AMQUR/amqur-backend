@@ -104,9 +104,11 @@ describe('CapabilityService fail-closed gates', () => {
     expect(r.allowed).toBe(false);
   });
 
-  it('production never counts synthetic demo vehicles as inventory', async () => {
-    const prev = process.env.NODE_ENV;
+  it('production tier never counts synthetic demo vehicles as inventory', async () => {
+    const prevNode = process.env.NODE_ENV;
+    const prevTier = process.env.DEPLOYMENT_TIER;
     process.env.NODE_ENV = 'production';
+    process.env.DEPLOYMENT_TIER = 'production';
     try {
       flags.resolve.mockResolvedValue({ inventory: true });
       prisma.location.findFirst.mockResolvedValue({ inventoryFeedUrl: null });
@@ -118,7 +120,32 @@ describe('CapabilityService fail-closed gates', () => {
         where: expect.objectContaining({ NOT: { source: 'synthetic_demo' } }),
       });
     } finally {
-      process.env.NODE_ENV = prev;
+      process.env.NODE_ENV = prevNode;
+      if (prevTier === undefined) delete process.env.DEPLOYMENT_TIER;
+      else process.env.DEPLOYMENT_TIER = prevTier;
+    }
+  });
+
+  it('hosted staging tier may count synthetic demo vehicles for readiness', async () => {
+    const prevNode = process.env.NODE_ENV;
+    const prevTier = process.env.DEPLOYMENT_TIER;
+    process.env.NODE_ENV = 'production';
+    process.env.DEPLOYMENT_TIER = 'staging';
+    try {
+      flags.resolve.mockResolvedValue({ inventory: true });
+      prisma.location.findFirst.mockResolvedValue({ inventoryFeedUrl: null });
+      prisma.vehicle.count.mockResolvedValue(2);
+      const r = await svc.check('t1', 'l1', 'inventory');
+      expect(r.allowed).toBe(true);
+      expect(prisma.vehicle.count).toHaveBeenCalledWith({
+        where: expect.not.objectContaining({
+          NOT: { source: 'synthetic_demo' },
+        }),
+      });
+    } finally {
+      process.env.NODE_ENV = prevNode;
+      if (prevTier === undefined) delete process.env.DEPLOYMENT_TIER;
+      else process.env.DEPLOYMENT_TIER = prevTier;
     }
   });
 

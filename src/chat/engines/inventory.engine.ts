@@ -7,6 +7,7 @@ import {
   groupScopeFor,
   groupVehicleScope,
 } from '../../group-routing/group-read-scope';
+import { isProductionTier } from '../../config/deployment-tier';
 
 export type InventoryCriteria = {
   tenantId: string;
@@ -53,14 +54,13 @@ export class InventoryEngine {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Synthetic demo vehicles (source=synthetic_demo) exist only in disposable local/demo
-   * databases. In production they are invisible to every customer-facing read, so a fixture
-   * can never be presented as dealership inventory.
+   * Synthetic demo vehicles (source=synthetic_demo) exist for local/demo and isolated
+   * staging (DEPLOYMENT_TIER=staging). On the production deployment tier they are invisible
+   * to every customer-facing read, so a fixture can never be presented as dealership stock.
+   * Do not use NODE_ENV alone — hosted staging also runs NODE_ENV=production.
    */
   static liveOnly(): Prisma.VehicleWhereInput {
-    return process.env.NODE_ENV === 'production'
-      ? { NOT: { source: SYNTHETIC_SOURCE } }
-      : {};
+    return isProductionTier() ? { NOT: { source: SYNTHETIC_SOURCE } } : {};
   }
 
   /**

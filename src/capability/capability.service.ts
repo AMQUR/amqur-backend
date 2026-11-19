@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
+import { isProductionTier } from '../config/deployment-tier';
 
 export type CapabilityName =
   | 'chat'
@@ -199,15 +200,18 @@ export class CapabilityService {
         })
       : null;
 
+    // Synthetic fixtures never make the *production* deployment tier "ready".
+    // Hosted staging (NODE_ENV=production + DEPLOYMENT_TIER=staging) may use them.
+    const hideSynthetic = isProductionTier()
+      ? { NOT: { source: 'synthetic_demo' as const } }
+      : {};
+
     const vehicleCount = await this.prisma.vehicle.count({
       where: {
         tenantId,
         ...(locationId ? { locationId } : {}),
         status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
-        // Synthetic demo fixtures never make production inventory "ready".
-        ...(process.env.NODE_ENV === 'production'
-          ? { NOT: { source: 'synthetic_demo' } }
-          : {}),
+        ...hideSynthetic,
       },
     });
 
@@ -218,9 +222,7 @@ export class CapabilityService {
           ...(locationId ? { locationId } : {}),
           status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
           freshnessState: { in: ['FRESH', 'DEGRADED'] },
-          ...(process.env.NODE_ENV === 'production'
-            ? { NOT: { source: 'synthetic_demo' } }
-            : {}),
+          ...hideSynthetic,
         },
       });
       if (fresh > 0) return { ok: true, reason: 'vehicles_present' };
