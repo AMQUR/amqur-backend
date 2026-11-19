@@ -12,6 +12,9 @@ import { UploadsModule } from '../uploads/uploads.module';
 import { PartsModule } from '../parts/parts.module';
 import { AppointmentsModule } from '../appointments/appointments.module';
 
+import { LeadFunnelController } from './funnel/lead-funnel.controller';
+import { LeadFunnelService } from './funnel/lead-funnel.service';
+
 @Module({
   imports: [
     IntegrationsModule,
@@ -21,7 +24,11 @@ import { AppointmentsModule } from '../appointments/appointments.module';
     PartsModule,
     AppointmentsModule,
   ],
-  controllers: [OperationsController, WidgetLiveController],
-  providers: [OperationsService, RooftopReadinessService],
+  controllers: [
+    OperationsController,
+    WidgetLiveController,
+    LeadFunnelController,
+  ],
+  providers: [OperationsService, RooftopReadinessService, LeadFunnelService],
 })
 export class OperationsModule {}

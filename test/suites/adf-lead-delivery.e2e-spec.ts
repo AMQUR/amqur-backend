@@ -1253,4 +1253,52 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
       /[A-Za-z0-9._%+-]+@(?!amqur\.example\.invalid>)[A-Za-z0-9-]+\.[A-Za-z0-9.-]+/,
     );
   });
+
+  it('funnel: sandbox acknowledgements never count as mail accepted or CRM received; counts stay inside the tenant', async () => {
+    type Funnel = {
+      stages: Array<{ stage: string; count: number }>;
+      notProven: { mailAcceptedSandboxOnly: number };
+      needsAttention: { acceptedNotConfirmedInCrm: number };
+    };
+    const lead = await newLead('south');
+    const d = await submit('south', lead.id);
+    await attempt(d!.id);
+    expect((await row(d!.id)).status).toBe('ACCEPTED');
+
+    const res = await get('south', 'funnel?days=7');
+    expect(res.status).toBe(200);
+    const f = unwrap<Funnel>(res.body);
+    const count = (name: string) =>
+      f.stages.find((x) => x.stage === name)!.count;
+    expect(f.stages.map((x) => x.stage)).toEqual([
+      'LEAD_CREATED',
+      'LEAD_QUEUED',
+      'MAIL_ACCEPTED',
+      'CRM_RECEIVED',
+      'CRM_MATCHED',
+      'APPOINTMENT_REQUESTED',
+      'APPOINTMENT_CONFIRMED',
+    ]);
+    expect(count('LEAD_CREATED')).toBeGreaterThan(0);
+    expect(count('LEAD_QUEUED')).toBeGreaterThan(0);
+    // Every route in this suite is a SANDBOX route to a reserved test address.
+    expect(count('MAIL_ACCEPTED')).toBe(0);
+    expect(count('CRM_RECEIVED')).toBe(0);
+    expect(count('CRM_MATCHED')).toBe(0);
+    expect(f.notProven.mailAcceptedSandboxOnly).toBeGreaterThan(0);
+    // No customer data, ids or addresses in the payload: counts and fixed text only.
+    expect(JSON.stringify(f)).not.toMatch(/@|example\.invalid|555-01/);
+
+    // Another tenant's numbers are not reachable, and are not mixed in.
+    expect(
+      (await get('north', `funnel?tenantId=${ids.south.tenantId}`)).status,
+    ).toBe(403);
+    const southLeads = await ctx.prisma.lead.count({
+      where: { tenantId: ids.south.tenantId },
+    });
+    expect(count('LEAD_CREATED')).toBe(southLeads);
+    expect((await http().get('/api/ops/funnel')).status).toBeGreaterThanOrEqual(
+      401,
+    );
+  });
 });
