@@ -58,7 +58,8 @@ export function readLeadDeliveryEnv(
 /**
  * Live is reachable ONLY when every environment-level switch agrees. Anything else — a
  * non-production NODE_ENV, a missing/other LEAD_DELIVERY_MODE, the master switch off — is
- * sandbox, no matter what a route says.
+ * sandbox, no matter what a route says. In production the sandbox itself is refused
+ * (`sandbox_in_production`): production either sends live or sends nothing.
  */
 export function effectiveMode(env: LeadDeliveryEnv): 'sandbox' | 'live' {
   return env.nodeEnv === 'production' &&
@@ -104,7 +105,8 @@ export type BlockReason =
   | 'route_disabled'
   | 'route_unverified'
   | 'route_not_production_enabled'
-  | 'route_not_production_environment';
+  | 'route_not_production_environment'
+  | 'sandbox_in_production';
 
 export type GateDecision =
   | { open: true; mode: 'sandbox' | 'live'; transport: 'sink' | 'smtp' }
@@ -133,7 +135,46 @@ export function evaluateSendGates(i: GateInput): GateDecision {
       return { open: false, reason: 'route_not_production_enabled' };
     return { open: true, mode, transport: 'smtp' };
   }
+  // Production never uses a sandbox transport: a real lead "accepted" by the sink would look
+  // delivered and would never be sent once live is switched on.
+  if (sandboxRefused(i.env))
+    return { open: false, reason: 'sandbox_in_production' };
   return { open: true, mode, transport: i.env.sandboxTransport };
+}
+
+/** True when the process is production but live mode is not fully gated on. */
+export function sandboxRefused(env: LeadDeliveryEnv): boolean {
+  return env.nodeEnv === 'production' && effectiveMode(env) !== 'live';
+}
+
+/**
+ * Block reasons that come from the ENVIRONMENT, not from the lead or its route. Rows blocked
+ * for one of these are re-queued automatically once the environment no longer blocks them.
+ */
+export const REEVALUABLE_BLOCK_REASONS = [
+  'sandbox_in_production',
+  'send_disabled',
+] as const;
+
+export function blockReasonStillApplies(
+  reason: string,
+  env: LeadDeliveryEnv,
+): boolean {
+  if (reason === 'send_disabled') return !env.sendEnabled;
+  if (reason === 'sandbox_in_production')
+    return !env.sendEnabled || sandboxRefused(env);
+  return true;
+}
+
+/**
+ * Does an acknowledged row count as acknowledged in the CURRENT mode? A sandbox (or unrecorded)
+ * acknowledgement never does once the environment is live.
+ */
+export function acknowledgementCountsForMode(
+  deliveryMode: string | null | undefined,
+  env: LeadDeliveryEnv,
+): boolean {
+  return effectiveMode(env) !== 'live' || deliveryMode === 'live';
 }
 
 export type DestinationBlockReason =

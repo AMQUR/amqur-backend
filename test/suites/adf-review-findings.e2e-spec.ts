@@ -9,6 +9,7 @@ import { LeadDeliveryRouteService } from '../../src/integrations/adf/lead-delive
 import { SandboxSinkTransport } from '../../src/integrations/adf/transports/sandbox-sink.transport';
 import { seedSandboxRoutes } from '../../src/integrations/adf/sandbox-routes.seed';
 import { ConsentService } from '../../src/messaging/consent.service';
+import { SmtpLeadTransport } from '../../src/integrations/adf/transports/smtp.transport';
 
 /**
  * Regression tests for the PR #55 review findings on ADF lead delivery (R1–R4, R9, R11, R14).
@@ -238,7 +239,7 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
       channel: 'SMS' | 'EMAIL' | 'CALL',
       endpoint: string,
       granted: boolean,
-      evidence: object = {},
+      evidence: Record<string, unknown> = {},
     ) =>
       ctx.app.get(ConsentService).record({
         tenantId: ids[k].tenantId,
@@ -319,6 +320,139 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14)', () => 
       expect(consentLine(d.id)).toBe(
         'Consent: text=not recorded, email=not recorded, call=not recorded',
       );
+    });
+  });
+
+  // ───────────────────────────────────────── R3: sandbox never stands in for live
+
+  describe('R3 — production refuses the sandbox transports; a sandbox receipt never counts as live', () => {
+    it('NODE_ENV=production + switch on + mode not live ⇒ BLOCKED sandbox_in_production, nothing in the sink or the mock SMTP', async () => {
+      await smtp.clear();
+      const mine = { tenantId: ids.one.tenantId };
+      const made: string[] = [];
+      for (const transport of ['sink', 'smtp']) {
+        const d = (await submit('one', (await newLead('one')).id))!;
+        made.push(d.id);
+        process.env.NODE_ENV = 'production';
+        delete process.env.LEAD_DELIVERY_MODE; // unset ⇒ not live
+        process.env.ADF_SANDBOX_TRANSPORT = transport;
+        const blocked = await attempt(d.id);
+        process.env.NODE_ENV = 'test';
+        expect(blocked).toMatchObject({
+          status: 'BLOCKED',
+          blockedReason: 'sandbox_in_production',
+          attempts: 0,
+          sentAt: null,
+          acceptedAt: null,
+          deliveryMode: null,
+        });
+      }
+      expect(sink.messages()).toHaveLength(0);
+      expect(await smtp.messages()).toHaveLength(0);
+
+      // Re-evaluable: while the environment still refuses, the sweep leaves the rows alone…
+      process.env.NODE_ENV = 'production';
+      expect(await deliveries.reevaluateBlocked(mine)).toBe(0);
+      process.env.NODE_ENV = 'test';
+      // …and once it no longer does, they are queued again without an operator.
+      process.env.ADF_SANDBOX_TRANSPORT = 'sink';
+      // (≥: a re-used local database may hold rows from an earlier aborted run.)
+      expect(await deliveries.reevaluateBlocked(mine)).toBeGreaterThanOrEqual(
+        2,
+      );
+      for (const id of made) expect((await row(id)).status).toBe('QUEUED');
+      for (const id of made) {
+        const d = await row(id);
+        expect(d.status === 'QUEUED' ? await attempt(id) : d).toMatchObject({
+          status: 'ACCEPTED',
+          deliveryMode: 'sandbox',
+        });
+        expect(await history(id)).toEqual([
+          'QUEUED:enqueued',
+          'BLOCKED:sandbox_in_production',
+          'QUEUED:gate_reevaluation',
+          'SENT:transport_handoff',
+          'ACCEPTED:transport_receipt',
+        ]);
+      }
+    });
+
+    it('the transports themselves refuse a sandbox hand-off in production (defence in depth)', async () => {
+      const msg = {
+        deliveryId: 'd-r3',
+        tenantId: ids.one.tenantId,
+        routeId: ids.one.routeId,
+        correlationId: 'c-r3',
+        messageId: '<lead-delivery.d-r3@amqur.example.invalid>',
+        from: 'adf-sandbox@amqur.example.invalid',
+        to: ids.one.address,
+        subject: 'New lead amqur-lead-r3',
+        xml: '<adf/>',
+        format: 'XML_BODY' as const,
+        date: new Date(),
+      };
+      await smtp.clear();
+      process.env.NODE_ENV = 'production';
+      try {
+        await expect(sink.send(msg)).rejects.toMatchObject({
+          code: 'sandbox_in_production',
+          retryable: false,
+        });
+        await expect(
+          ctx.app.get(SmtpLeadTransport).send(msg, { live: false }),
+        ).rejects.toMatchObject({ code: 'sandbox_in_production' });
+      } finally {
+        process.env.NODE_ENV = 'test';
+      }
+      expect(sink.messages()).toHaveLength(0);
+      expect(await smtp.messages()).toHaveLength(0);
+    });
+
+    it('a sandbox-ACCEPTED row is not "acknowledged" once the environment is live: it is re-queued and faces the live gates', async () => {
+      const lead = await newLead('two');
+      const d = await attempt((await submit('two', lead.id))!.id);
+      expect(d).toMatchObject({ status: 'ACCEPTED', deliveryMode: 'sandbox' });
+      expect(sinkFor(d.id)).toHaveLength(1);
+      // The operator ledger says which mode acknowledged it.
+      expect(
+        await deliveries.get(
+          { tenantId: ids.two.tenantId, locationId: null },
+          d.id,
+        ),
+      ).toMatchObject({ status: 'ACCEPTED', deliveryMode: 'sandbox' });
+
+      await smtp.clear();
+      process.env.NODE_ENV = 'production';
+      process.env.LEAD_DELIVERY_MODE = 'live';
+      try {
+        // Next lead change in the live environment: the sandbox receipt does not suppress it.
+        expect(
+          await deliveries.enqueueForLead(ids.two.tenantId, lead.id),
+        ).toEqual({ status: 'exists', deliveryId: d.id });
+        const queued = await row(d.id);
+        expect(queued).toMatchObject({
+          status: 'QUEUED',
+          providerMessageId: null,
+          acceptedAt: null,
+        });
+        // The live gates now apply: this rooftop only has a SANDBOX route, so nothing is sent.
+        expect(await attempt(d.id)).toMatchObject({
+          status: 'BLOCKED',
+          blockedReason: 'route_not_production_environment',
+        });
+      } finally {
+        process.env.NODE_ENV = 'test';
+        process.env.LEAD_DELIVERY_MODE = 'sandbox';
+      }
+      expect(sinkFor(d.id)).toHaveLength(1); // only the original sandbox record
+      expect(await smtp.messages()).toHaveLength(0);
+      expect(await history(d.id)).toEqual([
+        'QUEUED:enqueued',
+        'SENT:transport_handoff',
+        'ACCEPTED:transport_receipt',
+        'QUEUED:sandbox_ack_superseded',
+        'BLOCKED:route_not_production_environment',
+      ]);
     });
   });
 

@@ -2206,6 +2206,9 @@ model LeadDelivery {
   status      LeadDeliveryStatus @default(QUEUED)
   attempts    Int                @default(0)
   replayCount Int                @default(0)
+  /// 'sandbox' | 'live' — the mode of the most recent transport hand-off (null = never handed off).
+  /// A sandbox acknowledgement never counts as acknowledged for a live route.
+  deliveryMode String?
 
   providerName      String?
   providerMessageId String?

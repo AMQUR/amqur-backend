@@ -8,6 +8,9 @@ import {
   leadDeliveryIdempotencyKey,
   readLeadDeliveryEnv,
   ADF_FEATURE_FLAG,
+  acknowledgementCountsForMode,
+  blockReasonStillApplies,
+  sandboxRefused,
 } from './lead-delivery-gates';
 import { envValidationSchema } from '../../config/env.validation';
 import { PLATFORM_FEATURE_DEFAULTS } from '../../feature-flags/feature-flags.service';
@@ -122,11 +125,46 @@ describe('lead delivery gates (all fail-closed)', () => {
       ADF_SEND_ENABLED: 'true',
       ADF_SANDBOX_TRANSPORT: 'smtp',
     });
+    // R3: production never falls back to a sandbox transport — it is refused outright.
     expect(evaluateSendGates(input({ env: smtpEnv, route: prod }))).toEqual({
-      open: true,
-      mode: 'sandbox',
-      transport: 'smtp',
+      open: false,
+      reason: 'sandbox_in_production',
     });
+  });
+
+  it('R3: production + master switch on + mode not live ⇒ sandbox_in_production (sink and smtp)', () => {
+    for (const ADF_SANDBOX_TRANSPORT of ['sink', 'smtp', undefined]) {
+      const env = readLeadDeliveryEnv({
+        NODE_ENV: 'production',
+        ADF_SEND_ENABLED: 'true',
+        ADF_SANDBOX_TRANSPORT,
+      });
+      expect(sandboxRefused(env)).toBe(true);
+      expect(evaluateSendGates(input({ env }))).toEqual({
+        open: false,
+        reason: 'sandbox_in_production',
+      });
+      expect(blockReasonStillApplies('sandbox_in_production', env)).toBe(true);
+    }
+    expect(sandboxRefused(liveEnv)).toBe(false);
+    expect(blockReasonStillApplies('sandbox_in_production', liveEnv)).toBe(
+      false,
+    );
+    // Outside production the sandbox is the normal, allowed path.
+    expect(sandboxRefused(input().env)).toBe(false);
+    expect(blockReasonStillApplies('send_disabled', input().env)).toBe(false);
+    expect(
+      blockReasonStillApplies('send_disabled', readLeadDeliveryEnv({})),
+    ).toBe(true);
+    expect(blockReasonStillApplies('route_unverified', liveEnv)).toBe(true);
+  });
+
+  it('R3: a sandbox acknowledgement never counts as acknowledged once the environment is live', () => {
+    expect(acknowledgementCountsForMode('sandbox', input().env)).toBe(true);
+    expect(acknowledgementCountsForMode(null, input().env)).toBe(true);
+    expect(acknowledgementCountsForMode('sandbox', liveEnv)).toBe(false);
+    expect(acknowledgementCountsForMode(null, liveEnv)).toBe(false);
+    expect(acknowledgementCountsForMode('live', liveEnv)).toBe(true);
   });
 
   it('live: additionally needs a PRODUCTION, production-enabled route', () => {

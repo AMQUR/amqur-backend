@@ -53,7 +53,14 @@ export type DeliveryEvidence =
       crmRecordRef?: string | null;
       actor: string;
     }
-  | { kind: 'operator_replay'; actor: string };
+  | { kind: 'operator_replay'; actor: string }
+  /** An environment-level block reason (see REEVALUABLE_BLOCK_REASONS) no longer applies. */
+  | { kind: 'gate_reevaluation'; reason: string }
+  /**
+   * The row was acknowledged by a SANDBOX transport and the environment is now live: the sandbox
+   * acknowledgement does not count, so the delivery is queued again (caller enforces the mode).
+   */
+  | { kind: 'sandbox_ack_superseded'; actor: string };
 
 export type TransitionResult =
   | { ok: true; noop: false; to: DeliveryStatus }
@@ -92,6 +99,20 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
     {
       from: ['FAILED', 'DEAD', 'BLOCKED'],
       evidence: (e) => e.kind === 'operator_replay' && nonEmpty(e.actor),
+    },
+    {
+      from: ['BLOCKED'],
+      evidence: (e) => e.kind === 'gate_reevaluation' && nonEmpty(e.reason),
+    },
+    {
+      from: [
+        'ACCEPTED',
+        'DELIVERED',
+        'CRM_PARSED',
+        'CRM_MATCHED',
+        'CRM_REJECTED',
+      ],
+      evidence: (e) => e.kind === 'sandbox_ack_superseded' && nonEmpty(e.actor),
     },
   ],
   SENT: [
@@ -207,7 +228,11 @@ export function transitionDelivery(
   if (from === to && !isReHandoff)
     return { ok: true, noop: true, reason: 'duplicate' };
 
-  if (from !== null && evidence.kind !== 'operator_replay') {
+  if (
+    from !== null &&
+    evidence.kind !== 'operator_replay' &&
+    evidence.kind !== 'sandbox_ack_superseded'
+  ) {
     const rf = RANK[from];
     const rt = RANK[to];
     // Late arrival of an earlier rung (e.g. a retried "accepted" after DELIVERED).

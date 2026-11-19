@@ -54,6 +54,9 @@ export class SmtpLeadTransport implements LeadDeliveryTransport {
     env: LeadDeliveryEnv = readLeadDeliveryEnv(),
   ): Promise<TransportReceipt> {
     assertSmtpTargetAllowed(env.smtp.host, ctx.live);
+    // Production either sends live or sends nothing (see the `sandbox_in_production` gate).
+    if (!ctx.live && env.nodeEnv === 'production')
+      throw new LeadTransportError('sandbox_in_production', false);
     const options = buildLeadMailOptions(message);
     const transport = nodemailer.createTransport({
       host: env.smtp.host,

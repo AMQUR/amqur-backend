@@ -7,6 +7,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import {
   LeadDelivery,
   LeadDeliveryChannel,
@@ -34,12 +35,15 @@ import {
   StandingLead,
 } from './lead-consent-standing';
 import {
+  acknowledgementCountsForMode,
   ADF_FEATURE_FLAG,
+  blockReasonStillApplies,
   checkDestinationForMode,
   departmentForLeadSource,
   evaluateSendGates,
   leadDeliveryIdempotencyKey,
   readLeadDeliveryEnv,
+  REEVALUABLE_BLOCK_REASONS,
 } from './lead-delivery-gates';
 import {
   DeliveryEvidence,
@@ -91,6 +95,7 @@ const DELIVERY_SELECT = {
   routeId: true,
   destinationMasked: true,
   status: true,
+  deliveryMode: true,
   attempts: true,
   replayCount: true,
   providerName: true,
@@ -191,9 +196,12 @@ export class LeadDeliveryService implements OnModuleInit {
     };
     const existing = await this.prisma.leadDelivery.findUnique({
       where: byKey,
-      select: { id: true },
     });
-    if (existing) return { status: 'exists', deliveryId: existing.id };
+    if (existing) {
+      // A sandbox acknowledgement is not an acknowledgement for a live route: queue it again.
+      await this.supersedeSandboxAck(existing, 'system');
+      return { status: 'exists', deliveryId: existing.id };
+    }
 
     const t = transitionDelivery(null, 'QUEUED', { kind: 'enqueued' });
     if (!t.ok || t.noop) throw new Error('lead_delivery_enqueue_transition');
@@ -388,8 +396,18 @@ export class LeadDeliveryService implements OnModuleInit {
       where: { id: deliveryId, tenantId: meta.tenantId },
     });
     if (!d) throw new PermanentOutboxError('delivery_not_found');
-    // An acknowledged delivery is never handed to a transport again.
-    if (isAcknowledged(d.status)) return { note: 'already_acknowledged' };
+    // An acknowledged delivery is never handed to a transport again. (A SANDBOX acknowledgement
+    // in a live environment is not re-sent from here either: it is re-queued explicitly by
+    // supersedeSandboxAck — on the next lead change or an operator replay.)
+    if (isAcknowledged(d.status))
+      return {
+        note: acknowledgementCountsForMode(
+          d.deliveryMode,
+          readLeadDeliveryEnv(),
+        )
+          ? 'already_acknowledged'
+          : 'sandbox_ack_not_live',
+      };
     if (d.status === 'DEAD' || d.status === 'BLOCKED')
       return { note: `not_replayed:${d.status.toLowerCase()}` };
     // The transport already accepted this delivery; only the record is outstanding. Finalise
@@ -541,6 +559,7 @@ export class LeadDeliveryService implements OnModuleInit {
             : undefined,
         data: {
           attempts: attempt,
+          deliveryMode: gate.mode,
           routeId: route.id,
           destinationFingerprint: route.destinationFingerprint,
           destinationMasked: route.destinationMasked,
@@ -817,6 +836,146 @@ export class LeadDeliveryService implements OnModuleInit {
     return d;
   }
 
+  /** Re-arm the SAME outbox event so there is only ever one in-flight job per delivery. */
+  private async rearmOutbox(
+    tx: Prisma.TransactionClient,
+    d: LeadDelivery,
+  ): Promise<void> {
+    const rearmed = d.outboxEventId
+      ? await tx.outboxEvent.updateMany({
+          where: {
+            id: d.outboxEventId,
+            tenantId: d.tenantId,
+            status: { not: OutboxStatus.PROCESSING },
+          },
+          data: {
+            status: OutboxStatus.PENDING,
+            attempts: 0,
+            nextAttemptAt: new Date(),
+            lastError: null,
+          },
+        })
+      : { count: 0 };
+    if (rearmed.count !== 1) {
+      if (d.outboxEventId) {
+        const still = await tx.outboxEvent.findFirst({
+          where: { id: d.outboxEventId, tenantId: d.tenantId },
+          select: { id: true },
+        });
+        if (still) throw new ConflictException('delivery_in_flight');
+      }
+      const ev = await this.outbox.enqueue({
+        tenantId: d.tenantId,
+        topic: LEAD_DELIVERY_TOPIC,
+        idempotencyKey: `${d.idempotencyKey}:replay:${d.replayCount + 1}`,
+        payload: { deliveryId: d.id },
+        tx,
+      });
+      await tx.leadDelivery.update({
+        where: { id: d.id },
+        data: { outboxEventId: ev.id },
+      });
+    }
+  }
+
+  /**
+   * A row acknowledged by a SANDBOX transport does not count as acknowledged once the
+   * environment is live. Queue it again (history keeps the sandbox acknowledgement); every live
+   * gate is then evaluated as for any other delivery. Returns true when the row was re-queued.
+   */
+  private async supersedeSandboxAck(
+    d: LeadDelivery,
+    actor: string,
+  ): Promise<boolean> {
+    if (!isAcknowledged(d.status)) return false;
+    if (acknowledgementCountsForMode(d.deliveryMode, readLeadDeliveryEnv()))
+      return false;
+    return this.prisma.$transaction(async (tx) => {
+      const moved = await this.apply(
+        tx,
+        d,
+        'QUEUED',
+        { kind: 'sandbox_ack_superseded', actor },
+        {
+          actor,
+          // Receipt columns describe the SANDBOX hand-off only; clear them with the status.
+          data: {
+            providerName: null,
+            providerMessageId: null,
+            providerRawStatus: null,
+            acceptedAt: null,
+            crmRecordRef: null,
+            blockedReason: null,
+          },
+        },
+      );
+      if (!moved) return false;
+      await this.rearmOutbox(tx, d);
+      return true;
+    });
+  }
+
+  /**
+   * Re-queue BLOCKED rows whose block came from the ENVIRONMENT (`sandbox_in_production`,
+   * `send_disabled`) once the environment no longer blocks them. Does nothing — not even a
+   * query — while sending is globally disabled. Every other gate is re-checked by the handler.
+   */
+  async reevaluateBlocked(
+    opts: { limit?: number; tenantId?: string } = {},
+  ): Promise<number> {
+    const limit = opts.limit ?? 200;
+    const env = readLeadDeliveryEnv();
+    const reasons = REEVALUABLE_BLOCK_REASONS.filter(
+      (r) => !blockReasonStillApplies(r, env),
+    );
+    if (!env.sendEnabled || reasons.length === 0) return 0;
+    const rows = await this.prisma.leadDelivery.findMany({
+      where: {
+        status: 'BLOCKED',
+        blockedReason: { in: [...reasons] },
+        ...(opts.tenantId ? { tenantId: opts.tenantId } : {}),
+      },
+      orderBy: { createdAt: 'asc' },
+      take: Math.min(Math.max(limit, 1), 500),
+    });
+    let requeued = 0;
+    for (const d of rows) {
+      try {
+        const moved = await this.prisma.$transaction(async (tx) => {
+          const ok = await this.apply(
+            tx,
+            d,
+            'QUEUED',
+            { kind: 'gate_reevaluation', reason: d.blockedReason ?? 'unknown' },
+            { data: { blockedReason: null } },
+          );
+          if (ok) await this.rearmOutbox(tx, d);
+          return ok;
+        });
+        if (moved) requeued += 1;
+      } catch {
+        // In flight or changed concurrently — the next sweep picks it up.
+      }
+    }
+    if (requeued > 0) {
+      this.metrics.increment('adf.delivery.reevaluated', requeued);
+      this.logger.log(
+        `lead delivery re-evaluation re-queued ${requeued} row(s)`,
+      );
+    }
+    return requeued;
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async reevaluateBlockedTick(): Promise<void> {
+    if (process.env.OUTBOX_PROCESSOR_ENABLED === 'false') return;
+    try {
+      await this.reevaluateBlocked();
+    } catch {
+      this.logger.warn('lead delivery re-evaluation sweep failed');
+    }
+  }
+
   /** Re-queue a FAILED / DEAD / BLOCKED delivery (audited). Never re-sends an acknowledged one. */
   async replay(
     scope: { tenantId: string; locationId: string | null },
@@ -824,6 +983,7 @@ export class LeadDeliveryService implements OnModuleInit {
     userId: string,
   ) {
     const d = await this.owned(scope, id);
+    if (await this.supersedeSandboxAck(d, userId)) return this.get(scope, id);
     if (!REPLAYABLE_STATUSES.has(d.status))
       throw new ConflictException(`not_replayable:${d.status}`);
     await this.prisma.$transaction(async (tx) => {
@@ -838,42 +998,7 @@ export class LeadDeliveryService implements OnModuleInit {
         },
       );
       if (!moved) throw new ConflictException('delivery_changed_concurrently');
-      // Re-arm the SAME outbox event so there is only ever one in-flight job per delivery.
-      const rearmed = d.outboxEventId
-        ? await tx.outboxEvent.updateMany({
-            where: {
-              id: d.outboxEventId,
-              tenantId: d.tenantId,
-              status: { not: OutboxStatus.PROCESSING },
-            },
-            data: {
-              status: OutboxStatus.PENDING,
-              attempts: 0,
-              nextAttemptAt: new Date(),
-              lastError: null,
-            },
-          })
-        : { count: 0 };
-      if (rearmed.count !== 1) {
-        if (d.outboxEventId) {
-          const still = await tx.outboxEvent.findFirst({
-            where: { id: d.outboxEventId, tenantId: d.tenantId },
-            select: { id: true },
-          });
-          if (still) throw new ConflictException('delivery_in_flight');
-        }
-        const ev = await this.outbox.enqueue({
-          tenantId: d.tenantId,
-          topic: LEAD_DELIVERY_TOPIC,
-          idempotencyKey: `${d.idempotencyKey}:replay:${d.replayCount + 1}`,
-          payload: { deliveryId: d.id },
-          tx,
-        });
-        await tx.leadDelivery.update({
-          where: { id: d.id },
-          data: { outboxEventId: ev.id },
-        });
-      }
+      await this.rearmOutbox(tx, d);
       await tx.auditLog.create({
         data: {
           tenantId: d.tenantId,

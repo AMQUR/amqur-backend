@@ -29,7 +29,7 @@ The existing JSON `crm.webhook` path (`CRM_WEBHOOK_URL`) is unchanged and indepe
 | Enqueue, outbox handler, replay, reconciliation | `lead-delivery.service.ts` |
 | Operator API | `lead-delivery-ops.controller.ts` |
 | Hook | `CrmSyncService.onLeadChanged` (`src/integrations/crm/crm-sync.service.ts`) |
-| Migration | `prisma/migrations/20261118100000_lead_delivery_adf` |
+| Migrations | `prisma/migrations/20261118100000_lead_delivery_adf`, `20261118120000_lead_delivery_mode` |
 | Mock SMTP | `test-infra/mocks/mock-smtp.mjs` (compose service `mock-smtp`) |
 | Consent standing from the ledger (pure) | `lead-consent-standing.ts` |
 | Tests | `src/integrations/adf/*.spec.ts`, `test/suites/adf-lead-delivery.e2e-spec.ts`, `test/suites/adf-review-findings.e2e-spec.ts` |
@@ -117,18 +117,34 @@ Transport selection:
 - **Live** requires `NODE_ENV=production` and `LEAD_DELIVERY_MODE=live` and
   `ADF_SEND_ENABLED=true`, plus a `PRODUCTION` route that is `productionEnabled`. A reserved test
   domain is refused in live mode.
-- **Anything else is sandbox**, whatever the route says: the in-process sink
+- **Production never uses a sandbox transport.** With `NODE_ENV=production` and live not fully
+  gated on (for example `LEAD_DELIVERY_MODE` unset), the delivery is `BLOCKED:
+  sandbox_in_production`; nothing is written to the sink or sent to any SMTP host. Both sandbox
+  transports also refuse on their own in production. Production either sends live or sends
+  nothing.
+- **Outside production, anything that is not live is sandbox**, whatever the route says: the in-process sink
   (`ADF_SANDBOX_TRANSPORT=sink`, default) or the loopback mock SMTP (`smtp`). Sandbox SMTP
   additionally requires a loopback host and a reserved-domain recipient, so even a relaying MTA
   on localhost cannot reach a real mailbox.
 - The SMTP transport itself refuses any non-loopback host unless live is fully gated on.
 - `SANDBOX` routes may only point at reserved test domains and can never be production-enabled.
+- `LeadDelivery.deliveryMode` (`sandbox` / `live`) records the mode of the latest transport
+  hand-off and is shown in the operator API. A sandbox acknowledgement never counts as
+  acknowledged in a live environment: on the next lead change, or on an operator replay, such a
+  row is queued again (`sandbox_ack_superseded`; the sandbox receipt stays in the history) and
+  then has to pass every live gate.
+
+Environment-level blocks are re-evaluated automatically. Rows blocked for
+`sandbox_in_production` or `send_disabled` are re-queued (`gate_reevaluation`) by a five-minute
+sweep once the environment no longer blocks them; every other gate is then checked again by the
+handler. The sweep does nothing while `ADF_SEND_ENABLED` is not `true`. Every other block reason
+needs an operator replay.
 
 Block reasons an operator can see: `send_disabled`, `flag_off`, `no_consent_basis`,
 `no_contact_method`, `no_location`, `no_route`, `route_disabled`, `route_unverified`,
 `route_tenant_mismatch`, `route_not_production_environment`, `route_not_production_enabled`,
 `destination_unavailable`, `reserved_destination_in_live`, `sandbox_recipient_not_reserved`,
-`smtp_host_not_loopback`.
+`smtp_host_not_loopback`, `sandbox_in_production`.
 
 ## Consent
 
@@ -243,7 +259,7 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
   are stripped of anything address-like before they are stored.
 - Destination addresses never appear in any API response. Operator responses show the masked
   display only; public and widget endpoints show nothing.
-- In production the sandbox sink keeps metadata and a hash, not the message body.
+- In production the sandbox sink refuses every message (`sandbox_in_production`); it stores nothing.
 
 ## Operator API
 
