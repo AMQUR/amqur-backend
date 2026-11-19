@@ -168,3 +168,12 @@ export function tally(rows: Array<Pick<LeadDeliveryRow, 'status'>>) {
     attention: rows.filter((r) => needsAttention(r.status)).length,
   };
 }
+
+/**
+ * Who caused a history entry. The pipeline records its own steps with a `system` actor; anything
+ * else is a staff user id, which is not shown (only that a person did it).
+ */
+export function actorLabel(actor: string | null): string {
+  if (!actor || /^(system|worker|outbox|cli)\b/i.test(actor)) return 'automatic';
+  return 'by staff';
+}

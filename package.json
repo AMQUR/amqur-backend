@@ -35,6 +35,7 @@
     "credit:destination": "ts-node --transpile-only scripts/credit-destination.ts",
     "seed:local-demo": "ts-node --transpile-only scripts/seed-local-demo.ts",
     "adf:sandbox-demo": "ts-node --transpile-only scripts/adf-sandbox-demo.ts",
+    "seed:local-demo:lead-route": "ts-node --transpile-only scripts/seed-local-demo-lead-route.ts",
     "start:local-demo": "bash scripts/start-local-demo.sh",
     "test:simulator": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=simulator",
     "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",

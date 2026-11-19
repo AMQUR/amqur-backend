@@ -161,6 +161,7 @@ export function buildPicker(p: {
     purpose: pickerPurpose(p.type, p.lang, p.serviceNeed),
     rooftopName: p.rooftopName,
     timezone: p.timezone,
+    serverNow: p.now.toISOString(),
     vehicleLabel: p.type === 'SERVICE' ? null : (p.vehicleLabel ?? null),
     vin: p.type === 'SERVICE' ? null : (p.vin ?? null),
   };

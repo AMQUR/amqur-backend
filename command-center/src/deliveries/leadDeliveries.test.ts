@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LADDER, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
+import { LADDER, actorLabel, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
 
 const ALL: LeadDeliveryStatus[] = ['QUEUED', 'SENT', 'ACCEPTED', 'DELIVERED', 'CRM_PARSED', 'CRM_MATCHED', 'CRM_REJECTED', 'FAILED', 'DEAD', 'BLOCKED'];
 
@@ -54,5 +54,12 @@ describe('lead delivery ledger helpers', () => {
   });
   it('tallies without counting unproven deliveries as in the CRM', () => {
     expect(tally([{ status: 'ACCEPTED' }, { status: 'CRM_MATCHED' }, { status: 'BLOCKED' }, { status: 'DELIVERED' }])).toEqual({ total: 4, inCrm: 1, unconfirmed: 2, attention: 1 });
+  });
+  it('labels pipeline steps as automatic and only real staff actions as staff', () => {
+    expect(actorLabel(null)).toBe('automatic');
+    expect(actorLabel('system')).toBe('automatic');
+    expect(actorLabel('system:outbox')).toBe('automatic');
+    expect(actorLabel('cli:adf-sandbox-demo')).toBe('automatic');
+    expect(actorLabel('cmwmxuser0001')).toBe('by staff');
   });
 });

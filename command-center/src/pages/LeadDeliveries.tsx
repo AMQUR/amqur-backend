@@ -5,6 +5,7 @@ import { Badge, Card, Empty, ErrorNote } from '../ui';
 import {
   DELIVERIES_BASE,
   LADDER,
+  actorLabel,
   STATUS_FILTERS,
   blockedReasonText,
   capability,
@@ -122,7 +123,7 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                 title={<>{r.department.toLowerCase()} lead <span className="muted small">· {r.channel.replace('_', ' ').toLowerCase()} · queued {ago(r.createdAt)}</span></>}
                 actions={<Badge tone={statusTone(r.status)}>{statusSummary(r.status)}</Badge>}
               >
-                <ol className="row small" aria-label="Delivery progress">
+                <ol className="ladder small" aria-label="Delivery progress">
                   {LADDER.map((step) => {
                     const at = r[step.at] as string | null;
                     return (
@@ -184,7 +185,7 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                           <li key={ev.id}>
                             {fmtDate(ev.createdAt)} — {ev.fromStatus ? `${ev.fromStatus} → ` : ''}{ev.toStatus}
                             {ev.reasonCode && <span className="muted"> · {ev.reasonCode}</span>}
-                            {ev.actor && <span className="muted"> · by staff</span>}
+                            <span className="muted"> · {actorLabel(ev.actor)}</span>
                           </li>
                         ))}
                       </ol>

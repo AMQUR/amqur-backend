@@ -45,6 +45,12 @@ export type AppointmentPickerCard = {
   rooftopName: string;
   timezone: string;
   /**
+   * Server time when the card was issued. The widget measures its own clock against this, so a
+   * wrong device clock cannot hide slots that are still on offer (the server is the authority
+   * on expiry either way).
+   */
+  serverNow: string;
+  /**
    * provider_slots — availability from an authorised scheduler; choosing one books it.
    * request_only   — no scheduler; the customer states a preference and staff confirm.
    * (external_link is part of the widget contract but is not produced by this server: no
