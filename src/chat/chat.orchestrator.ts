@@ -7361,8 +7361,21 @@ export class ChatOrchestrator {
       await this.attachPicker(t);
   }
 
+  /**
+   * A vehicle chosen by a card button arrives as a VIN only. Cards that name the vehicle load
+   * its label here (this tenant's inventory only) so the form and picker say which vehicle,
+   * not nothing. Never invents a label: an unknown VIN stays unlabelled.
+   */
+  private async ensureSelectedLabel(t: Turn) {
+    const st = t.st;
+    if (!st.selectedVin || st.selectedLabel) return;
+    const v = await this.inventory.getVehicleByVin(t.tenantId, st.selectedVin);
+    if (v) st.selectedLabel = vehicleLabel(v, true);
+  }
+
   private async attachLeadForm(t: Turn) {
     const st = t.st;
+    await this.ensureSelectedLabel(t);
     if (st.incident?.withholdContact || this.contactComplete(t)) return;
     if (!(await this.cap(t, 'leadCapture')).allowed) return;
     // TEXT is offered only when SMS is really enabled for this tenant/location.
@@ -7410,6 +7423,7 @@ export class ChatOrchestrator {
 
   private async attachPicker(t: Turn) {
     const st = t.st;
+    await this.ensureSelectedLabel(t);
     if (!(await this.cap(t, 'appointments')).allowed) return;
     const active = st.appointment
       ? this.activeAppointmentOfType(t, st.appointment.type)

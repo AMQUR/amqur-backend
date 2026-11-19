@@ -966,6 +966,135 @@ describe('group-site rooftop routing', () => {
 
   // ───────────────────────────────────────── switching rooftops
 
+  describe('Spanish booking through a group conversation', () => {
+    beforeAll(wipe);
+    const S2 = 'DEMO00000000000S2';
+    const ES = { language: 'es' };
+
+    it('ES: Lado Sur vehicle → form, picker, booking and receipt all belong to the South store, in Spanish', async () => {
+      const v = visitor();
+      const ask = await v.say('Muéstreme Grand Cherokee 2026', ES);
+      expect(ask.reply).toMatch(/Lado Norte, Lado Sur, o cualquiera\?/);
+      const sur = await v.say('Lado Sur', ES);
+      const picked = sur.vehicles!.find((x) => x.vin === S2)!;
+      expect(picked.rooftopName).toBe(
+        'Dial Chrysler Dodge Jeep Ram of Chicago (Lado Sur)',
+      );
+
+      const offered = await v.say('', {
+        ...ES,
+        action: 'test_drive',
+        vin: S2,
+        rooftopRef: picked.rooftopRef,
+      });
+      const form = card<{
+        id: string;
+        rooftopName: string;
+        vin: string;
+        language?: string;
+      }>(offered, 'lead_form')!;
+      expect(form.rooftopName).toBe(
+        'Dial Chrysler Dodge Jeep Ram of Chicago (Lado Sur)',
+      );
+      expect(form.vin).toBe(S2);
+      expect(offered.conversation.language).toBe('es');
+      // A vehicle chosen by a card button (VIN only) is still named on the form.
+      expect(
+        (
+          offered.cards.find((c) => c.kind === 'lead_form') as unknown as {
+            vehicleLabel: string | null;
+          }
+        ).vehicleLabel,
+      ).toMatch(/2026 .*Grand Cherokee/);
+      // Spanish wording on the form, including the consent text the customer agrees to.
+      const formCard = offered.cards.find((c) => c.kind === 'lead_form') as
+        | { consent: { text: Record<string, string> }; reason: string }
+        | undefined;
+      expect(formCard!.consent.text.EMAIL).toMatch(/Está bien que la agencia/);
+      expect(formCard!.consent.text.CALL).toMatch(/me llame/);
+      expect(offered.reply).not.toMatch(/(the|your|please)/i);
+
+      const submitted = await v.say('', {
+        ...ES,
+        action: 'lead_capture',
+        lead: lead(form.id),
+      });
+      const picker = card<{
+        id: string;
+        rooftopName: string;
+        mode: string;
+        slots: Array<{ id: string; start: string }>;
+      }>(submitted, 'appointment_picker')!;
+      expect(picker.rooftopName).toBe(
+        'Dial Chrysler Dodge Jeep Ram of Chicago (Lado Sur)',
+      );
+      expect(picker.mode).toBe('provider_slots');
+      expect(submitted.reply).toMatch(/¿Qué día le funciona\?/);
+      expect(submitted.conversation.language).toBe('es');
+
+      const booked = await v.say('', {
+        ...ES,
+        action: 'appointment_select',
+        appointment: { pickerId: picker.id, slotId: picker.slots[0].id },
+      });
+      const appt = card<{
+        outcome: string;
+        verified: boolean;
+        providerRef: string;
+        rooftopName: string;
+        sandbox: boolean;
+      }>(booked, 'appointment')!;
+      expect(appt).toMatchObject({
+        outcome: 'confirmed',
+        verified: true,
+        sandbox: true,
+        rooftopName: 'Dial Chrysler Dodge Jeep Ram of Chicago (Lado Sur)',
+      });
+      expect(appt.providerRef).toMatch(/^SBX-/);
+      expect(booked.conversation.language).toBe('es');
+      // Honest receipt in Spanish: the demo scheduler confirmed it, and it is not a real booking.
+      expect(booked.reply).toMatch(/confirmó su prueba de manejo/);
+      expect(booked.reply).toMatch(/reserva de prueba, no una cita real/);
+
+      // Records: South only. North, the group and everyone else hold nothing.
+      const tenantId = tenantOf('south');
+      const appts = await ctx.prisma.appointment.findMany({
+        where: { tenantId },
+        include: { providerReceipts: true },
+      });
+      expect(appts).toHaveLength(1);
+      expect(appts[0]).toMatchObject({
+        status: 'CONFIRMED',
+        vehicleVin: S2,
+        locationId: seeded.rooftops.south.locationId,
+        externalProviderId: appt.providerRef,
+      });
+      expect(appts[0].providerReceipts).toHaveLength(1);
+      expect(appts[0].providerReceipts[0]).toMatchObject({
+        status: 'CONFIRMED',
+        sandbox: true,
+        providerRef: appt.providerRef,
+      });
+      const leads = await ctx.prisma.lead.findMany({ where: { tenantId } });
+      expect(leads).toHaveLength(1);
+      expect(leads[0]).toMatchObject({ interestedVin: S2, email: EMAIL });
+      const consents = await ctx.prisma.consentRecord.findMany({
+        where: { tenantId },
+      });
+      expect(consents.map((c) => c.channel).sort()).toEqual(['CALL', 'EMAIL']);
+      const after = await snapshot();
+      for (const k of [
+        'chevy',
+        'nissan',
+        'infiniti',
+        'north',
+        'group',
+        'rival',
+      ])
+        expect(after[k]).toEqual(NONE);
+    });
+  });
+
   describe('switching vehicles across rooftops', () => {
     beforeAll(wipe);
 
