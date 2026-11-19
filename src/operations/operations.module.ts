@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { OperationsService } from './operations.service';
 import { RooftopReadinessService } from './rooftop-readiness';
+import { DealerIntelligenceController } from './dealer-intelligence.controller';
+import { DealerIntelligenceService } from './dealer-intelligence.service';
 import { TradeModule } from '../trade/trade.module';
 import {
   OperationsController,
@@ -21,7 +23,15 @@ import { AppointmentsModule } from '../appointments/appointments.module';
     PartsModule,
     AppointmentsModule,
   ],
-  controllers: [OperationsController, WidgetLiveController],
-  providers: [OperationsService, RooftopReadinessService],
+  controllers: [
+    OperationsController,
+    WidgetLiveController,
+    DealerIntelligenceController,
+  ],
+  providers: [
+    OperationsService,
+    RooftopReadinessService,
+    DealerIntelligenceService,
+  ],
 })
 export class OperationsModule {}
