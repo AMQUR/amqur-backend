@@ -47,6 +47,7 @@ import { LeadDeliveryRouteService } from './lead-delivery-route.service';
 import {
   LeadDeliveryTransport,
   LeadTransportError,
+  TransportReceipt,
 } from './transports/lead-delivery-transport';
 import { SandboxSinkTransport } from './transports/sandbox-sink.transport';
 import { SmtpLeadTransport } from './transports/smtp.transport';
@@ -54,8 +55,17 @@ import { SmtpLeadTransport } from './transports/smtp.transport';
 export const LEAD_DELIVERY_TOPIC = 'lead.delivery.adf';
 /** A SENT row older than this with no outcome is treated as a crashed attempt and retried. */
 export const SENT_STALE_MS = 90_000;
+/**
+ * `lastErrorCode` of a SENT row whose transport ACCEPTED the message but whose ACCEPTED write
+ * could not be committed. The receipt columns are already stored; the row is finalised to
+ * ACCEPTED from them on the next attempt and is NEVER handed to a transport again.
+ */
+export const ACCEPT_RECORD_PENDING = 'accepted_record_pending';
+const ACCEPT_WRITE_ATTEMPTS = 3;
+const ACCEPT_WRITE_BACKOFF_MS = 75;
 
 type Db = Prisma.TransactionClient | PrismaService;
+type AcceptedReceipt = TransportReceipt & { providerMessageId: string };
 
 export type EnqueueResult =
   | { status: 'enqueued'; deliveryId: string }
@@ -109,6 +119,11 @@ const DELIVERY_SELECT = {
 @Injectable()
 export class LeadDeliveryService implements OnModuleInit {
   private readonly logger = new Logger(LeadDeliveryService.name);
+  /**
+   * Receipts of accepted sends whose ACCEPTED write AND durable marker both failed (database
+   * unreachable). Kept in memory so this process finalises the row instead of re-sending.
+   */
+  private readonly unrecordedReceipts = new Map<string, AcceptedReceipt>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -332,10 +347,14 @@ export class LeadDeliveryService implements OnModuleInit {
       where: { id: deliveryId, tenantId: meta.tenantId },
     });
     if (!d) throw new PermanentOutboxError('delivery_not_found');
-    // At most one accepted send: an acknowledged delivery is never handed to a transport again.
+    // An acknowledged delivery is never handed to a transport again.
     if (isAcknowledged(d.status)) return { note: 'already_acknowledged' };
     if (d.status === 'DEAD' || d.status === 'BLOCKED')
       return { note: `not_replayed:${d.status.toLowerCase()}` };
+    // The transport already accepted this delivery; only the record is outstanding. Finalise
+    // it from the stored / remembered receipt — never send again.
+    const pending = this.pendingReceipt(d);
+    if (pending) return this.recordAccepted(d, pending);
 
     const lead = await this.prisma.lead.findFirst({
       where: { id: d.leadId, tenantId: d.tenantId },
@@ -463,7 +482,14 @@ export class LeadDeliveryService implements OnModuleInit {
       {
         where:
           d.status === 'SENT'
-            ? { updatedAt: { lt: new Date(Date.now() - SENT_STALE_MS) } }
+            ? {
+                updatedAt: { lt: new Date(Date.now() - SENT_STALE_MS) },
+                // Accepted-but-unrecorded rows are finalised, never re-sent.
+                OR: [
+                  { lastErrorCode: null },
+                  { lastErrorCode: { not: ACCEPT_RECORD_PENDING } },
+                ],
+              }
             : undefined,
         data: {
           attempts: attempt,
@@ -482,8 +508,9 @@ export class LeadDeliveryService implements OnModuleInit {
     const live = gate.mode === 'live';
     const transport: LeadDeliveryTransport =
       gate.transport === 'smtp' ? this.smtp : this.sink;
+    let receipt: AcceptedReceipt;
     try {
-      const receipt = await transport.send(
+      const r = await transport.send(
         {
           deliveryId: d.id,
           tenantId: d.tenantId,
@@ -500,33 +527,12 @@ export class LeadDeliveryService implements OnModuleInit {
         },
         { live },
       );
-      if (!receipt.accepted || !receipt.providerMessageId)
+      if (!r.accepted || !r.providerMessageId)
         throw new LeadTransportError('transport_not_accepted', true);
-      await this.apply(
-        this.prisma,
-        sent,
-        'ACCEPTED',
-        {
-          kind: 'transport_receipt',
-          providerName: receipt.providerName,
-          providerMessageId: receipt.providerMessageId,
-          rawStatus: receipt.rawStatus,
-        },
-        {
-          data: {
-            providerName: receipt.providerName,
-            providerMessageId: receipt.providerMessageId,
-            providerRawStatus: receipt.rawStatus,
-            acceptedAt: receipt.at,
-            lastErrorCode: null,
-          },
-        },
-      );
-      this.logger.log(
-        `lead delivery ${d.id} ACCEPTED provider=${receipt.providerName} mode=${gate.mode}`,
-      );
-      return { note: `accepted:${receipt.providerName}` };
+      receipt = { ...r, providerMessageId: r.providerMessageId };
     } catch (e: unknown) {
+      // ONLY a failure of the transport hand-off itself lands here. Nothing below this block
+      // (recording the acknowledgement) may ever mark the row FAILED or cause a re-send.
       const err =
         e instanceof LeadTransportError
           ? e
@@ -561,6 +567,141 @@ export class LeadDeliveryService implements OnModuleInit {
       // Code only — never a provider message that could echo an address.
       throw new Error(err.code);
     }
+    return this.recordAccepted(sent, receipt);
+  }
+
+  // ───────────────────────────────────────── recording an acknowledgement
+
+  /** A receipt for a SENT row that was accepted but not yet recorded as ACCEPTED, if any. */
+  private pendingReceipt(d: LeadDelivery): AcceptedReceipt | null {
+    if (d.status !== 'SENT') return null;
+    const remembered = this.unrecordedReceipts.get(d.id);
+    if (remembered) return remembered;
+    if (
+      d.lastErrorCode === ACCEPT_RECORD_PENDING &&
+      d.providerName &&
+      d.providerMessageId
+    )
+      return {
+        accepted: true,
+        providerName: d.providerName,
+        providerMessageId: d.providerMessageId,
+        rawStatus: d.providerRawStatus || 'no_status',
+        at: d.acceptedAt ?? new Date(),
+      };
+    return null;
+  }
+
+  /**
+   * The transport has ACCEPTED. From here on the row is never marked FAILED and never re-sent:
+   *  1. write ACCEPTED (+ history) in one transaction, retried a few times;
+   *  2. a lost compare-and-set is resolved explicitly against the row's current state;
+   *  3. if the write still fails, store the receipt on the SENT row with the distinct code
+   *     `accepted_record_pending` (one statement) and let the outbox retry FINALISE it;
+   *  4. if even that fails, remember the receipt in this process for the next attempt.
+   */
+  private async recordAccepted(
+    sent: Pick<LeadDelivery, 'id' | 'tenantId'>,
+    receipt: AcceptedReceipt,
+  ): Promise<OutboxHandlerResult> {
+    const row = { id: sent.id, tenantId: sent.tenantId };
+    const receiptData = {
+      providerName: receipt.providerName,
+      providerMessageId: receipt.providerMessageId,
+      providerRawStatus: receipt.rawStatus,
+      acceptedAt: receipt.at,
+    };
+    const evidence = {
+      providerName: receipt.providerName,
+      providerMessageId: receipt.providerMessageId,
+      rawStatus: receipt.rawStatus,
+    };
+    for (let i = 1; i <= ACCEPT_WRITE_ATTEMPTS; i += 1) {
+      try {
+        const note = await this.prisma.$transaction(async (tx) => {
+          const moved = await this.apply(
+            tx,
+            { ...row, status: 'SENT' },
+            'ACCEPTED',
+            { kind: 'transport_receipt', ...evidence },
+            { data: { ...receiptData, lastErrorCode: null } },
+          );
+          if (moved) return `accepted:${receipt.providerName}`;
+          // Lost compare-and-set: the row is no longer SENT. Decide from what it is NOW.
+          const cur = await tx.leadDelivery.findFirst({
+            where: row,
+            select: { status: true },
+          });
+          if (!cur) return 'accepted:delivery_row_gone';
+          if (isAcknowledged(cur.status)) return 'accepted:already_recorded';
+          if (cur.status === 'FAILED' || cur.status === 'DEAD') {
+            // Another attempt marked it failed while this send was being acknowledged.
+            const late = await this.apply(
+              tx,
+              { ...row, status: cur.status },
+              'ACCEPTED',
+              { kind: 'late_transport_receipt', ...evidence },
+              {
+                data: { ...receiptData, lastErrorCode: null },
+                reasonCode: 'late_transport_receipt',
+              },
+            );
+            if (late) return `accepted_late:${receipt.providerName}`;
+            throw new Error('accept_cas_lost_again');
+          }
+          // QUEUED / BLOCKED / re-claimed: keep the truth in the history; never drop it.
+          await tx.leadDeliveryEvent.create({
+            data: {
+              tenantId: row.tenantId,
+              deliveryId: row.id,
+              fromStatus: cur.status,
+              toStatus: cur.status,
+              reasonCode: 'accepted_receipt_unapplied',
+              evidence: {
+                kind: 'late_transport_receipt',
+                ...evidence,
+              } as Prisma.InputJsonValue,
+            },
+          });
+          this.metrics.increment('adf.delivery.accept_cas_lost');
+          this.logger.error(
+            `lead delivery ${row.id} accepted by transport but row is ${cur.status}; receipt kept in history`,
+          );
+          return `accepted_unapplied:${cur.status.toLowerCase()}`;
+        });
+        this.unrecordedReceipts.delete(row.id);
+        this.logger.log(
+          `lead delivery ${row.id} ACCEPTED provider=${receipt.providerName} note=${note}`,
+        );
+        return { note };
+      } catch {
+        if (i < ACCEPT_WRITE_ATTEMPTS)
+          await new Promise((r) => setTimeout(r, ACCEPT_WRITE_BACKOFF_MS * i));
+      }
+    }
+    // The acknowledgement could not be committed. Do NOT fail the row and do NOT re-send.
+    this.metrics.increment('adf.delivery.accept_record_pending');
+    this.unrecordedReceipts.set(row.id, receipt);
+    try {
+      await this.prisma.leadDelivery.updateMany({
+        where: { ...row, status: 'SENT' },
+        data: {
+          ...receiptData,
+          lastErrorCode: ACCEPT_RECORD_PENDING,
+          lastErrorAt: new Date(),
+        },
+      });
+      this.unrecordedReceipts.delete(row.id);
+    } catch {
+      this.logger.error(
+        `lead delivery ${row.id} accepted; receipt could not be stored yet (kept in memory)`,
+      );
+    }
+    this.logger.error(
+      `lead delivery ${row.id} accepted by transport; ACCEPTED record pending`,
+    );
+    // Retry the OUTBOX event (not the send): the next attempt finalises from the stored receipt.
+    throw new Error(ACCEPT_RECORD_PENDING);
   }
 
   // ───────────────────────────────────────── operator API

@@ -177,9 +177,26 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
   outbox backoff; after 8 attempts the row is `DEAD`. Permanent failures (SMTP 5xx, bad address,
   invalid document) go straight to `DEAD`.
 - One ADF message is sent per lead. Later lead updates are not re-sent.
-- Delivery is at-least-once in one narrow case: if the process dies after the transport accepts
-  but before `ACCEPTED` is written, the stale `SENT` row is retried after 90 seconds with the same
-  `Message-ID`.
+- Delivery is **at-least-once, not exactly-once**. The guarantee is: an *acknowledged* delivery
+  is never handed to a transport again. It is not "at most one accepted send" in every failure.
+- After a transport accepts, the handler never marks the row `FAILED` and never re-sends because
+  of a failure to *record* the acknowledgement:
+  1. the `ACCEPTED` write (row + history, one transaction) is retried three times;
+  2. a lost compare-and-set is resolved against the row's current state: already acknowledged is
+     a no-op; a row another attempt had marked `FAILED`/`DEAD` becomes `ACCEPTED` with
+     `late_transport_receipt` evidence; any other state keeps the receipt in the history
+     (`accepted_receipt_unapplied`);
+  3. if the write still fails, the receipt is stored on the `SENT` row in one statement with
+     `lastErrorCode = accepted_record_pending`. The stale-`SENT` reclaim skips such rows; the
+     outbox retry finalises them to `ACCEPTED` from the stored receipt without a transport call;
+  4. if even that statement fails (database unreachable), the receipt is kept in the worker's
+     memory and the next attempt in that process finalises from it.
+- Remaining duplicate window: the worker process dies after the transport accepts and before any
+  of the writes above commits (or the database is unreachable *and* the process restarts). The
+  stale `SENT` row is then retried with the same `Message-ID`, so a receiver can de-duplicate.
+- If the outbox event exhausts its attempts while a row is `accepted_record_pending`, the row
+  stays `SENT` with that code (it is not `DEAD`, because replay would re-send). Replaying the
+  outbox event finalises it.
 
 ## Privacy
 

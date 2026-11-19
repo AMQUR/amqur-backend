@@ -30,6 +30,16 @@ export type DeliveryEvidence =
       providerMessageId: string;
       rawStatus: string;
     }
+  /**
+   * The same acknowledgement, recorded AFTER another attempt had already marked the row
+   * FAILED/DEAD (a lost compare-and-set). The transport did accept, so the row must say so.
+   */
+  | {
+      kind: 'late_transport_receipt';
+      providerName: string;
+      providerMessageId: string;
+      rawStatus: string;
+    }
   | { kind: 'transport_error'; code: string; retryable: boolean }
   | { kind: 'attempts_exhausted'; code: string }
   | { kind: 'invalid_payload'; code: string }
@@ -99,6 +109,14 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
       from: ['SENT'],
       evidence: (e) =>
         e.kind === 'transport_receipt' &&
+        nonEmpty(e.providerName) &&
+        nonEmpty(e.providerMessageId) &&
+        nonEmpty(e.rawStatus),
+    },
+    {
+      from: ['FAILED', 'DEAD'],
+      evidence: (e) =>
+        e.kind === 'late_transport_receipt' &&
         nonEmpty(e.providerName) &&
         nonEmpty(e.providerMessageId) &&
         nonEmpty(e.rawStatus),
