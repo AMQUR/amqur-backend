@@ -322,3 +322,30 @@ describe('understandTurn — holdout-eval regressions (steering and loss of cont
     expect(ids(m)).not.toContain('SAFETY_URGENT');
   });
 });
+
+describe('understandTurn — generic inventory browse (five-rooftop journey regression)', () => {
+  it.each([
+    'What vehicles do you have in stock?',
+    'What do you have in stock?',
+    "What's available?",
+    'Show me your inventory',
+    'Can I see your cars?',
+    'Do you have any cars available?',
+    'Which trucks do you have on the lot?',
+    '¿Qué vehículos tienen?',
+    '¿Qué tienen disponible?',
+    'Muéstreme el inventario',
+  ])('treats "%s" as a request to see inventory', (m) => {
+    expect(ids(m)).toContain('INVENTORY_SEARCH');
+  });
+
+  it.each([
+    'What are your hours?',
+    'Do you have a service department?',
+    'What do you have for brake pads?',
+    'My brakes failed, what do I do?',
+    'What is available for an oil change on Friday?',
+  ])('does not turn "%s" into an inventory search', (m) => {
+    expect(ids(m)).not.toContain('INVENTORY_SEARCH');
+  });
+});

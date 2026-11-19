@@ -810,6 +810,10 @@ export function detectLanguage(text: string): 'en' | 'es' | undefined {
 export const GENERAL_TOPIC =
   /\b(awd|4wd|4x4|fwd|rwd|all[- ]wheel|four[- ]wheel|front[- ]wheel|rear[- ]wheel|lease|leasing|financ\w*|loan|hybrid|plug[- ]in|phev|ev|electric|gas|diesel|turbo|msrp|invoice|apr|gap insurance|extended warranty|certified|cpo|new (?:and|or|vs\.?) used)\b/;
 
+/** A request to see what the store has, with no make, model or body style named. EN + ES. */
+const GENERIC_INVENTORY_BROWSE =
+  /\b(?:what|which) (?:vehicles?|cars?|trucks?|suvs?|models?|inventory)\b[^?.!]{0,40}\b(?:have|got|in stock|available|sell|carry|on (?:the|your) lot)\b|\bwhat(?:'s| is| do you have| have you got) (?:in stock|available|on (?:the|your) lot|in (?:your )?inventory)\b|\b(?:show|see|browse|view|look at|check out) (?:me )?(?:your |the |all (?:of )?(?:your |the )?|all )?(?:inventory|vehicles|cars|stock|lot|selection)\b|\bdo you have (?:any )?(?:cars|vehicles|inventory)(?: (?:in stock|available))?\b|\bwhat (?:do|can) you (?:have|sell|offer)\b[^?.!]{0,20}\b(?:cars?|vehicles?|trucks?|suvs?)\b|qu[eé] (?:veh[ií]culos|carros|autos|coches|camionetas|trocas) (?:tienen|hay|tiene|venden)|qu[eé] (?:tienen|hay) (?:disponible|en (?:el )?inventario|en existencia)|(?:mu[eé]str[ae]n?me|quiero ver|ver) (?:el |su |todo (?:el |su )?)?inventario/;
+
 export function understandTurn(
   message: string,
   ctx: {
@@ -1733,6 +1737,10 @@ export function understandTurn(
       add('INVENTORY_SEARCH', 0.8, 'availability question');
     else if (e.maxPrice && !intents.length)
       add('INVENTORY_SEARCH', 0.65, 'budget only');
+    // "What do you have in stock?" names no vehicle, but it is plainly a request to see
+    // inventory — never a question to answer with "I'd rather not guess".
+    else if (!intents.length && GENERIC_INVENTORY_BROWSE.test(t))
+      add('INVENTORY_SEARCH', 0.7, 'generic inventory browse');
   }
 
   // ── VEHICLE question (about selected/visible vehicle)
