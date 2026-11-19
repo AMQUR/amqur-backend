@@ -21,7 +21,20 @@ export type PublicBrandingConfig = {
   salesEnabled: boolean;
   serviceEnabled: boolean;
   partsEnabled: boolean;
+  /** Widget visual theme. Allow-listed; null lets the widget use its default. */
+  theme: PublicTheme | null;
 };
+
+export const PUBLIC_THEMES = ['neutral', 'showroom'] as const;
+export type PublicTheme = (typeof PUBLIC_THEMES)[number];
+
+/** Anything outside the allow-list (including wrong case or type) is null. */
+export function asPublicTheme(v: unknown): PublicTheme | null {
+  return typeof v === 'string' &&
+    (PUBLIC_THEMES as readonly string[]).includes(v)
+    ? (v as PublicTheme)
+    : null;
+}
 
 export const DEFAULT_PUBLIC_BRANDING: PublicBrandingConfig = {
   assistantDisplayName: 'Dealership Assistant',
@@ -45,6 +58,7 @@ export const DEFAULT_PUBLIC_BRANDING: PublicBrandingConfig = {
   salesEnabled: true,
   serviceEnabled: false,
   partsEnabled: false,
+  theme: null,
 };
 
 function asString(v: unknown, fallback: string): string {
@@ -126,5 +140,6 @@ export function mergePublicBranding(
       DEFAULT_PUBLIC_BRANDING.serviceEnabled,
     ),
     partsEnabled: asBool(m.partsEnabled, DEFAULT_PUBLIC_BRANDING.partsEnabled),
+    theme: asPublicTheme(m.theme),
   };
 }
