@@ -159,26 +159,29 @@ export class TurnLockService implements OnModuleDestroy {
       };
       const renew =
         token && this.redis
-          ? setInterval(() => {
-              void (async () => {
-                if (!leaseHeld || !this.redis) return;
-                try {
-                  const ok = await this.redis.eval(
-                    RENEW,
-                    1,
-                    redisKey(key),
-                    token,
-                    ttlMs,
-                  );
-                  // Redis EVAL returns 1 on success, 0 when the token no longer owns the key.
-                  if (ok !== 1) markLost('renew_token_mismatch');
-                } catch {
-                  // Transient command failure: do not immediately declare loss — the next
-                  // renew may succeed before TTL. If Redis stays down, TTL expiry + mismatch
-                  // on a later renew (or acquire by a peer) will mark loss.
-                }
-              })();
-            }, Math.floor(ttlMs / 3))
+          ? setInterval(
+              () => {
+                void (async () => {
+                  if (!leaseHeld || !this.redis) return;
+                  try {
+                    const ok = await this.redis.eval(
+                      RENEW,
+                      1,
+                      redisKey(key),
+                      token,
+                      ttlMs,
+                    );
+                    // Redis EVAL returns 1 on success, 0 when the token no longer owns the key.
+                    if (ok !== 1) markLost('renew_token_mismatch');
+                  } catch {
+                    // Transient command failure: do not immediately declare loss — the next
+                    // renew may succeed before TTL. If Redis stays down, TTL expiry + mismatch
+                    // on a later renew (or acquire by a peer) will mark loss.
+                  }
+                })();
+              },
+              Math.floor(ttlMs / 3),
+            )
           : null;
       renew?.unref();
       try {

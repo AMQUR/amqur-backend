@@ -144,11 +144,14 @@ export class OutboxProcessorService {
         // Renew the lease while the handler runs so a long (but healthy) attempt is not
         // reclaimed mid-flight. If renew fails, the handler may still finish but markPublished
         // / markFailed will refuse an expired lease.
-        const renew = setInterval(() => {
-          void this.outbox.renewHandling(row.id, workerId).then((ok) => {
-            if (!ok) this.metrics.increment('outbox.lease_renew_lost');
-          });
-        }, Math.floor(OUTBOX_LEASE_MS / 3));
+        const renew = setInterval(
+          () => {
+            void this.outbox.renewHandling(row.id, workerId).then((ok) => {
+              if (!ok) this.metrics.increment('outbox.lease_renew_lost');
+            });
+          },
+          Math.floor(OUTBOX_LEASE_MS / 3),
+        );
         renew.unref?.();
         try {
           const res = await handler(row.payload as Record<string, unknown>, {

@@ -110,9 +110,7 @@ describe('lead delivery state machine', () => {
         providerMessageId: '',
       }).ok,
     ).toBe(false);
-    expect(
-      go('QUEUED', 'ACCEPTED', E.operatorAccept).ok,
-    ).toBe(false);
+    expect(go('QUEUED', 'ACCEPTED', E.operatorAccept).ok).toBe(false);
     // Operator assertion is not a CRM match.
     expect(go('SENT', 'CRM_MATCHED', E.operatorAccept).ok).toBe(false);
   });
