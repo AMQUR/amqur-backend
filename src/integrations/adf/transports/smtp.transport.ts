@@ -8,6 +8,7 @@ import {
   LeadTransportError,
   OutboundLeadMessage,
   sanitizeProviderStatus,
+  SEND_DEADLINE_CODE,
   TransportContext,
   TransportReceipt,
 } from './lead-delivery-transport';
@@ -54,6 +55,9 @@ export class SmtpLeadTransport implements LeadDeliveryTransport {
     env: LeadDeliveryEnv = readLeadDeliveryEnv(),
   ): Promise<TransportReceipt> {
     assertSmtpTargetAllowed(env.smtp.host, ctx.live);
+    // Production either sends live or sends nothing (see the `sandbox_in_production` gate).
+    if (!ctx.live && env.nodeEnv === 'production')
+      throw new LeadTransportError('sandbox_in_production', false);
     const options = buildLeadMailOptions(message);
     const transport = nodemailer.createTransport({
       host: env.smtp.host,
@@ -72,8 +76,16 @@ export class SmtpLeadTransport implements LeadDeliveryTransport {
       disableFileAccess: true,
       disableUrlAccess: true,
     });
+    // ONE hard deadline for the whole exchange. The per-phase timeouts above only bound idle
+    // phases; a server that trickles data could otherwise hold a send open past the stale-SENT
+    // window. On the deadline the connection is aborted, so no late success can follow.
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), env.sendDeadlineMs);
     try {
-      const info = await transport.sendMail(options);
+      const info = await transport.sendMail({
+        ...options,
+        signal: abort.signal,
+      });
       const accepted =
         Array.isArray(info.accepted) &&
         info.accepted.length === 1 &&
@@ -89,8 +101,11 @@ export class SmtpLeadTransport implements LeadDeliveryTransport {
         at: new Date(),
       };
     } catch (err) {
+      if (abort.signal.aborted)
+        throw new LeadTransportError(SEND_DEADLINE_CODE, true);
       throw classifySmtpError(err);
     } finally {
+      clearTimeout(timer);
       transport.close();
     }
   }

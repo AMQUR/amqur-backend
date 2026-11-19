@@ -21,6 +21,15 @@ differs.
   ordinary JSON error responses. A client should treat `404`/`405` or a non-SSE `200` as "no
   stream support" and fall back to `POST /api/chat`.
 - Frames: `event: <type>\ndata: <one JSON object>\n\n`. Unknown `type`s must be ignored.
+- **Heartbeat:** while a turn is running the server writes the SSE comment frame `: hb\n\n`
+  every 15 s (`CHAT_STREAM_HEARTBEAT_MS`, 25–60000 ms). It starts after `turn.started` and
+  stops when the turn finishes, so a turn that completes sooner carries none. A comment frame
+  has no `event:` or `data:` line: a spec-compliant SSE parser (and `EventSource`) ignores it,
+  and a hand-rolled parser **must** skip any frame without a `data:` line. It exists so proxies
+  and mobile networks do not drop an idle connection during a slow turn; a client may also use
+  it as a liveness signal (no event and no heartbeat for well over the interval ⇒ treat the
+  connection as dead and fall back to `POST /api/chat`). It carries no information about the
+  turn.
 
 | Order | Event | Fields |
 |---|---|---|
@@ -87,22 +96,33 @@ vehicleLabel, vin, channels, consent: { version, text: { EMAIL?, CALL?, TEXT? } 
   `sms` capability is on for that tenant/location.
 - `consent`: server-side constant `lead-form-consent-v1` (EN/ES) in
   `src/chat/sales-desk/consent-wording.ts`. Changing wording requires a new version.
-- An unanswered form keeps its `id` when re-offered.
+- An unanswered form keeps its `id` when re-offered **in the same language and within its
+  validity window**; re-showing it restarts the window. A language change or an expired form
+  gets a new `id`, so one `id` always means one wording.
+- A form is submittable for 60 minutes after the server last showed it (`LEAD_FORM_TTL_MS`).
 
 Submission rules (server-side; the client is never trusted):
 
 - The form must be the one this conversation was offered; names required; email format; US
   phone = 10 digits; the preferred channel must be offered, have its contact detail, and be
-  `granted: true` against a recognised version.
+  `granted: true` against a recognised version; and the form must not have expired
+  ("That form has expired, so I haven’t saved anything." + a fresh form).
 - Otherwise **nothing is stored** (no contact, no consent row, no lead), a one-line reason is
   given and the form is offered again.
 - On success: one append-only `ConsentRecord` per channel the customer ticked (purpose
   `CONVERSATIONAL`, source `WIDGET`, exact wording + version, evidence
-  `{capturedVia:'lead_form', formId, …}`, tenant + location scoped). Nothing is recorded as
+  `{capturedVia:'lead_form', formId, language, formIssuedAt, …}`, tenant + location scoped).
+  The stored wording and `language` are those of the form **as issued** (kept on
+  `Conversation.state.salesDesk.leadForm`), never the `language` a client sends with the
+  submission. The records are written before the lead exists; lead sync then sets their
+  `leadId` (`ConsentService.linkLead`, only the reference — nothing else is edited). Nothing is recorded as
   granted that was not ticked, and an un-ticked box is **not** recorded as an opt-out. A
   contact detail is kept only when a granted channel covers it. Contact then goes through
   the same state, propagation (`handleContact`) and lead sync as the conversational path, so
   the existing outbox/CRM hooks fire. A repeat submit of the same form is a no-op.
+- Only the text consent has a column on `Lead`. Email and call consent live on the ledger, and
+  the ADF consent summary reads the ledger (see `docs/ADF_LEAD_DELIVERY.md`, "Consent"), so a
+  ticked email / call box is reported as `yes` there.
 
 ### `appointment_picker` — attached when the engine asks for a day / time
 
@@ -124,6 +144,16 @@ days?, slots?: [{ id, start, end, expiresAt }], vehicleLabel, vin, sandbox? }`
 - A slot selection is verified against what **this conversation** was offered, for **this**
   rooftop, within the 15-minute offer window; anything else is refused ("…nothing was
   booked") with a fresh picker. Booking is idempotent per (conversation, picker, slot).
+- **One active appointment per kind and conversation** (sales visit / test drive are one kind,
+  service another). Once a slot booking is saved, every remembered `provider_slots` picker of
+  that kind is spent: only the booked slot stays in conversation state, and submitting it again
+  is an idempotent replay that returns the same `appointment` card. Any **other** slot — from
+  the same card or an older one — books nothing: the reply says what already exists ("You
+  already have a test drive booked for …, so nothing new was booked. Do you want to change
+  it?") and the existing change flow is offered (a `request_only` picker; choosing a day moves
+  the request and is confirmed by staff). The same guard applies when the earlier appointment
+  was made by typing. If the existing appointment has since been cancelled, the spent card is
+  refused ("…nothing new was booked") and a fresh picker is offered.
 
 ### `appointment` — extended (new fields only with the flag on)
 
@@ -135,12 +165,32 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
   from an adapter receipt: the appointment is confirmed in the same transaction that inserts
   a `CONFIRMED` `AppointmentProviderReceipt` (`providerRef` unique per tenant + provider).
   Every provider response writes one receipt row (`CONFIRMED`, `PENDING`, `UNAVAILABLE`,
-  `FAILED`, `CONFLICT`). (Staff can still confirm a request by hand in the Command Center;
-  that path is unchanged and writes no provider receipt.)
+  `FAILED`, `CONFLICT`; plus `UNKNOWN`, `NOT_FOUND`, `ORPHAN_CANCELLED` for the compensation
+  path below).
+- Staff can still confirm a request by hand in the Command Center; that path writes no provider
+  receipt. When such a row is reported in chat (for example the same request is replayed) the
+  card is `status: 'CONFIRMED'`, `outcome: 'confirmed'` but **`verified: false`** with no
+  `providerRef` / `providerName`, and the reply says "the dealership team confirmed it" — never
+  "the dealership's scheduling system confirmed it". `verified: true` and the provider wording
+  require a `CONFIRMED` receipt.
 - Provider says no / lost race → "That time was just taken, so nothing was booked." plus a
   fresh picker; the attempt is recorded `CANCELLED` + `UNAVAILABLE` receipt.
-- Provider error / timeout → the request stays `REQUESTED` (`outcome: 'requested'`,
+- Provider **reports** a failure → the request stays `REQUESTED` (`outcome: 'requested'`,
   `FAILED` receipt) for staff to confirm. Never a confirmation.
+- Provider outcome **unknown** — `create()` timed out (8 s) or threw, or it confirmed but the
+  `CONFIRMED` receipt could not be persisted → the request stays `REQUESTED`
+  (`outcome: 'requested'`, never confirmed), an `UNKNOWN` receipt is written (`rawStatus`:
+  `provider_timeout`, `provider_error[_<code>]` or `confirm_persist_failed` — a short code,
+  never the adapter's exception text) and a compensation job is queued on the outbox
+  (`appointment.provider.reconcile`, keyed by the booking idempotency key) in the same
+  transaction. The job asks the provider for the booking made under that key and then either
+  **reconciles** it (request still open → the normal `CONFIRMED` receipt and `CONFIRMED`
+  appointment, exactly one), **cancels** it at the provider (request cancelled / rescheduled /
+  gone → `ORPHAN_CANCELLED` receipt) or records that none exists (`NOT_FOUND` receipt). A retry
+  of the same selection never calls the provider again (same idempotency key → the saved row).
+  If the job itself cannot be stored the booking is cancelled at the provider immediately.
+  The customer is not messaged when a request is reconciled to confirmed later; the next card
+  or recap shows the confirmed state.
 
 ### `Vehicle` — additive fields (same flag)
 
@@ -163,7 +213,7 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
 - New card kinds and fields are optional; older widgets ignore unknown card kinds.
 - `POST /api/chat` response shape, status code (201) and envelope are unchanged.
 - State lives server-side (`Conversation.state.salesDesk`): offered form, last three pickers
-  and their slots. Slot ids are opaque; the provider's own slot id never reaches the client.
+  and their slots (after a booking: only the booked slot, marked `settled`). Slot ids are opaque; the provider's own slot id never reaches the client.
 
 ## 5. What is sandbox-only
 
@@ -172,9 +222,24 @@ Existing fields unchanged. Added: `rooftopName`, `department` (localised), `time
   provider id `MOCK`). It offers a fixed synthetic grid, issues `SBX-…` references, always
   rejects one designated slot, marks receipts and cards `sandbox: true`, and its confirmation
   text says it is a demo booking, not a real appointment.
-- It needs: non-production, the `sandboxScheduler` flag, and an enabled + liveReady `MOCK`
-  `appointments` connection (the local demo seed creates one). In production it cannot be
-  constructed, registered or resolved, and the flag is forced off.
+- The sandbox label has **one** derivation (`isSandboxBooking`, `scheduling-provider.registry.ts`):
+  the adapter is a demo scheduler **or** the `appointments` connection is not explicitly in
+  `production` mode. The receipt, the picker and appointment cards, the reply, reminder
+  enrolment and the idempotent replay all take it from there. A confirmed sandbox booking is
+  also remembered on conversation state (`state.appointment.sandbox`), so every later mention
+  keeps the label: the "back to the vehicle" recap, the "you already have…" answer, the
+  `journey.appointment.sandbox` field, the handoff summary and the memory line given to the
+  language model ("SANDBOX DEMO booking (not a real appointment)").
+- Every reply that reports a **confirmed** appointment — tapped slot or typed time, sandbox or
+  not — is locked: its fixed wording is sent as is and is never handed to the model to rewrite.
+- It needs **all** of: non-production; the process started with
+  `SANDBOX_SCHEDULER_ENABLED=true` (explicit opt-in, default `false`; set in
+  `test-infra/.env.test` and by `scripts/start-local-demo.sh`); the `sandboxScheduler` flag; and
+  an enabled + liveReady `MOCK` `appointments` connection (the local demo seed creates one).
+  Without the opt-in it cannot be constructed, registered or resolved even outside production
+  — a host whose `NODE_ENV` is missing does not grow a demo scheduler. In production it is
+  refused outright regardless of the switch (and `SANDBOX_SCHEDULER_ENABLED=true` fails env
+  validation at boot); the flag is forced off.
 - It is **not** a Tekion (or any vendor) integration. No vendor endpoint, URL or payload was
   added; `src/integrations/tekion` is untouched and fail-closed. A real scheduler is
   **BLOCKED** on vendor API access.

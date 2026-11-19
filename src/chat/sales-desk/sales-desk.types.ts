@@ -85,7 +85,13 @@ export type OfferedPicker = {
     endUtc: string | null;
     expiresAt: string;
     providerSlotId?: string;
-  }>;
+  }>; /**
+   * Set once a booking was saved from a provider-slot picker of this kind: the card is spent.
+   * Only `bookedSlotId` (when the booking came from THIS card) may be submitted again — as an
+   * idempotent replay of the same booking — and every other slot is refused.
+   */
+  settled?: boolean;
+  bookedSlotId?: string;
 };
 
 export type OfferedLeadForm = {
@@ -93,7 +99,17 @@ export type OfferedLeadForm = {
   purpose: LeadFormPurpose;
   channels: ContactChannel[];
   consentVersion: string;
+  /**
+   * When the server last showed this form. A submission is accepted only within
+   * LEAD_FORM_TTL_MS of it.
+   */
   issuedAt: string;
+  /**
+   * Language the form (and its consent wording) was ISSUED in. The stored consent wording is
+   * taken from here, never from the language a client claims at submit time. Absent on forms
+   * offered before this field existed.
+   */
+  language?: SalesDeskLang;
   /** Set once a valid submission was stored — a repeat submit is a no-op. */
   submittedAt?: string;
 };

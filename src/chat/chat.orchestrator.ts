@@ -135,6 +135,8 @@ import {
   buildPicker,
   departmentLabel,
   rememberPicker,
+  settlePickersAfterBooking,
+  bookingFamily,
   requestOnlyDays,
   resolveSelection,
   selectionRefusalText,
@@ -293,7 +295,12 @@ export type JourneySummary = {
     includesTaxAndFees: boolean;
   } | null;
   trade?: { summary: string; requestId?: string } | null;
-  appointment?: { id: string; label: string; status: string } | null;
+  appointment?: {
+    id: string;
+    label: string;
+    status: string;
+    sandbox?: boolean;
+  } | null;
   creditApplication?: { state: string } | null;
   otdQuote?: {
     status: string;
@@ -1615,7 +1622,7 @@ export class ChatOrchestrator {
       `Message: "${redactCreditSensitive(t.message).slice(0, 280)}"`,
       st.selectedVin ? `Vehicle: ${st.selectedVin}` : null,
       st.appointment
-        ? `Appointment request: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''} (${st.appointment.status})`
+        ? `Appointment request: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''} (${st.appointment.status}${st.appointment.sandbox ? ', SANDBOX demo booking' : ''})`
         : null,
       st.department ? `Department: ${st.department}` : null,
       this.customerName(t) ? `Name: ${this.customerName(t)}` : null,
@@ -3964,16 +3971,27 @@ export class ChatOrchestrator {
       requestedDate: a.requestedDate,
       requestedTime: a.requestedTime,
       outcome: res.outcome,
+      // Remembered so the recap, the model's memory and later cards keep the demo label.
+      ...(res.outcome === 'confirmed' && res.provider?.sandbox
+        ? { sandbox: true }
+        : {}),
     };
+    // A confirmation keeps its exact wording (incl. the demo label): no model rewrite.
+    if (res.outcome === 'confirmed') t.lockReply = true;
     t.st.draftAppointment = undefined;
     t.st.pending = 'none';
     t.evidence.push(
       this.evidenceSvc.forAppointment(t.tenantId, t.locationId, a),
     );
+    // "Provider-confirmed" needs a CONFIRMED provider receipt; a row staff confirmed by hand
+    // (no receipt) is confirmed, but never attributed to a scheduling system.
+    const providerConfirmed = res.outcome === 'confirmed' && !!res.provider;
     t.sources.add(
-      res.outcome === 'confirmed'
+      providerConfirmed
         ? `scheduler:${a.provider}`
-        : 'appointment_request',
+        : res.outcome === 'confirmed'
+          ? 'appointment_staff_confirmed'
+          : 'appointment_request',
     );
     const label = this.apptLabel(t, a);
     const what =
@@ -3991,11 +4009,17 @@ export class ChatOrchestrator {
               `The sandbox scheduler confirmed a ${what} ${label}. This is a demo booking, not a real appointment.`,
               `El sistema de citas de demostración confirmó su ${what} para el ${label}. Es una reserva de prueba, no una cita real.`,
             )
-          : tr(
-              t.lang,
-              `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
-              `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
-            ),
+          : providerConfirmed
+            ? tr(
+                t.lang,
+                `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
+                `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
+              )
+            : tr(
+                t.lang,
+                `You're booked for a ${what} ${label} — the dealership team confirmed it.`,
+                `Su ${what} quedó confirmada para el ${label} — el equipo de la agencia la confirmó.`,
+              ),
       );
     } else if (res.outcome === 'pending') {
       t.narration.push(
@@ -4042,7 +4066,7 @@ export class ChatOrchestrator {
       date: a.requestedDate,
       time: a.requestedTime,
       label,
-      verified: res.outcome === 'confirmed',
+      verified: providerConfirmed,
       // sales-desk hook 5/7: rooftop/department/provider-receipt fields (flag-gated).
       ...(await this.appointmentCardExtras(t, a, res)),
     });
@@ -6236,7 +6260,9 @@ export class ChatOrchestrator {
     if (st.appointment) {
       const apptLabel =
         st.appointment.status === 'CONFIRMED'
-          ? 'confirmed appointment'
+          ? st.appointment.sandbox
+            ? 'SANDBOX DEMO booking (not a real appointment)'
+            : 'confirmed appointment'
           : st.appointment.status === 'CANCELLED'
             ? 'canceled appointment request'
             : 'appointment request (not confirmed)';
@@ -6705,11 +6731,11 @@ export class ChatOrchestrator {
       recap.push(
         tr(
           t.lang,
-          `your ${visitKind} request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? 'confirmed' : 'still a request'}`.replace(
+          `your ${visitKind} request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? (st.appointment.sandbox ? 'a demo booking on the sandbox scheduler, not a real appointment' : 'confirmed') : 'still a request'}`.replace(
             '  ',
             ' ',
           ),
-          `su solicitud de ${visitKindEs} del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? 'confirmada' : 'pendiente'}`,
+          `su solicitud de ${visitKindEs} del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? (st.appointment.sandbox ? 'como reserva de prueba en el sistema de demostración, no es una cita real' : 'confirmada') : 'pendiente'}`,
         ),
       );
     }
@@ -6929,7 +6955,7 @@ export class ChatOrchestrator {
       );
       return;
     }
-    const v = validateLeadSubmission(lead, offered, t.lang);
+    const v = validateLeadSubmission(lead, offered, t.lang, referenceNow());
     if (!v.ok) {
       this.metrics.increment(`chat.lead_form.refused.${v.reason}`);
       t.answers.push(leadRefusalText(v.reason, t.lang));
@@ -6967,7 +6993,9 @@ export class ChatOrchestrator {
           formPurpose: offered!.purpose,
           formChannel: g.channel,
           preferredChannel: lead.preferredChannel,
-          language: t.lang,
+          // The language the form was ISSUED in (the wording shown), not the client's claim.
+          language: v.language,
+          formIssuedAt: offered!.issuedAt,
         },
       });
     }
@@ -7036,6 +7064,13 @@ export class ChatOrchestrator {
     };
     if (!r.ok) {
       this.metrics.increment(`chat.appointment_picker.refused.${r.reason}`);
+      // A spent card: say what is already booked instead of booking a second appointment.
+      if (
+        r.reason === 'already_booked' &&
+        r.type &&
+        (await this.answerExistingBooking(t, r.type, null))
+      )
+        return;
       t.answers.push(selectionRefusalText(r.reason, t.lang));
       if (on && r.type && r.reason !== 'wrong_location')
         reoffer(
@@ -7072,6 +7107,10 @@ export class ChatOrchestrator {
       };
       return this.handleAppointment(t, type);
     }
+    const slotKey = `slot:${t.s.conversationId}:${r.picker.id}:${r.slot.id}`;
+    // One active appointment per kind: a different slot never books a second one. (The same
+    // slot again is an idempotent replay of the saved booking and goes through.)
+    if (await this.answerExistingBooking(t, type, slotKey)) return;
     this.emitStatus(
       t,
       'checking',
@@ -7085,7 +7124,7 @@ export class ChatOrchestrator {
       inferred: false,
     };
     t.slotBooking = {
-      idempotencyKey: `slot:${t.s.conversationId}:${r.picker.id}:${r.slot.id}`,
+      idempotencyKey: slotKey,
       startUtc: r.slot.startUtc,
       providerSlotId: r.slot.providerSlotId,
     };
@@ -7118,7 +7157,95 @@ export class ChatOrchestrator {
         'Which other time works for you?',
         '¿Qué otro horario le funciona?',
       );
+      return;
     }
+    // A booking was saved: the card (and any other remembered slot card of this kind) is spent.
+    if (st.appointment && this.activeAppointmentOfType(t, st.appointment.type))
+      st.salesDesk = settlePickersAfterBooking(st.salesDesk, {
+        pickerId: r.picker.id,
+        slotId: r.slot.id,
+        type,
+      });
+  }
+
+  /**
+   * When this conversation already has an active appointment of the same kind (and the
+   * selection is not a replay of that very booking), tell the customer the truth — what exists,
+   * that nothing new was booked — and offer the existing change flow. Returns true when it
+   * answered. Reads the row, so a booking staff have since cancelled does not block a new one.
+   */
+  private async answerExistingBooking(
+    t: Turn,
+    type: PickerAppointmentType,
+    replayKey: string | null,
+  ): Promise<boolean> {
+    const st = t.st;
+    const cur = st.appointment;
+    if (
+      !cur ||
+      !this.activeAppointmentOfType(t, cur.type) ||
+      bookingFamily(cur.type) !== bookingFamily(type)
+    )
+      return false;
+    const row = await this.prisma.appointment.findFirst({
+      where: { id: cur.id, tenantId: t.tenantId },
+      select: {
+        status: true,
+        type: true,
+        requestedDate: true,
+        requestedTime: true,
+        idempotencyKey: true,
+      },
+    });
+    if (!row) return false;
+    if (
+      !['REQUESTED', 'PENDING_CONFIRMATION', 'CONFIRMED'].includes(row.status)
+    ) {
+      st.appointment = { ...cur, status: row.status };
+      return false;
+    }
+    if (replayKey && row.idempotencyKey === replayKey) return false;
+    st.appointment = { ...cur, status: row.status };
+    const what =
+      row.type === 'SERVICE'
+        ? tr(t.lang, 'service visit', 'cita de servicio')
+        : row.type === 'TEST_DRIVE'
+          ? tr(t.lang, 'test drive', 'prueba de manejo')
+          : tr(t.lang, 'visit', 'visita');
+    const label = this.apptLabel(t, row);
+    this.metrics.increment('chat.appointment_picker.already_booked');
+    t.answers.push(
+      row.status === 'CONFIRMED'
+        ? cur.sandbox
+          ? tr(
+              t.lang,
+              `You already have a ${what} booked for ${label} on the sandbox scheduler (a demo booking, not a real appointment), so nothing new was booked.`,
+              `Ya tiene una ${what} reservada para el ${label} en el sistema de demostración (una reserva de prueba, no una cita real), así que no se reservó nada nuevo.`,
+            )
+          : tr(
+              t.lang,
+              `You already have a ${what} booked for ${label}, so nothing new was booked.`,
+              `Ya tiene una ${what} reservada para el ${label}, así que no se reservó nada nuevo.`,
+            )
+        : tr(
+            t.lang,
+            `You already have a ${what} request in for ${label}, so nothing new was booked.`,
+            `Ya tiene una solicitud de ${what} para el ${label}, así que no se reservó nada nuevo.`,
+          ),
+    );
+    st.draftAppointment = undefined;
+    this.ask(
+      t,
+      'appointment_date',
+      tr(
+        t.lang,
+        'Do you want to change it? If so, which day works better?',
+        '¿Quiere cambiarla? Si es así, ¿qué día le funciona mejor?',
+      ),
+      1,
+      'date',
+    );
+    return true;
   }
 
   /**
@@ -7502,6 +7629,10 @@ export class ChatOrchestrator {
     });
     const isNewLead = !st.leadId;
     st.leadId = lead.id;
+    // Consent captured before the lead existed (lead form, text consent) is linked to it now.
+    await this.consent
+      .linkLead(t.tenantId, t.s.externalKey, lead.id)
+      .catch(() => undefined);
     if (st.appointment?.id) {
       await this.prisma.appointment.updateMany({
         where: { id: st.appointment.id, tenantId: t.tenantId, leadId: null },
@@ -7573,6 +7704,7 @@ export class ChatOrchestrator {
               type: st.appointment.type,
             }),
             status: st.appointment.status,
+            ...(st.appointment.sandbox ? { sandbox: true } : {}),
           }
         : null,
       // OFFERED = live link shown; PREVIEW = labeled demo preview (never reaches the vendor).

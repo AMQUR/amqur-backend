@@ -23,7 +23,21 @@ export type LeadDeliveryEnv = {
   providerName: string;
   maxBytes: number;
   sinkDir: string | null;
+  /** Hard overall deadline for ONE transport hand-off (ADF_SEND_DEADLINE_MS). */
+  sendDeadlineMs: number;
 };
+
+/**
+ * One hard, overall deadline per send — connect + greeting + TLS + auth + DATA together — and
+ * the window after which a SENT row with no outcome is treated as a crashed attempt.
+ * INVARIANT: SENT_STALE_MS >= SEND_DEADLINE_MAX_MS + SENT_STALE_MARGIN_MS, so a row can never
+ * be reclaimed (and re-sent) while its own send is still inside its deadline.
+ */
+export const SEND_DEADLINE_DEFAULT_MS = 30_000;
+export const SEND_DEADLINE_MIN_MS = 250;
+export const SEND_DEADLINE_MAX_MS = 60_000;
+export const SENT_STALE_MARGIN_MS = 30_000;
+export const SENT_STALE_MS = SEND_DEADLINE_MAX_MS + SENT_STALE_MARGIN_MS;
 
 export const ADF_FEATURE_FLAG = 'adfLeadDelivery';
 export const ADF_SANDBOX_FROM = 'adf-sandbox@amqur.example.invalid';
@@ -52,13 +66,20 @@ export function readLeadDeliveryEnv(
     providerName: str(env.ADF_PROVIDER_NAME) ?? 'AMQUR AI',
     maxBytes: num(env.ADF_MAX_BYTES, ADF_DEFAULT_MAX_BYTES, 1024, 1024 * 1024),
     sinkDir: str(env.ADF_SANDBOX_SINK_DIR),
+    sendDeadlineMs: num(
+      env.ADF_SEND_DEADLINE_MS,
+      SEND_DEADLINE_DEFAULT_MS,
+      SEND_DEADLINE_MIN_MS,
+      SEND_DEADLINE_MAX_MS,
+    ),
   };
 }
 
 /**
  * Live is reachable ONLY when every environment-level switch agrees. Anything else — a
  * non-production NODE_ENV, a missing/other LEAD_DELIVERY_MODE, the master switch off — is
- * sandbox, no matter what a route says.
+ * sandbox, no matter what a route says. In production the sandbox itself is refused
+ * (`sandbox_in_production`): production either sends live or sends nothing.
  */
 export function effectiveMode(env: LeadDeliveryEnv): 'sandbox' | 'live' {
   return env.nodeEnv === 'production' &&
@@ -99,12 +120,14 @@ export type BlockReason =
   | 'no_consent_basis'
   | 'no_contact_method'
   | 'no_location'
+  | 'lead_location_changed'
   | 'no_route'
   | 'route_tenant_mismatch'
   | 'route_disabled'
   | 'route_unverified'
   | 'route_not_production_enabled'
-  | 'route_not_production_environment';
+  | 'route_not_production_environment'
+  | 'sandbox_in_production';
 
 export type GateDecision =
   | { open: true; mode: 'sandbox' | 'live'; transport: 'sink' | 'smtp' }
@@ -133,7 +156,46 @@ export function evaluateSendGates(i: GateInput): GateDecision {
       return { open: false, reason: 'route_not_production_enabled' };
     return { open: true, mode, transport: 'smtp' };
   }
+  // Production never uses a sandbox transport: a real lead "accepted" by the sink would look
+  // delivered and would never be sent once live is switched on.
+  if (sandboxRefused(i.env))
+    return { open: false, reason: 'sandbox_in_production' };
   return { open: true, mode, transport: i.env.sandboxTransport };
+}
+
+/** True when the process is production but live mode is not fully gated on. */
+export function sandboxRefused(env: LeadDeliveryEnv): boolean {
+  return env.nodeEnv === 'production' && effectiveMode(env) !== 'live';
+}
+
+/**
+ * Block reasons that come from the ENVIRONMENT, not from the lead or its route. Rows blocked
+ * for one of these are re-queued automatically once the environment no longer blocks them.
+ */
+export const REEVALUABLE_BLOCK_REASONS = [
+  'sandbox_in_production',
+  'send_disabled',
+] as const;
+
+export function blockReasonStillApplies(
+  reason: string,
+  env: LeadDeliveryEnv,
+): boolean {
+  if (reason === 'send_disabled') return !env.sendEnabled;
+  if (reason === 'sandbox_in_production')
+    return !env.sendEnabled || sandboxRefused(env);
+  return true;
+}
+
+/**
+ * Does an acknowledged row count as acknowledged in the CURRENT mode? A sandbox (or unrecorded)
+ * acknowledgement never does once the environment is live.
+ */
+export function acknowledgementCountsForMode(
+  deliveryMode: string | null | undefined,
+  env: LeadDeliveryEnv,
+): boolean {
+  return effectiveMode(env) !== 'live' || deliveryMode === 'live';
 }
 
 export type DestinationBlockReason =

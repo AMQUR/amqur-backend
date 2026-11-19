@@ -205,6 +205,32 @@ export const envValidationSchema = Joi.object({
     .optional()
     .allow('')
     .default('AMQUR AI'),
+  /** Interval of the SSE comment heartbeat on POST /chat/stream while a turn runs, ms. */
+  CHAT_STREAM_HEARTBEAT_MS: Joi.number()
+    .integer()
+    .min(25)
+    .max(60000)
+    .optional()
+    .default(15000),
+  /**
+   * Explicit opt-in for the SANDBOX (demo) scheduler. Default off. It is additionally refused
+   * outright in production — setting it to `true` there fails validation at boot.
+   */
+  SANDBOX_SCHEDULER_ENABLED: Joi.when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string().valid('false').optional().default('false'),
+    otherwise: Joi.string().valid('true', 'false').optional().default('false'),
+  }),
+  /**
+   * Hard overall deadline for one lead hand-off (connect to final reply), ms. Capped at 60 s so
+   * the 90 s stale-SENT window always exceeds it by a 30 s margin.
+   */
+  ADF_SEND_DEADLINE_MS: Joi.number()
+    .integer()
+    .min(250)
+    .max(60000)
+    .optional()
+    .default(30000),
   /** Hard cap on one ADF document, bytes. */
   ADF_MAX_BYTES: Joi.number()
     .integer()

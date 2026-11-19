@@ -29,9 +29,10 @@ The existing JSON `crm.webhook` path (`CRM_WEBHOOK_URL`) is unchanged and indepe
 | Enqueue, outbox handler, replay, reconciliation | `lead-delivery.service.ts` |
 | Operator API | `lead-delivery-ops.controller.ts` |
 | Hook | `CrmSyncService.onLeadChanged` (`src/integrations/crm/crm-sync.service.ts`) |
-| Migration | `prisma/migrations/20261118100000_lead_delivery_adf` |
-| Mock SMTP | `test-infra/mocks/mock-smtp.mjs` (compose service `mock-smtp`) |
-| Tests | `src/integrations/adf/*.spec.ts`, `test/suites/adf-lead-delivery.e2e-spec.ts` |
+| Migrations | `prisma/migrations/20261118100000_lead_delivery_adf`, `20261118120000_lead_delivery_mode`, `20261118120100_appointment_lead_index` (index for the latest-appointment-of-a-lead lookup) |
+| Mock SMTP | `test-infra/mocks/mock-smtp.mjs` (compose service `mock-smtp`; failure modes `tempfail`, `reject`, `drop`, `slow`) |
+| Consent standing from the ledger (pure) | `lead-consent-standing.ts` |
+| Tests | `src/integrations/adf/*.spec.ts`, `test/suites/adf-lead-delivery.e2e-spec.ts`, `test/suites/adf-review-findings.e2e-spec.ts` |
 
 ## Data model
 
@@ -84,17 +85,36 @@ Rules (`transitionDelivery`):
 - A duplicate or late event for a state already reached or passed is a no-op. A late failure or
   block can never erase an acknowledgement.
 - `CRM_REJECTED` and `CRM_MATCHED` are terminal.
-- Only `FAILED`, `DEAD` and `BLOCKED` can be replayed, and only by an operator.
+- Only `FAILED`, `DEAD` and `BLOCKED` can be replayed by an operator. Two transitions back to
+  `QUEUED` happen without one, each with its own evidence: `gate_reevaluation` (a row blocked by
+  an environment-level reason whose cause is gone) and `sandbox_ack_superseded` (a
+  sandbox-acknowledged row in a live environment) — see "Gates".
+- `ACCEPTED` may also be recorded from `FAILED` / `DEAD` with `late_transport_receipt` evidence
+  when the transport's acknowledgement arrives after another attempt had marked the row failed
+  (see "Idempotency and retries").
+- A `SENT` row is another worker's attempt until it is stale (see "Idempotency and retries"). A
+  stale `SENT` row can be handed off again **or** become `BLOCKED` when a gate has closed in the
+  meantime; a fresh one is left alone and the outbox retries later (`delivery_in_flight`).
+- No row is left non-terminal behind a dead outbox event: whatever an attempt throws, the final
+  (8th) outbox attempt moves a `QUEUED` / `SENT` / `FAILED` row to `DEAD` with a PII-free code
+  (`handler_error` when the failure has no code of its own), so it is visible and replayable.
+  The one exception is a row whose send was accepted but not yet recorded
+  (`accepted_record_pending`): it is finalised, never dead-lettered.
 
 ## Routing
 
-- The route lookup is keyed by the lead row's `tenantId` + `locationId` + department (from
-  `Lead.source`: `widget_service` is SERVICE, `widget_parts` is PARTS, everything else SALES).
+- A delivery row is created for the lead's `tenantId` + `locationId` + department (from
+  `Lead.source`: `widget_service` is SERVICE, `widget_parts` is PARTS, everything else SALES) at
+  the time it is queued, and that rooftop is part of its idempotency key. The worker resolves
+  the flag, the route and the final guard from the **delivery row's** `locationId`, never from
+  wherever the lead is now. If the lead has since been moved to another rooftop the old row is
+  `BLOCKED: lead_location_changed` and nothing is sent on it; the lead's next change queues a
+  separate row for its new rooftop.
 - There is no default, catch-all, tenant-wide or group-wide recipient, and no CC/BCC path. A
   route holds exactly one bare mailbox.
 - Unknown, disabled or unverified route: `BLOCKED` with the reason; the lead stays in AMQUR.
 - Immediately before transport the handler re-checks that the route's tenant and location equal
-  the lead's. CDJR South (`dial-cdjr-of-chicago`) and Jeep North (`jeep-of-chicago`) are separate
+  the delivery row's and the lead's. CDJR South (`dial-cdjr-of-chicago`) and Jeep North (`jeep-of-chicago`) are separate
   tenants and can only ever resolve their own route.
 - ADF is a sales lead format. SERVICE and PARTS leads need their own explicitly configured
   route; without one they are `BLOCKED: no_route`.
@@ -103,10 +123,16 @@ Rules (`transitionDelivery`):
 
 A send happens only when every one of these is true:
 
-1. `ADF_SEND_ENABLED=true` (default `false`);
+1. `ADF_SEND_ENABLED=true` (default `false`; with it off **no delivery row is created at all**,
+   exactly as with the rooftop flag off — so turning the rooftop flag on first leaves no
+   permanently blocked rows. A lead that arrives while it is off is queued on its next change
+   once sending is on; it is not back-filled. A row that was already queued when the switch
+   was turned off is `BLOCKED: send_disabled` and is re-queued automatically when it is turned
+   back on);
 2. the rooftop's feature flag `adfLeadDelivery` is on (default off; with it off no delivery row
    is created at all);
-3. the lead has a contact method, is not opted out and is not marked spam;
+3. the lead has a contact method, is not marked spam, and the customer has not opted out of
+   being contacted (resolved from the consent ledger at send time; see "Consent" below);
 4. a route exists for the lead's tenant + location + department, and it is `enabled`;
 5. the route is `verified`.
 
@@ -115,18 +141,70 @@ Transport selection:
 - **Live** requires `NODE_ENV=production` and `LEAD_DELIVERY_MODE=live` and
   `ADF_SEND_ENABLED=true`, plus a `PRODUCTION` route that is `productionEnabled`. A reserved test
   domain is refused in live mode.
-- **Anything else is sandbox**, whatever the route says: the in-process sink
+- **Production never uses a sandbox transport.** With `NODE_ENV=production` and live not fully
+  gated on (for example `LEAD_DELIVERY_MODE` unset), the delivery is `BLOCKED:
+  sandbox_in_production`; nothing is written to the sink or sent to any SMTP host. Both sandbox
+  transports also refuse on their own in production. Production either sends live or sends
+  nothing.
+- **Outside production, anything that is not live is sandbox**, whatever the route says: the in-process sink
   (`ADF_SANDBOX_TRANSPORT=sink`, default) or the loopback mock SMTP (`smtp`). Sandbox SMTP
   additionally requires a loopback host and a reserved-domain recipient, so even a relaying MTA
   on localhost cannot reach a real mailbox.
 - The SMTP transport itself refuses any non-loopback host unless live is fully gated on.
 - `SANDBOX` routes may only point at reserved test domains and can never be production-enabled.
+- `LeadDelivery.deliveryMode` (`sandbox` / `live`) records the mode of the latest transport
+  hand-off and is shown in the operator API. A sandbox acknowledgement never counts as
+  acknowledged in a live environment: on the next lead change, or on an operator replay, such a
+  row is queued again (`sandbox_ack_superseded`; the sandbox receipt stays in the history) and
+  then has to pass every live gate.
+
+Environment-level blocks are re-evaluated automatically. Rows blocked for
+`sandbox_in_production` or `send_disabled` are re-queued (`gate_reevaluation`) by a five-minute
+sweep once the environment no longer blocks them; every other gate is then checked again by the
+handler. The sweep does nothing while `ADF_SEND_ENABLED` is not `true`. Every other block reason
+needs an operator replay.
 
 Block reasons an operator can see: `send_disabled`, `flag_off`, `no_consent_basis`,
 `no_contact_method`, `no_location`, `no_route`, `route_disabled`, `route_unverified`,
 `route_tenant_mismatch`, `route_not_production_environment`, `route_not_production_enabled`,
 `destination_unavailable`, `reserved_destination_in_live`, `sandbox_recipient_not_reserved`,
-`smtp_host_not_loopback`.
+`smtp_host_not_loopback`, `sandbox_in_production`, `lead_location_changed`.
+
+## Consent
+
+The handler resolves the customer's standing from the append-only consent ledger
+(`ConsentRecord`) every time it is about to send, including every operator replay
+(`lead-consent-standing.ts`, pure). It looks up the lead's own normalised email and phone inside
+the lead's own tenant; another rooftop's ledger never applies. Per channel (text = `SMS`,
+email = `EMAIL`, call = `CALL`) the latest non-revoked record for that endpoint wins, and on an
+exact timestamp tie the opt-out wins.
+
+Handing a lead to the rooftop's own CRM is not a marketing send, so it does not need a marketing
+grant. The hand-off is refused with `BLOCKED: no_consent_basis` only when the customer may not be
+contacted at all:
+
+1. `Lead.optOutAt` is set, or the lead is marked spam; or
+2. the ledger holds an explicit do-not-contact / all-channel opt-out for one of the lead's
+   endpoints (an opt-out record with `channel = ALL`, or evidence `doNotContact: true` /
+   `scope: ALL`) with no later grant on that endpoint; or
+3. every way the lead could be reached is opted out: the email, if the lead has one, has a
+   standing `EMAIL` opt-out **and** the phone, if the lead has one, has standing opt-outs for
+   **both** `SMS` and `CALL`.
+
+An opt-out on a single channel while another contact channel remains (for example a text `STOP`
+from a customer who also gave an email, or whose phone has no call opt-out) does **not** block
+the hand-off. It is reported truthfully instead: that channel is `no` in the consent summary, the
+phone is not typed `cellphone`, and it is never reported as consent whatever `Lead.consentTo*`
+says. The rooftop's CRM is then responsible for honouring the per-channel `no`.
+
+The consent summary in `<comments>` is `text=…, email=…, call=…` with `yes` (latest ledger record
+is a grant, or no ledger record and the lead flag is set), `no` (latest ledger record is an
+opt-out, or `Lead.optOutAt`), or `not recorded`.
+
+Limits: nothing writes an all-channel do-not-contact record today (no staff or privacy flow
+creates one), so rule 2 is exercised by tests only; `WHATSAPP` records are not summarised; the
+ledger is matched by exact normalised endpoint, so a customer who opted out under a different
+phone or email is not recognised.
 
 ## ADF document
 
@@ -172,14 +250,42 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
 - Key: `lead-delivery:v1:{leadId}:ADF_EMAIL:{locationId}:{department}`, unique per tenant. This
   is the route's natural key, so it is deterministic per (tenant, lead, channel, route).
 - Double submit, a later lead update, an outbox retry or a replay never create a second row. An
-  acknowledged delivery is never handed to a transport again.
+  acknowledged delivery is never handed to a transport again (a *sandbox* acknowledgement does
+  not count as one in a live environment — see "Gates").
 - Retryable failures (SMTP 4xx, connection, timeout) leave the row `FAILED` and use the existing
   outbox backoff; after 8 attempts the row is `DEAD`. Permanent failures (SMTP 5xx, bad address,
   invalid document) go straight to `DEAD`.
+- Every hand-off has **one hard overall deadline** (`ADF_SEND_DEADLINE_MS`, default 30 s,
+  maximum 60 s) covering connect, greeting, TLS, auth and DATA together. At the deadline the SMTP
+  connection is aborted and the attempt is a retryable failure (`send_deadline_exceeded`); the
+  handler enforces the same deadline around any transport. nodemailer's per-phase timeouts
+  (8 s connect, 8 s greeting, 15 s idle socket) only bound idle phases and remain in place.
+- A `SENT` row with no outcome is treated as a crashed attempt only after 90 s
+  (`SENT_STALE_MS` = maximum deadline 60 s + 30 s margin), so a row cannot be reclaimed and
+  re-sent while its own send is still inside its deadline. The 120 s outbox batch lease is
+  longer than that window; if a lease expires under a long batch, the second worker finds the
+  row `SENT` and fresh and backs off (`delivery_in_flight`).
 - One ADF message is sent per lead. Later lead updates are not re-sent.
-- Delivery is at-least-once in one narrow case: if the process dies after the transport accepts
-  but before `ACCEPTED` is written, the stale `SENT` row is retried after 90 seconds with the same
-  `Message-ID`.
+- Delivery is **at-least-once, not exactly-once**. The guarantee is: an *acknowledged* delivery
+  is never handed to a transport again. It is not "at most one accepted send" in every failure.
+- After a transport accepts, the handler never marks the row `FAILED` and never re-sends because
+  of a failure to *record* the acknowledgement:
+  1. the `ACCEPTED` write (row + history, one transaction) is retried three times;
+  2. a lost compare-and-set is resolved against the row's current state: already acknowledged is
+     a no-op; a row another attempt had marked `FAILED`/`DEAD` becomes `ACCEPTED` with
+     `late_transport_receipt` evidence; any other state keeps the receipt in the history
+     (`accepted_receipt_unapplied`);
+  3. if the write still fails, the receipt is stored on the `SENT` row in one statement with
+     `lastErrorCode = accepted_record_pending`. The stale-`SENT` reclaim skips such rows; the
+     outbox retry finalises them to `ACCEPTED` from the stored receipt without a transport call;
+  4. if even that statement fails (database unreachable), the receipt is kept in the worker's
+     memory and the next attempt in that process finalises from it.
+- Remaining duplicate window: the worker process dies after the transport accepts and before any
+  of the writes above commits (or the database is unreachable *and* the process restarts). The
+  stale `SENT` row is then retried with the same `Message-ID`, so a receiver can de-duplicate.
+- If the outbox event exhausts its attempts while a row is `accepted_record_pending`, the row
+  stays `SENT` with that code (it is not `DEAD`, because replay would re-send). Replaying the
+  outbox event finalises it.
 
 ## Privacy
 
@@ -188,7 +294,7 @@ The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable
   are stripped of anything address-like before they are stored.
 - Destination addresses never appear in any API response. Operator responses show the masked
   display only; public and widget endpoints show nothing.
-- In production the sandbox sink keeps metadata and a hash, not the message body.
+- In production the sandbox sink refuses every message (`sandbox_in_production`); it stores nothing.
 
 ## Operator API
 
@@ -211,6 +317,12 @@ to a location. Another tenant's delivery is a 404.
 There is deliberately no HTTP endpoint that creates, verifies or production-enables a route.
 Those are server-side calls on `LeadDeliveryRouteService` only.
 
+Verification is bound to the destination that was reviewed. `verify()` takes the reviewed
+mailbox (`address`) and refuses with `route_destination_changed` when the route no longer points
+at it; independently, the write is conditional on the destination fingerprint that was read, so
+an address rotated concurrently is never left marked verified (rotation itself resets
+`verified` and `productionEnabled`).
+
 ## Environment variables
 
 | Variable | Default | Meaning |
@@ -223,6 +335,7 @@ Those are server-side calls on `LeadDeliveryRouteService` only.
 | `ADF_FROM_ADDRESS` | `adf-sandbox@amqur.example.invalid` | Sender; required when mode is `live` |
 | `ADF_PROVIDER_NAME` | `AMQUR AI` | `<provider><name>` |
 | `ADF_MAX_BYTES` | `65536` | Hard cap on one document |
+| `ADF_SEND_DEADLINE_MS` | `30000` | Hard overall deadline for one hand-off (250–60000) |
 | `ADF_SANDBOX_SINK_DIR` | unset | Optional local `.eml` directory (never in production) |
 
 ## Sandbox demo

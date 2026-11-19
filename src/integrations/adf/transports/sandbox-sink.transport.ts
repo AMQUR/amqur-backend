@@ -6,6 +6,7 @@ import MailComposer from 'nodemailer/lib/mail-composer';
 import {
   buildLeadMailOptions,
   LeadDeliveryTransport,
+  LeadTransportError,
   OutboundLeadMessage,
   TransportReceipt,
 } from './lead-delivery-transport';
@@ -38,6 +39,10 @@ export class SandboxSinkTransport implements LeadDeliveryTransport {
   private readonly records: SinkRecord[] = [];
 
   async send(message: OutboundLeadMessage): Promise<TransportReceipt> {
+    // Defence in depth behind the `sandbox_in_production` gate: production never records a
+    // lead in the sink, so a real lead can never look "accepted" without having been sent.
+    if (process.env.NODE_ENV === 'production')
+      throw new LeadTransportError('sandbox_in_production', false);
     const options = buildLeadMailOptions(message);
     const raw = (await new MailComposer(options).compile().build()).toString(
       'utf8',

@@ -64,6 +64,24 @@ export class ConsentService {
     });
   }
 
+  /**
+   * Link consent captured before a lead existed to that lead. Only the `leadId` reference of
+   * records that have none is set — wording, grant, endpoint and timestamps are never touched
+   * (the ledger stays append-only in substance). Scoped to one tenant + one conversation.
+   */
+  async linkLead(
+    tenantId: string,
+    conversationExternalKey: string,
+    leadId: string,
+  ): Promise<number> {
+    if (!conversationExternalKey || !leadId) return 0;
+    const res = await this.prisma.consentRecord.updateMany({
+      where: { tenantId, conversationExternalKey, leadId: null },
+      data: { leadId },
+    });
+    return res.count;
+  }
+
   async status(
     tenantId: string,
     channel: ConsentChannel,

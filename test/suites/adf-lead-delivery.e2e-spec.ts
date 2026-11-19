@@ -34,7 +34,9 @@ const STORES = {
 type Key = keyof typeof STORES;
 const KEYS = Object.keys(STORES) as Key[];
 const PASSWORD = 'AdfTestPass123!';
-const SMTP_API = 'http://127.0.0.1:18085';
+// Overridable so an isolated stack never shares the (stateful) default mock SMTP.
+const SMTP_API = process.env.MOCK_SMTP_API_URL || 'http://127.0.0.1:18085';
+const SMTP_PORT = process.env.MOCK_SMTP_PORT || '11025';
 const ENV_KEYS = [
   'OUTBOX_PROCESSOR_ENABLED',
   'ADF_SEND_ENABLED',
@@ -164,7 +166,7 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
     process.env.LEAD_DELIVERY_MODE = 'sandbox';
     process.env.ADF_SANDBOX_TRANSPORT = 'sink';
     process.env.ADF_SMTP_HOST = '127.0.0.1';
-    process.env.ADF_SMTP_PORT = '11025';
+    process.env.ADF_SMTP_PORT = SMTP_PORT;
 
     ctx = await createE2eApp();
     crm = ctx.app.get(CrmSyncService);
@@ -508,17 +510,23 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
 
   it('ADF_SEND_ENABLED=false ⇒ nothing is handed to any transport', async () => {
     await smtp.clear();
-    process.env.ADF_SEND_ENABLED = 'false';
     for (const transport of ['sink', 'smtp']) {
       process.env.ADF_SANDBOX_TRANSPORT = transport;
+      // Queued while sending was on, switched off before the worker ran: blocked, not sent.
+      process.env.ADF_SEND_ENABLED = 'true';
       const lead = await newLead('infiniti');
-      const d = await attempt((await submit('infiniti', lead.id))!.id);
+      const queued = (await submit('infiniti', lead.id))!;
+      process.env.ADF_SEND_ENABLED = 'false';
+      const d = await attempt(queued.id);
       expect(d).toMatchObject({
         status: 'BLOCKED',
         blockedReason: 'send_disabled',
         attempts: 0,
         sentAt: null,
       });
+      // (R11) A lead that arrives while the master switch is off creates no row at all.
+      const later = await newLead('infiniti');
+      expect(await submit('infiniti', later.id)).toBeNull();
     }
     expect(sink.messages()).toHaveLength(0);
     expect(await smtp.messages()).toHaveLength(0);
@@ -1216,8 +1224,9 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
       await smtp.mode('reject', 1);
       await attempt(await run('north'));
       await smtp.mode('none');
+      const blocked = await run('infiniti');
       process.env.ADF_SEND_ENABLED = 'false';
-      await attempt(await run('infiniti'));
+      await attempt(blocked);
     } finally {
       for (const s of spies) s.mockRestore();
     }

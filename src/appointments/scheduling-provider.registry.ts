@@ -6,16 +6,37 @@ import type {
   ServiceSchedulingProviderAdapter,
 } from './scheduling-provider';
 import { CircuitBreakerService } from '../integrations/core/circuit-breaker.service';
+import {
+  assertSandboxSchedulerAllowed,
+  sandboxSchedulerEnabled,
+} from './sandbox-scheduling.adapter';
 
 export type ResolvedScheduler = {
   adapter: ServiceSchedulingProviderAdapter;
   connectionId: string;
   provider: string;
   mode: 'sandbox' | 'production';
-  /** Demo scheduler (adapter-declared). Never a real dealership booking. */
+  /** Sandbox booking per isSandboxBooking(): demo adapter or sandbox-mode connection. */
   sandbox: boolean;
   displayName: string;
 };
+
+/**
+ * THE one derivation of "is this booking a sandbox / demo booking?". A booking is sandbox when
+ * the adapter itself is a demo scheduler OR the connection runs in the vendor's sandbox mode
+ * (anything not explicitly `production`). Receipts, cards, replies, reminders and conversation
+ * state all take the label from here — never from a second, local rule.
+ */
+export function isSandboxBooking(
+  s: Pick<ResolvedScheduler, 'mode'> & {
+    adapter?: Pick<ServiceSchedulingProviderAdapter, 'sandbox'>;
+    sandbox?: boolean;
+  },
+): boolean {
+  return (
+    s.sandbox === true || s.adapter?.sandbox === true || s.mode !== 'production'
+  );
+}
 
 /** Extra per-tenant/location gate an adapter must pass on every resolve (fail-closed). */
 export type SchedulerGate = (
@@ -49,9 +70,17 @@ export class SchedulingProviderRegistry {
     adapter: ServiceSchedulingProviderAdapter,
     gate?: SchedulerGate,
   ): void {
-    // A sandbox scheduler can never be registered in production, whoever asks.
-    if (adapter.sandbox && process.env.NODE_ENV === 'production') {
-      throw new Error('sandbox_scheduler_forbidden_in_production');
+    // A sandbox scheduler can never be registered in production, whoever asks — nor anywhere
+    // without the explicit SANDBOX_SCHEDULER_ENABLED=true opt-in.
+    if (adapter.sandbox) assertSandboxSchedulerAllowed();
+    // An adapter that can book must be able to find and cancel a booking by idempotency key,
+    // otherwise a lost response would leave an orphan booking nobody can compensate.
+    if (
+      adapter.capabilities().create &&
+      (typeof adapter.findByIdempotencyKey !== 'function' ||
+        typeof adapter.cancelByIdempotencyKey !== 'function')
+    ) {
+      throw new Error('scheduler_adapter_missing_idempotent_lookup');
     }
     this.adapters.set(provider, adapter);
     if (gate) this.gates.set(provider, gate);
@@ -99,7 +128,7 @@ export class SchedulingProviderRegistry {
         continue;
       }
       if (this.breaker.isOpen(`scheduler:${c.id}`)) continue;
-      if (adapter.sandbox && process.env.NODE_ENV === 'production') continue;
+      if (adapter.sandbox && !sandboxSchedulerEnabled()) continue;
       const gate = this.gates.get(c.provider);
       if (gate && !(await gate(tenantId, locationId).catch(() => false)))
         continue;
@@ -116,7 +145,10 @@ export class SchedulingProviderRegistry {
         connectionId: c.id,
         provider: c.provider,
         mode: cfg.mode === 'production' ? 'production' : 'sandbox',
-        sandbox: adapter.sandbox === true,
+        sandbox: isSandboxBooking({
+          adapter,
+          mode: cfg.mode === 'production' ? 'production' : 'sandbox',
+        }),
         displayName: adapter.displayName ?? c.provider,
       };
     }

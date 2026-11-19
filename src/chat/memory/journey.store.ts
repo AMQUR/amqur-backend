@@ -123,6 +123,8 @@ export type JourneyState = {
     requestedDate?: string | null;
     requestedTime?: string | null;
     outcome: string;
+    /** True when the confirmation came from a sandbox (demo) scheduler — said on every mention. */
+    sandbox?: boolean;
   };
   /** appointment being collected (missing date/time) */
   draftAppointment?: {

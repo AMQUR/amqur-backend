@@ -77,6 +77,15 @@ export function mapLeadToAdf(p: {
   providerName: string;
   vehicle: MapperVehicle;
   appointment: MapperAppointment;
+  /**
+   * Per-channel standing resolved from the consent ledger (true / false / not recorded).
+   * When omitted the lead's own flags are used.
+   */
+  consent?: {
+    text: boolean | null;
+    email: boolean | null;
+    call: boolean | null;
+  };
 }): AdfLeadDto {
   const { lead } = p;
   const interest: AdfVehicleInterest =
@@ -120,6 +129,11 @@ export function mapLeadToAdf(p: {
       }
     : null;
   const optedOut = lead.optOutAt !== null;
+  const standing = p.consent ?? {
+    text: consent(lead.consentToText, optedOut),
+    email: consent(lead.consentToEmail, optedOut),
+    call: consent(lead.consentToCall, optedOut),
+  };
   return {
     leadRef: `amqur-lead-${lead.id}`,
     idSource: 'AMQUR',
@@ -130,18 +144,15 @@ export function mapLeadToAdf(p: {
       lastName: lead.lastName ?? undefined,
       email: lead.email ?? undefined,
       phone: lead.phone ?? undefined,
-      phoneType: lead.consentToText ? 'cellphone' : 'voice',
+      // Never label a number textable when the customer's standing for text is not an opt-in.
+      phoneType: standing.text === true ? 'cellphone' : 'voice',
     },
     comments: {
       department: p.department,
       requestedAction: ACTIONS[p.department],
       preferredContact: lead.preferredContact ?? undefined,
       appointment,
-      consent: {
-        text: consent(lead.consentToText, optedOut),
-        email: consent(lead.consentToEmail, optedOut),
-        call: consent(lead.consentToCall, optedOut),
-      },
+      consent: standing,
       source: lead.source,
       utmSource: lead.utmSource ?? undefined,
       utmMedium: lead.utmMedium ?? undefined,

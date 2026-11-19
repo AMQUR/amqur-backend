@@ -1,7 +1,9 @@
 import { StoreHoursService } from '../../locations/store-hours.service';
 import {
+  bookingFamily,
   buildPicker,
   rememberPicker,
+  settlePickersAfterBooking,
   requestOnlyDays,
   resolveSelection,
   SLOT_OFFER_TTL_MS,
@@ -343,5 +345,101 @@ describe('buildPicker + resolveSelection', () => {
       st = rememberPicker(st, offered);
     }
     expect(st!.pickers!.map((p) => p.id)).toEqual(ids.slice(-3));
+  });
+});
+
+describe('R5 — a provider-slot card is spent once a booking is saved', () => {
+  const s1 = '2026-10-14T15:00:00.000Z';
+  const s2 = '2026-10-14T17:00:00.000Z';
+  const offer = (type: 'TEST_DRIVE' | 'SALES' | 'SERVICE' = 'TEST_DRIVE') =>
+    buildPicker({
+      type,
+      lang: 'en',
+      rooftopName: 'Fixture',
+      timezone: TZ,
+      locationId: 'loc',
+      now,
+      days: ['2026-10-14'],
+      provider: {
+        connectionId: 'c1',
+        provider: 'MOCK',
+        sandbox: true,
+        slots: [slot(s1), slot(s2)],
+      },
+    }).offered;
+  const select = (
+    state: SalesDeskState,
+    pickerId: string,
+    slotId: string,
+    at = now,
+  ) =>
+    resolveSelection({
+      selection: { pickerId, slotId },
+      state,
+      locationId: 'loc',
+      timezone: TZ,
+      now: at,
+    });
+
+  it('after slot A is booked, slot B on the same card is refused as already_booked; A replays', () => {
+    const picker = offer();
+    const [a, b] = picker.slots!;
+    let st = rememberPicker(undefined, picker);
+    expect(select(st, picker.id, b.id)).toMatchObject({ ok: true });
+    st = settlePickersAfterBooking(st, {
+      pickerId: picker.id,
+      slotId: a.id,
+      type: 'TEST_DRIVE',
+    });
+    expect(select(st, picker.id, b.id)).toEqual({
+      ok: false,
+      reason: 'already_booked',
+      type: 'TEST_DRIVE',
+    });
+    // The booked slot is an idempotent replay — even after its 15-minute offer window.
+    const later = new Date(now.getTime() + SLOT_OFFER_TTL_MS + 60_000);
+    expect(select(st, picker.id, a.id, later)).toMatchObject({
+      ok: true,
+      kind: 'slot',
+      slot: { id: a.id },
+    });
+    // Only the booked slot is still remembered.
+    expect(st.pickers![0].slots!.map((x) => x.id)).toEqual([a.id]);
+  });
+
+  it('every other remembered slot card of the same kind is spent too; other kinds are untouched', () => {
+    const older = offer('SALES'); // same family as TEST_DRIVE
+    const booked = offer('TEST_DRIVE');
+    const service = offer('SERVICE');
+    const requestOnly = buildPicker({
+      type: 'TEST_DRIVE',
+      lang: 'en',
+      rooftopName: 'Fixture',
+      timezone: TZ,
+      locationId: 'loc',
+      now,
+      days: ['2026-10-14'],
+    }).offered;
+    let st: SalesDeskState = {
+      pickers: [older, booked, service, requestOnly],
+    };
+    st = settlePickersAfterBooking(st, {
+      pickerId: booked.id,
+      slotId: booked.slots![0].id,
+      type: 'TEST_DRIVE',
+    });
+    expect(select(st, older.id, older.slots![0].id)).toMatchObject({
+      ok: false,
+      reason: 'already_booked',
+    });
+    expect(st.pickers!.find((p) => p.id === older.id)!.slots).toEqual([]);
+    expect(select(st, service.id, service.slots![0].id)).toMatchObject({
+      ok: true,
+    });
+    expect(st.pickers!.find((p) => p.id === requestOnly.id)).toEqual(
+      requestOnly,
+    );
+    expect(bookingFamily('SALES')).toBe(bookingFamily('TEST_DRIVE'));
+    expect(bookingFamily('SERVICE')).not.toBe(bookingFamily('SALES'));
   });
 });

@@ -201,25 +201,49 @@ export class LeadDeliveryRouteService {
     return route;
   }
 
-  /** Record that the recipient was verified, with the evidence reference. */
+  /**
+   * Record that the recipient was verified, with the evidence reference. The verification is
+   * bound to the DESTINATION that was reviewed: pass `address` (the mailbox the reviewer
+   * confirmed) and it must still be the route's destination; and the write itself is
+   * conditional on the fingerprint read here, so an address rotated concurrently can never end
+   * up marked verified.
+   */
   async verify(
     tenantId: string,
     routeId: string,
-    input: { evidence: string },
+    input: { evidence: string; address?: string },
     actor: string,
   ) {
     const route = await this.own(tenantId, routeId);
     const evidence = (input.evidence ?? '').trim().slice(0, 500);
     if (evidence.length < 6)
       throw new BadRequestException('Verification evidence is required');
-    const updated = await this.prisma.leadDeliveryRoute.update({
-      where: { id: route.id },
+    if (input.address !== undefined) {
+      const reviewed = normalizeDestination(input.address);
+      if (
+        !reviewed ||
+        this.fingerprint(reviewed) !== route.destinationFingerprint
+      )
+        throw new ConflictException('route_destination_changed');
+    }
+    const res = await this.prisma.leadDeliveryRoute.updateMany({
+      where: {
+        id: route.id,
+        tenantId,
+        destinationFingerprint: route.destinationFingerprint,
+      },
       data: {
         verified: true,
         verifiedAt: new Date(),
         verifiedBy: actor,
         verificationEvidence: evidence,
       },
+    });
+    // The destination changed between the read and the write: nothing was verified.
+    if (res.count !== 1)
+      throw new ConflictException('route_destination_changed');
+    const updated = await this.prisma.leadDeliveryRoute.findFirstOrThrow({
+      where: { id: route.id, tenantId },
       select: ROUTE_PUBLIC_SELECT,
     });
     await this.audit(tenantId, actor, 'lead_delivery_route.verified', route, {

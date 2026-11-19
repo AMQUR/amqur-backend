@@ -4,11 +4,13 @@ import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { SchedulingProviderRegistry } from './scheduling-provider.registry';
 import {
   SANDBOX_SCHEDULER_PROVIDER,
+  sandboxSchedulerEnabled,
   SandboxSchedulingAdapter,
 } from './sandbox-scheduling.adapter';
 
 /**
- * Registers the SANDBOX scheduler outside production only. It is then still subject to the
+ * Registers the SANDBOX scheduler outside production only, and only when the process was
+ * started with SANDBOX_SCHEDULER_ENABLED=true (default off). It is then still subject to the
  * registry's existing gates (an enabled + liveReady `appointments` IntegrationConnection for
  * the tenant/location) AND the per-tenant/location `sandboxScheduler` flag (default off).
  * In production nothing is constructed or registered, and the flag is forced off.
@@ -29,7 +31,8 @@ export class SandboxSchedulerRegistrar implements OnModuleInit {
 
   /** Returns true when the sandbox adapter was registered. Never true in production. */
   registerIfAllowed(): boolean {
-    if (process.env.NODE_ENV === 'production') return false;
+    // Production hard refusal AND the explicit SANDBOX_SCHEDULER_ENABLED=true opt-in.
+    if (!sandboxSchedulerEnabled()) return false;
     const adapter = new SandboxSchedulingAdapter(async (ctx, startUtc) => {
       const n = await this.prisma.appointmentProviderReceipt.count({
         where: {
@@ -50,7 +53,7 @@ export class SandboxSchedulerRegistrar implements OnModuleInit {
       SANDBOX_SCHEDULER_PROVIDER,
       adapter,
       async (tenantId, locationId) =>
-        process.env.NODE_ENV !== 'production' &&
+        sandboxSchedulerEnabled() &&
         (await this.flags.resolve(tenantId, locationId)).sandboxScheduler ===
           true,
     );

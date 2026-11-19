@@ -30,6 +30,16 @@ export type DeliveryEvidence =
       providerMessageId: string;
       rawStatus: string;
     }
+  /**
+   * The same acknowledgement, recorded AFTER another attempt had already marked the row
+   * FAILED/DEAD (a lost compare-and-set). The transport did accept, so the row must say so.
+   */
+  | {
+      kind: 'late_transport_receipt';
+      providerName: string;
+      providerMessageId: string;
+      rawStatus: string;
+    }
   | { kind: 'transport_error'; code: string; retryable: boolean }
   | { kind: 'attempts_exhausted'; code: string }
   | { kind: 'invalid_payload'; code: string }
@@ -43,7 +53,14 @@ export type DeliveryEvidence =
       crmRecordRef?: string | null;
       actor: string;
     }
-  | { kind: 'operator_replay'; actor: string };
+  | { kind: 'operator_replay'; actor: string }
+  /** An environment-level block reason (see REEVALUABLE_BLOCK_REASONS) no longer applies. */
+  | { kind: 'gate_reevaluation'; reason: string }
+  /**
+   * The row was acknowledged by a SANDBOX transport and the environment is now live: the sandbox
+   * acknowledgement does not count, so the delivery is queued again (caller enforces the mode).
+   */
+  | { kind: 'sandbox_ack_superseded'; actor: string };
 
 export type TransitionResult =
   | { ok: true; noop: false; to: DeliveryStatus }
@@ -83,6 +100,20 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
       from: ['FAILED', 'DEAD', 'BLOCKED'],
       evidence: (e) => e.kind === 'operator_replay' && nonEmpty(e.actor),
     },
+    {
+      from: ['BLOCKED'],
+      evidence: (e) => e.kind === 'gate_reevaluation' && nonEmpty(e.reason),
+    },
+    {
+      from: [
+        'ACCEPTED',
+        'DELIVERED',
+        'CRM_PARSED',
+        'CRM_MATCHED',
+        'CRM_REJECTED',
+      ],
+      evidence: (e) => e.kind === 'sandbox_ack_superseded' && nonEmpty(e.actor),
+    },
   ],
   SENT: [
     {
@@ -99,6 +130,14 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
       from: ['SENT'],
       evidence: (e) =>
         e.kind === 'transport_receipt' &&
+        nonEmpty(e.providerName) &&
+        nonEmpty(e.providerMessageId) &&
+        nonEmpty(e.rawStatus),
+    },
+    {
+      from: ['FAILED', 'DEAD'],
+      evidence: (e) =>
+        e.kind === 'late_transport_receipt' &&
         nonEmpty(e.providerName) &&
         nonEmpty(e.providerMessageId) &&
         nonEmpty(e.rawStatus),
@@ -166,7 +205,9 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
   ],
   BLOCKED: [
     {
-      from: [null, 'QUEUED', 'FAILED'],
+      // SENT → BLOCKED only for a stale (crashed) in-flight attempt whose gate has since closed;
+      // the caller enforces the age, exactly as for the SENT → SENT re-handoff.
+      from: [null, 'QUEUED', 'FAILED', 'SENT'],
       evidence: (e) => e.kind === 'gate_blocked' && nonEmpty(e.reason),
     },
   ],
@@ -189,7 +230,11 @@ export function transitionDelivery(
   if (from === to && !isReHandoff)
     return { ok: true, noop: true, reason: 'duplicate' };
 
-  if (from !== null && evidence.kind !== 'operator_replay') {
+  if (
+    from !== null &&
+    evidence.kind !== 'operator_replay' &&
+    evidence.kind !== 'sandbox_ack_superseded'
+  ) {
     const rf = RANK[from];
     const rt = RANK[to];
     // Late arrival of an earlier rung (e.g. a retried "accepted" after DELIVERED).
