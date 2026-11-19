@@ -154,6 +154,66 @@ export const envValidationSchema = Joi.object({
   /** Public HTTPS URLs for this deployment (tenant/env config — not hardcoded branding). */
   PUBLIC_API_URL: Joi.string().uri().optional().allow(''),
   PUBLIC_WIDGET_URL: Joi.string().uri().optional().allow(''),
+
+  /**
+   * Per-rooftop ADF/XML lead delivery (docs/ADF_LEAD_DELIVERY.md). Every switch is fail-closed.
+   * ADF_SEND_ENABLED is the master switch (default false: nothing is handed to any transport).
+   */
+  ADF_SEND_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  /**
+   * sandbox (default) | live. `live` only takes effect when NODE_ENV=production AND
+   * ADF_SEND_ENABLED=true AND the route is a verified, production-enabled PRODUCTION route;
+   * otherwise the transport is forced to the sandbox sink / loopback mock SMTP.
+   */
+  LEAD_DELIVERY_MODE: Joi.string()
+    .valid('sandbox', 'live')
+    .optional()
+    .default('sandbox'),
+  /** Sandbox transport: in-process sink (default) or the loopback mock SMTP server. */
+  ADF_SANDBOX_TRANSPORT: Joi.string()
+    .valid('sink', 'smtp')
+    .optional()
+    .default('sink'),
+  /** SMTP relay. Outside fully-gated live mode only a loopback host is accepted. */
+  ADF_SMTP_HOST: Joi.when('LEAD_DELIVERY_MODE', {
+    is: 'live',
+    then: Joi.string().hostname().required(),
+    otherwise: Joi.string().optional().allow('').default('127.0.0.1'),
+  }),
+  ADF_SMTP_PORT: Joi.number().port().optional().default(11025),
+  ADF_SMTP_SECURE: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  ADF_SMTP_USER: Joi.string().optional().allow(''),
+  ADF_SMTP_PASS: Joi.string().optional().allow(''),
+  /** Envelope/From address (needs SPF/DKIM/DMARC alignment before any live send). */
+  ADF_FROM_ADDRESS: Joi.when('LEAD_DELIVERY_MODE', {
+    is: 'live',
+    then: Joi.string().email().required(),
+    otherwise: Joi.string()
+      .optional()
+      .allow('')
+      .default('adf-sandbox@amqur.example.invalid'),
+  }),
+  /** `<provider><name>` in the ADF document. */
+  ADF_PROVIDER_NAME: Joi.string()
+    .max(60)
+    .optional()
+    .allow('')
+    .default('AMQUR AI'),
+  /** Hard cap on one ADF document, bytes. */
+  ADF_MAX_BYTES: Joi.number()
+    .integer()
+    .min(1024)
+    .max(1048576)
+    .optional()
+    .default(65536),
+  /** Optional local directory for sandbox-sink .eml files (never used in production). */
+  ADF_SANDBOX_SINK_DIR: Joi.string().optional().allow(''),
 })
   .with('LLM_DAILY_BUDGET_USD', [
     'LLM_COST_INPUT_PER_MTOK',

@@ -67,6 +67,11 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   smsAiReply: false,
   email: false,
   whatsapp: false,
+  /**
+   * Per-rooftop ADF/XML lead delivery (docs/ADF_LEAD_DELIVERY.md). Default off. Turning it on
+   * only lets deliveries be queued; a send still needs ADF_SEND_ENABLED and a verified route.
+   */
+  adfLeadDelivery: false,
 };
 
 @Injectable()
