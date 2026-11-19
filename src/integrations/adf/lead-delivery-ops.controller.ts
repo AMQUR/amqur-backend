@@ -41,10 +41,7 @@ class ReconcileDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 
-const ASSERT_EVIDENCE_KINDS = [
-  'mailbox_message_id',
-  'smtp_relay_log',
-] as const;
+const ASSERT_EVIDENCE_KINDS = ['mailbox_message_id', 'smtp_relay_log'] as const;
 
 class AssertAcceptedDto {
   @IsString() @MinLength(8) @MaxLength(300) note!: string;
