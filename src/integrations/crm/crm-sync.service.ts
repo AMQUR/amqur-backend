@@ -14,6 +14,7 @@ import {
   TekionConnectionConfig,
 } from '../tekion/tekion.capabilities';
 import { MetricsService } from '../../observability/metrics.service';
+import { LeadDeliveryService } from '../adf/lead-delivery.service';
 
 export type CrmGate =
   | { open: true; provider: 'TEKION'; connectionId: string }
@@ -45,6 +46,7 @@ export class CrmSyncService implements OnModuleInit {
     private readonly tekion: TekionProvider,
     private readonly writeback: TekionCrmWritebackService,
     private readonly metrics: MetricsService,
+    private readonly leadDelivery: LeadDeliveryService,
   ) {}
 
   onModuleInit() {
@@ -154,6 +156,15 @@ export class CrmSyncService implements OnModuleInit {
           },
         });
       }
+    }
+    // Per-rooftop ADF/XML delivery (docs/ADF_LEAD_DELIVERY.md). Off unless the rooftop's
+    // `adfLeadDelivery` flag is on; idempotent per lead, so every lead change may call it.
+    // A failure here must never break the customer's chat turn — the lead is already saved.
+    try {
+      await this.leadDelivery.enqueueForLead(tenantId, leadId);
+    } catch {
+      this.metrics.increment('adf.delivery.enqueue_error');
+      this.logger.warn(`ADF lead delivery enqueue failed lead=${leadId}`);
     }
   }
 }

@@ -18,10 +18,25 @@ import { CrmSyncService } from './crm/crm-sync.service';
 import { LeadsModule } from '../leads/leads.module';
 import { MetaGraphLeadClientService } from './meta/meta-graph-lead.client';
 import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
+import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
+import { LeadDeliveryService } from './adf/lead-delivery.service';
+import { LeadDeliveryRouteService } from './adf/lead-delivery-route.service';
+import { LeadDeliveryOpsController } from './adf/lead-delivery-ops.controller';
+import { SandboxSinkTransport } from './adf/transports/sandbox-sink.transport';
+import { SmtpLeadTransport } from './adf/transports/smtp.transport';
 
 @Module({
-  imports: [InventoryFeedModule, InventoryModule, LeadsModule],
-  controllers: [IntegrationsHealthController, MetaLeadsWebhookController],
+  imports: [
+    InventoryFeedModule,
+    InventoryModule,
+    LeadsModule,
+    FeatureFlagsModule,
+  ],
+  controllers: [
+    IntegrationsHealthController,
+    MetaLeadsWebhookController,
+    LeadDeliveryOpsController,
+  ],
   providers: [
     SecretVaultService,
     CircuitBreakerService,
@@ -36,6 +51,10 @@ import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
     TekionCrmWritebackService,
+    SandboxSinkTransport,
+    SmtpLeadTransport,
+    LeadDeliveryRouteService,
+    LeadDeliveryService,
     CrmSyncService,
   ],
   exports: [
@@ -51,6 +70,9 @@ import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
     TekionCrmWritebackService,
     CrmSyncService,
     MetaLeadsInboxProcessor,
+    SandboxSinkTransport,
+    LeadDeliveryRouteService,
+    LeadDeliveryService,
   ],
 })
 export class IntegrationsModule {}
