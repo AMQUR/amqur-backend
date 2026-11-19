@@ -1129,10 +1129,24 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14, R15)', (
             note: 'Verified Message-ID in the sandbox mailbox capture',
             evidenceKind: 'mailbox_message_id',
             evidenceReference: '<other@amqur.example.invalid>',
+            externalAttestation: true,
           },
           staffId,
         ),
       ).rejects.toThrow(/evidenceReference/);
+      await expect(
+        deliveries.assertAccepted(
+          { tenantId: ids.one.tenantId, locationId: null },
+          d.id,
+          {
+            note: 'Verified Message-ID in the sandbox mailbox capture',
+            evidenceKind: 'mailbox_message_id',
+            evidenceReference: messageId,
+            externalAttestation: false,
+          },
+          staffId,
+        ),
+      ).rejects.toThrow(/externalAttestation/);
       expect(send).not.toHaveBeenCalled();
       const out = await deliveries.assertAccepted(
         { tenantId: ids.one.tenantId, locationId: null },
@@ -1141,6 +1155,7 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14, R15)', (
           note: 'Verified Message-ID in the sandbox mailbox capture',
           evidenceKind: 'mailbox_message_id',
           evidenceReference: messageId,
+          externalAttestation: true,
         },
         staffId,
       );

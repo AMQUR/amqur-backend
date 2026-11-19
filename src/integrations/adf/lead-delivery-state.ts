@@ -56,20 +56,20 @@ export type DeliveryEvidence =
   /**
    * Staff assertion that a previously dispatched SMTP message was accepted by the relay
    * (e.g. verified in the dealership mailbox after a crash between SMTP 250 and the ACCEPTED
-   * write). Never implies CRM match. Requires the durable pre-declared Message-ID AND an
-   * external evidence reference that matches it (or another allowed receipt id).
+   * write). Never implies CRM match. Requires the durable pre-declared Message-ID, a matching
+   * external evidence reference, and an explicit attestation that the Message-ID was observed
+   * outside AMQUR. CRM ingest is not an assert-accepted path (use reconcile → CRM_MATCHED).
    */
   | {
       kind: 'operator_accept_assertion';
       actor: string;
       providerMessageId: string;
-      /** How acceptance was observed outside AMQUR (mailbox / relay log / CRM ingest). */
-      evidenceKind:
-        | 'mailbox_message_id'
-        | 'smtp_relay_log'
-        | 'crm_ingest_receipt';
-      /** Must equal the durable Message-ID for mailbox/smtp kinds; opaque id for CRM ingest. */
+      /** How acceptance was observed outside AMQUR (mailbox or SMTP relay log). */
+      evidenceKind: 'mailbox_message_id' | 'smtp_relay_log';
+      /** Must equal the durable Message-ID cited from the external source. */
       evidenceReference: string;
+      /** Operator affirms the Message-ID was observed outside AMQUR (not ledger echo alone). */
+      externalAttestation: true;
       note?: string | null;
     }
   | { kind: 'operator_replay'; actor: string }
@@ -167,20 +167,14 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
         if (e.kind !== 'operator_accept_assertion') return false;
         if (!nonEmpty(e.actor) || !nonEmpty(e.providerMessageId)) return false;
         if (!nonEmpty(e.evidenceReference)) return false;
+        if (e.externalAttestation !== true) return false;
         if (
           e.evidenceKind !== 'mailbox_message_id' &&
-          e.evidenceKind !== 'smtp_relay_log' &&
-          e.evidenceKind !== 'crm_ingest_receipt'
+          e.evidenceKind !== 'smtp_relay_log'
         )
           return false;
-        // Mailbox / SMTP evidence must cite the same durable Message-ID we dispatched.
-        if (
-          e.evidenceKind === 'mailbox_message_id' ||
-          e.evidenceKind === 'smtp_relay_log'
-        )
-          return e.evidenceReference.trim() === e.providerMessageId.trim();
-        // CRM ingest receipt is an opaque external id (not inventable as "accepted").
-        return e.evidenceReference.trim().length >= 8;
+        // Mailbox / SMTP evidence must cite the same durable Message-ID observed externally.
+        return e.evidenceReference.trim() === e.providerMessageId.trim();
       },
     },
   ],

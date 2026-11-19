@@ -222,14 +222,12 @@ export function reconcileBody(result: 'CRM_PARSED' | 'CRM_MATCHED' | 'CRM_REJECT
   return { result, ...(ref ? { crmRecordRef: ref } : {}), ...(n ? { note: n } : {}) };
 }
 
-export type AssertEvidenceKind =
-  | 'mailbox_message_id'
-  | 'smtp_relay_log'
-  | 'crm_ingest_receipt';
+export type AssertEvidenceKind = 'mailbox_message_id' | 'smtp_relay_log';
 
 /**
- * Body for assert-accepted. Requires external evidence that cites the durable Message-ID
- * (mailbox/smtp) or an opaque CRM ingest receipt — a free-text note alone is not enough.
+ * Body for assert-accepted. Requires a Message-ID pasted from an external mailbox/relay log
+ * (must match the durable id), an explicit external attestation, and a note — a free-text
+ * note or ledger echo alone is not enough. CRM match uses reconcile, not assert-accepted.
  */
 export function assertAcceptedBody(input: {
   note: string;
@@ -237,27 +235,28 @@ export function assertAcceptedBody(input: {
   evidenceReference: string;
   /** Durable Message-ID on the SENT row; required for mailbox/smtp kinds. */
   durableMessageId?: string | null;
+  /** Operator affirms the Message-ID was observed outside AMQUR. */
+  externalAttestation: boolean;
 }) {
   const n = input.note.trim().slice(0, 300);
   if (n.length < 8) throw new Error('Explain how you verified acceptance (at least 8 characters).');
+  if (input.externalAttestation !== true)
+    throw new Error('Confirm you observed this Message-ID outside AMQUR before asserting acceptance.');
   const kind = input.evidenceKind;
-  if (
-    kind !== 'mailbox_message_id' &&
-    kind !== 'smtp_relay_log' &&
-    kind !== 'crm_ingest_receipt'
-  )
-    throw new Error('Choose how acceptance was verified.');
+  if (kind !== 'mailbox_message_id' && kind !== 'smtp_relay_log')
+    throw new Error('Choose mailbox or SMTP relay evidence (CRM match uses Found in CRM).');
   const ref = input.evidenceReference.trim().slice(0, 200);
-  if (!ref) throw new Error('Evidence reference is required.');
-  if (kind === 'mailbox_message_id' || kind === 'smtp_relay_log') {
-    const durable = (input.durableMessageId ?? '').trim();
-    if (!durable) throw new Error('This delivery has no durable Message-ID to match.');
-    if (ref !== durable)
-      throw new Error('Evidence reference must exactly match the durable Message-ID.');
-  } else if (ref.length < 8) {
-    throw new Error('CRM ingest receipt must be at least 8 characters.');
-  }
-  return { note: n, evidenceKind: kind, evidenceReference: ref };
+  if (!ref) throw new Error('Paste the Message-ID from the external mailbox or relay log.');
+  const durable = (input.durableMessageId ?? '').trim();
+  if (!durable) throw new Error('This delivery has no durable Message-ID to match.');
+  if (ref !== durable)
+    throw new Error('Evidence reference must exactly match the durable Message-ID.');
+  return {
+    note: n,
+    evidenceKind: kind,
+    evidenceReference: ref,
+    externalAttestation: true as const,
+  };
 }
 
 export function routeReadiness(r: LeadDeliveryRoute): { label: string; tone: 'ok' | 'warn' | 'neutral' } {

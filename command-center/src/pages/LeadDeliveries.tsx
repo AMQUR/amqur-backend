@@ -35,9 +35,10 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
   const [crmRef, setCrmRef] = useState<Record<string, string>>({});
   const [assertNote, setAssertNote] = useState<Record<string, string>>({});
   const [assertKind, setAssertKind] = useState<
-    Record<string, 'mailbox_message_id' | 'smtp_relay_log' | 'crm_ingest_receipt'>
+    Record<string, 'mailbox_message_id' | 'smtp_relay_log'>
   >({});
   const [assertRef, setAssertRef] = useState<Record<string, string>>({});
+  const [assertAttest, setAssertAttest] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -169,11 +170,13 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                   <div className="stack">
                     <p className="small">
                       Mail may already have been accepted (durable Message-ID on file). Asserting
-                      acceptance requires citing that Message-ID from an external mailbox or relay
-                      log — a note alone is not enough. It is not a CRM match.
+                      acceptance requires pasting that Message-ID from an external mailbox or relay
+                      log and confirming you saw it outside AMQUR — a note or ledger echo alone is
+                      not enough. CRM match uses Found in CRM, not this action.
                     </p>
                     <p className="small muted">
-                      Durable Message-ID: <code>{r.providerMessageId}</code>
+                      Durable Message-ID on file (for comparison only — paste from external source below):{' '}
+                      <code>{r.providerMessageId}</code>
                     </p>
                     <label className="small">
                       Evidence source
@@ -182,20 +185,21 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                         onChange={(e) =>
                           setAssertKind({
                             ...assertKind,
-                            [r.id]: e.target.value as 'mailbox_message_id' | 'smtp_relay_log' | 'crm_ingest_receipt',
+                            [r.id]: e.target.value as 'mailbox_message_id' | 'smtp_relay_log',
                           })
                         }
                       >
                         <option value="mailbox_message_id">Seen in mailbox (Message-ID)</option>
                         <option value="smtp_relay_log">Seen in SMTP relay log (Message-ID)</option>
-                        <option value="crm_ingest_receipt">CRM ingest receipt id</option>
                       </select>
                     </label>
                     <label className="small">
-                      Evidence reference (must match Message-ID unless CRM ingest)
+                      Message-ID pasted from external mailbox or relay log
                       <input
                         maxLength={200}
-                        value={assertRef[r.id] ?? r.providerMessageId ?? ''}
+                        placeholder="Paste Message-ID from external source"
+                        autoComplete="off"
+                        value={assertRef[r.id] ?? ''}
                         onChange={(e) => setAssertRef({ ...assertRef, [r.id]: e.target.value })}
                       />
                     </label>
@@ -207,9 +211,24 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                         onChange={(e) => setAssertNote({ ...assertNote, [r.id]: e.target.value })}
                       />
                     </label>
+                    <label className="small row">
+                      <input
+                        type="checkbox"
+                        checked={assertAttest[r.id] === true}
+                        onChange={(e) =>
+                          setAssertAttest({ ...assertAttest, [r.id]: e.target.checked })
+                        }
+                      />
+                      I observed this Message-ID outside AMQUR (mailbox or relay log), not only on this ledger
+                    </label>
                     <button
                       className="btn"
-                      disabled={busyHere || (assertNote[r.id] ?? '').trim().length < 8}
+                      disabled={
+                        busyHere ||
+                        (assertNote[r.id] ?? '').trim().length < 8 ||
+                        !(assertRef[r.id] ?? '').trim() ||
+                        assertAttest[r.id] !== true
+                      }
                       onClick={() =>
                         void act(
                           r.id,
@@ -220,8 +239,9 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                                 assertAcceptedBody({
                                   note: assertNote[r.id] ?? '',
                                   evidenceKind: assertKind[r.id] ?? 'mailbox_message_id',
-                                  evidenceReference: assertRef[r.id] ?? r.providerMessageId ?? '',
+                                  evidenceReference: assertRef[r.id] ?? '',
                                   durableMessageId: r.providerMessageId,
+                                  externalAttestation: assertAttest[r.id] === true,
                                 }),
                               ),
                             }),

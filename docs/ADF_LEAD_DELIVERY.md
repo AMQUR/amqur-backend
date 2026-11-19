@@ -281,8 +281,12 @@ It is written to the delivery row (`providerMessageId`) with `lastErrorCode = se
 **before** the transport is called, so a crash between SMTP acceptance and the ACCEPTED write
 still leaves a durable identifier for receiver de-duplication. An operator who verifies the
 message out-of-band may `POST /ops/lead-deliveries/:id/assert-accepted` (audited) to move
-`SENT → ACCEPTED` without a second send; that is not a CRM match and does not claim exactly-once
-SMTP delivery.
+`SENT → ACCEPTED` without a second send. The body requires `evidenceKind` of
+`mailbox_message_id` or `smtp_relay_log`, an `evidenceReference` that exactly equals the durable
+Message-ID (pasted from the external mailbox or relay log — the UI does not pre-fill it),
+`externalAttestation: true`, and a note (≥ 8 characters). Inventable CRM ingest strings are not
+accepted here; CRM match uses reconcile → `CRM_MATCHED`. Assert-accepted is not a CRM match and
+does not claim exactly-once SMTP delivery.
 
 ## Idempotency and retries
 

@@ -1344,11 +1344,10 @@ export class LeadDeliveryService implements OnModuleInit {
     id: string,
     input: {
       note: string;
-      evidenceKind:
-        | 'mailbox_message_id'
-        | 'smtp_relay_log'
-        | 'crm_ingest_receipt';
+      evidenceKind: 'mailbox_message_id' | 'smtp_relay_log';
       evidenceReference: string;
+      /** Must be true: operator affirms Message-ID was observed outside AMQUR. */
+      externalAttestation: boolean;
     },
     userId: string,
   ) {
@@ -1363,25 +1362,22 @@ export class LeadDeliveryService implements OnModuleInit {
       throw new BadRequestException(
         'note must explain how acceptance was verified (min 8 chars)',
       );
+    if (input.externalAttestation !== true)
+      throw new BadRequestException(
+        'externalAttestation must be true — confirm the Message-ID was observed outside AMQUR',
+      );
     const evidenceKind = input.evidenceKind;
     const evidenceReference = input.evidenceReference?.trim() ?? '';
     if (
       evidenceKind !== 'mailbox_message_id' &&
-      evidenceKind !== 'smtp_relay_log' &&
-      evidenceKind !== 'crm_ingest_receipt'
+      evidenceKind !== 'smtp_relay_log'
     )
-      throw new BadRequestException('unknown_evidence_kind');
-    if (
-      (evidenceKind === 'mailbox_message_id' ||
-        evidenceKind === 'smtp_relay_log') &&
-      evidenceReference !== messageId
-    )
+      throw new BadRequestException(
+        'unknown_evidence_kind — use mailbox_message_id or smtp_relay_log; CRM match uses reconcile',
+      );
+    if (evidenceReference !== messageId)
       throw new BadRequestException(
         'evidenceReference must equal the durable Message-ID for mailbox/smtp evidence',
-      );
-    if (evidenceKind === 'crm_ingest_receipt' && evidenceReference.length < 8)
-      throw new BadRequestException(
-        'crm_ingest_receipt evidenceReference must be at least 8 characters',
       );
     await this.prisma.$transaction(async (tx) => {
       const moved = await this.apply(
@@ -1394,6 +1390,7 @@ export class LeadDeliveryService implements OnModuleInit {
           providerMessageId: messageId,
           evidenceKind,
           evidenceReference,
+          externalAttestation: true,
           note: redactForLog(note).slice(0, 300),
         },
         {

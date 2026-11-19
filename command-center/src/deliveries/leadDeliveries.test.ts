@@ -73,7 +73,7 @@ describe('lead delivery ledger helpers', () => {
     expect(reconcileBody('CRM_MATCHED', ' OPP-1 ', ' checked ')).toEqual({ result: 'CRM_MATCHED', crmRecordRef: 'OPP-1', note: 'checked' });
     expect(reconcileBody('CRM_REJECTED')).toEqual({ result: 'CRM_REJECTED' });
   });
-  it('requires matching external evidence to assert acceptance without resending', () => {
+  it('requires matching external evidence and attestation to assert acceptance without resending', () => {
     const mid = '<lead-delivery.d1@amqur.example.invalid>';
     expect(() =>
       assertAcceptedBody({
@@ -81,14 +81,25 @@ describe('lead delivery ledger helpers', () => {
         evidenceKind: 'mailbox_message_id',
         evidenceReference: mid,
         durableMessageId: mid,
+        externalAttestation: true,
       }),
     ).toThrow(/8 characters/);
     expect(() =>
       assertAcceptedBody({
         note: 'Seen in sandbox mailbox capture',
         evidenceKind: 'mailbox_message_id',
+        evidenceReference: mid,
+        durableMessageId: mid,
+        externalAttestation: false,
+      }),
+    ).toThrow(/outside AMQUR/);
+    expect(() =>
+      assertAcceptedBody({
+        note: 'Seen in sandbox mailbox capture',
+        evidenceKind: 'mailbox_message_id',
         evidenceReference: '<other@x>',
         durableMessageId: mid,
+        externalAttestation: true,
       }),
     ).toThrow(/exactly match/);
     expect(
@@ -97,11 +108,13 @@ describe('lead delivery ledger helpers', () => {
         evidenceKind: 'mailbox_message_id',
         evidenceReference: mid,
         durableMessageId: mid,
+        externalAttestation: true,
       }),
     ).toEqual({
       note: 'Seen in sandbox mailbox capture',
       evidenceKind: 'mailbox_message_id',
       evidenceReference: mid,
+      externalAttestation: true,
     });
   });
   it('builds list paths', () => {

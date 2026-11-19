@@ -7,7 +7,15 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  Equals,
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { RolesGuard } from '../../auth/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import {
@@ -36,15 +44,16 @@ class ReconcileDto {
 const ASSERT_EVIDENCE_KINDS = [
   'mailbox_message_id',
   'smtp_relay_log',
-  'crm_ingest_receipt',
 ] as const;
 
 class AssertAcceptedDto {
-  @IsString() @MaxLength(300) note!: string;
+  @IsString() @MinLength(8) @MaxLength(300) note!: string;
   @IsIn(ASSERT_EVIDENCE_KINDS)
   evidenceKind!: (typeof ASSERT_EVIDENCE_KINDS)[number];
-  /** Durable Message-ID (mailbox/smtp) or opaque CRM ingest id. */
+  /** Durable Message-ID copied from an external mailbox or SMTP relay log. */
   @IsString() @MaxLength(200) evidenceReference!: string;
+  /** Affirms the Message-ID was observed outside AMQUR (not ledger echo alone). */
+  @IsBoolean() @Equals(true) externalAttestation!: boolean;
 }
 
 const STAFF = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] as const;
