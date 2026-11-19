@@ -61,6 +61,11 @@ export const LEAD_APPOINTMENT_UPDATE_TOPIC =
 export const UPDATES_NOT_SUPPORTED = 'destination_does_not_accept_updates';
 /** Same meaning as for a lead delivery: accepted by the transport, record still outstanding. */
 const ACCEPT_RECORD_PENDING = 'accepted_record_pending';
+const ABANDONABLE_UPDATE_STATUSES: LeadAppointmentUpdateStatus[] = [
+  'QUEUED',
+  'SENT',
+  'FAILED',
+];
 /** A lead change only looks at appointments touched this recently (no retroactive floods). */
 export const APPOINTMENT_SYNC_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -128,6 +133,18 @@ export class LeadAppointmentUpdateService implements OnModuleInit {
         throw new PermanentOutboxError('bad_payload');
       return this.process(p.updateId, m);
     });
+    this.processor.registerAbandonHandler(
+      LEAD_APPOINTMENT_UPDATE_TOPIC,
+      async (payload, meta) => {
+        if (typeof payload.updateId === 'string') {
+          await this.settleBehindDeadOutbox({
+            id: payload.updateId,
+            tenantId: meta.tenantId,
+            outboxEventId: meta.id,
+          });
+        }
+      },
+    );
     // The moment a lead delivery is accepted, the updates held for it may follow.
     this.deliveries.onAccepted((d) =>
       this.releaseWaiting({ deliveryId: d.id }),
@@ -781,6 +798,74 @@ export class LeadAppointmentUpdateService implements OnModuleInit {
         at: u.acceptedAt ?? new Date(),
       };
     return null;
+  }
+
+  private async settleBehindDeadOutbox(key: {
+    id: string;
+    tenantId: string;
+    outboxEventId: string;
+  }): Promise<boolean> {
+    const update = await this.prisma.leadAppointmentUpdate.findFirst({
+      where: { ...key, status: { in: ABANDONABLE_UPDATE_STATUSES } },
+    });
+    if (!update) return false;
+
+    const pending = this.pendingReceipt(update);
+    if (pending) {
+      await this.recordAccepted(update, pending, null);
+      return true;
+    }
+
+    const now = new Date();
+    return this.move(
+      update,
+      'DEAD',
+      {
+        lastErrorCode: 'outbox_abandoned',
+        lastErrorAt: now,
+        deadAt: now,
+      },
+      { outboxEventId: key.outboxEventId, lastErrorCode: update.lastErrorCode },
+    );
+  }
+
+  async sweepBehindDeadOutbox(limit = 200): Promise<number> {
+    const take = Math.min(Math.max(limit, 1), 500);
+    const rows = await this.prisma.$queryRaw<
+      Array<{ id: string; tenantId: string; outboxEventId: string }>
+    >`
+      SELECT u."id", u."tenantId", u."outboxEventId"
+        FROM "LeadAppointmentUpdate" u
+        JOIN "OutboxEvent" o
+          ON o."id" = u."outboxEventId" AND o."tenantId" = u."tenantId"
+       WHERE u."status" IN (${Prisma.join(
+         ABANDONABLE_UPDATE_STATUSES.map(
+           (status) => Prisma.sql`${status}::"LeadAppointmentUpdateStatus"`,
+         ),
+       )})
+         AND o."topic" = ${LEAD_APPOINTMENT_UPDATE_TOPIC}
+         AND o."status" = 'DEAD'::"OutboxStatus"
+       ORDER BY u."updatedAt", u."id"
+       LIMIT ${take}`;
+    let settled = 0;
+    for (const row of rows) {
+      try {
+        if (await this.settleBehindDeadOutbox(row)) settled += 1;
+      } catch {
+        this.logger.warn(`appointment update ${row.id} settlement will retry`);
+      }
+    }
+    return settled;
+  }
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async sweepBehindDeadOutboxTick(): Promise<void> {
+    if (process.env.OUTBOX_PROCESSOR_ENABLED === 'false') return;
+    try {
+      await this.sweepBehindDeadOutbox();
+    } catch {
+      this.logger.warn('appointment update dead-outbox sweep failed');
+    }
   }
 
   /**
