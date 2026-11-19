@@ -1,6 +1,8 @@
 import request from 'supertest';
 import * as bcrypt from 'bcryptjs';
 import { Role } from '@prisma/client';
+import { ChatOrchestrator } from '../../src/chat/chat.orchestrator';
+import { TurnLockService } from '../../src/chat/turn-lock.service';
 import {
   createE2eApp,
   E2eCtx,
@@ -91,6 +93,84 @@ describe('staff operations (HTTP, Postgres)', () => {
   });
 
   afterAll(async () => ctx.app.close());
+
+  it('serializes staff takeover with an in-flight widget turn', async () => {
+    const first = await api()
+      .post('/api/chat')
+      .set('Authorization', `Bearer ${widget}`)
+      .send({ message: 'What are your hours?' });
+    const { conversationId } = unwrap<{ conversationId: string }>(first.body);
+    const conversation = await ctx.prisma.conversation.findUniqueOrThrow({
+      where: {
+        tenantId_externalKey: {
+          tenantId: seed.alpha.tenant.id,
+          externalKey: conversationId,
+        },
+      },
+    });
+    const orchestrator = ctx.app.get(ChatOrchestrator);
+    const original = orchestrator.handleMessage.bind(orchestrator);
+    let signalEntered!: () => void;
+    let releaseTurn!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      signalEntered = resolve;
+    });
+    const hold = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    const heldTurn = jest
+      .spyOn(orchestrator, 'handleMessage')
+      .mockImplementationOnce(async (input) => {
+        signalEntered();
+        await hold;
+        return original(input);
+      });
+    const customer = api()
+      .post('/api/chat')
+      .set('Authorization', `Bearer ${widget}`)
+      .send({ message: 'Show me some vehicles', conversationId })
+      .then((response) => response);
+    await entered;
+    const lock = ctx.app.get(TurnLockService);
+    const invokeLock = lock.run.bind(lock);
+    let signalStaffQueued!: () => void;
+    const staffQueued = new Promise<void>((resolve) => {
+      signalStaffQueued = resolve;
+    });
+    const pendingStaff = jest
+      .spyOn(lock, 'run')
+      .mockImplementationOnce((key, work, options) => {
+        signalStaffQueued();
+        return invokeLock(key, work, options);
+      });
+    const takeover = api()
+      .post(`/api/ops/conversations/${conversation.id}/takeover`)
+      .set('Authorization', `Bearer ${alphaStaff}`)
+      .then((response) => response);
+    try {
+      await Promise.race([staffQueued, takeover]);
+      expect(pendingStaff).toHaveBeenCalledWith(
+        `${seed.alpha.tenant.id}:${conversationId}`,
+        expect.any(Function),
+      );
+      const stillActive = await ctx.prisma.conversation.findUniqueOrThrow({
+        where: { id: conversation.id },
+      });
+      expect(stillActive.aiPaused).toBe(false);
+    } finally {
+      releaseTurn();
+      heldTurn.mockRestore();
+      pendingStaff.mockRestore();
+      await Promise.allSettled([customer, takeover]);
+    }
+    expect((await customer).status).toBe(201);
+    expect((await takeover).status).toBe(201);
+    const next = await api()
+      .post('/api/chat')
+      .set('Authorization', `Bearer ${widget}`)
+      .send({ message: 'Thanks', conversationId });
+    expect(unwrap<{ type: string }>(next.body).type).toBe('staff_handling');
+  });
 
   it('takeover pauses AI, staff reply reaches the widget, release resumes AI', async () => {
     const first = await api()

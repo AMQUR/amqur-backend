@@ -37,30 +37,37 @@ export class ChatService {
     // One turn at a time per conversation (see TurnLockService). Group-site rooftop routing
     // runs inside the lock: a pass-through for every tenant that is not a designated, enabled
     // group site (docs/CHAT_STREAM_CONTRACT.md §6).
-    return this.turnLock.run(`${input.tenantId}:${input.userId}`, () =>
+    const ingressKey = `${input.tenantId}:${input.userId}`;
+    return this.turnLock.run(ingressKey, () =>
       this.groupRouting.handle(
         { ...input, locationId: input.locationId ?? null },
-        (turn) =>
-          this.orchestrator.handleMessage({
-            message: turn.message,
-            action: turn.action,
-            vin: turn.vin,
-            language: turn.language,
-            pageContext: turn.pageContext as PageContextDto | undefined,
-            lead: turn.lead as LeadSubmissionDto | undefined,
-            appointment: turn.appointment as
-              | AppointmentSelectionDto
-              | undefined,
-            onStatus: turn.onStatus as
-              | ((e: ChatStatusEvent) => void)
-              | undefined,
-            tenantId: turn.tenantId,
-            locationId: turn.locationId ?? null,
-            userId: turn.userId,
-            role: turn.role,
-            pinnedVin: turn.pinnedVin,
-            resumeSearch: turn.resumeSearch,
-          }),
+        (turn) => {
+          const run = () =>
+            this.orchestrator.handleMessage({
+              message: turn.message,
+              action: turn.action,
+              vin: turn.vin,
+              language: turn.language,
+              pageContext: turn.pageContext as PageContextDto | undefined,
+              lead: turn.lead as LeadSubmissionDto | undefined,
+              appointment: turn.appointment as
+                | AppointmentSelectionDto
+                | undefined,
+              onStatus: turn.onStatus as
+                | ((e: ChatStatusEvent) => void)
+                | undefined,
+              tenantId: turn.tenantId,
+              locationId: turn.locationId ?? null,
+              userId: turn.userId,
+              role: turn.role,
+              pinnedVin: turn.pinnedVin,
+              resumeSearch: turn.resumeSearch,
+            });
+          const routedKey = `${turn.tenantId}:${turn.userId}`;
+          return routedKey === ingressKey
+            ? run()
+            : this.turnLock.run(routedKey, run);
+        },
       ),
     );
   }

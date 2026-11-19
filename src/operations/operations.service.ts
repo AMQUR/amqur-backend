@@ -420,6 +420,15 @@ export class OperationsService {
 
   // ───────────── takeover lifecycle
 
+  async conversationExternalKey(scope: Scope, id: string): Promise<string> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId: scope.tenantId, ...this.loc(scope) },
+      select: { externalKey: true },
+    });
+    if (!conversation) throw new NotFoundException('Conversation not found');
+    return conversation.externalKey;
+  }
+
   async takeover(scope: Scope, id: string, userId: string) {
     const c = await this.prisma.conversation.findFirst({
       where: { id, tenantId: scope.tenantId, ...this.loc(scope) },

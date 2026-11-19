@@ -33,6 +33,7 @@ import {
 import type { AuthUser } from '../common/decorators/current-user.decorator';
 import { OperationsService } from './operations.service';
 import { ConversationIdService } from '../chat/conversation-id.service';
+import { TurnLockService } from '../chat/turn-lock.service';
 import { CreditDestinationAdminService } from '../finance/credit-destination-admin.service';
 import { CREDIT_LINK_TYPES } from '../finance/credit-destination';
 import {
@@ -176,6 +177,7 @@ export class OperationsController {
     private readonly financeRequests: FinanceRequestService,
     private readonly partsInquiries: PartsInquiryService,
     private readonly appointments: AppointmentService,
+    private readonly turnLock: TurnLockService,
   ) {}
 
   // ── trade-in appraisal workflow (staff records; managers issue offers)
@@ -431,10 +433,24 @@ export class OperationsController {
     return this.ops.conversation(this.scope(u), id);
   }
 
+  private async withConversationTurn<T>(
+    user: AuthUser,
+    id: string,
+    action: (scope: ReturnType<OperationsController['scope']>) => Promise<T>,
+  ): Promise<T> {
+    const scope = this.scope(user);
+    const externalKey = await this.ops.conversationExternalKey(scope, id);
+    return this.turnLock.run(`${scope.tenantId}:${externalKey}`, () =>
+      action(scope),
+    );
+  }
+
   @Roles(...STAFF)
   @Post('conversations/:id/takeover')
   takeover(@CurrentUser() u: AuthUser, @Param('id') id: string) {
-    return this.ops.takeover(this.scope(u), id, u.sub);
+    return this.withConversationTurn(u, id, (scope) =>
+      this.ops.takeover(scope, id, u.sub),
+    );
   }
 
   @Roles(...STAFF)
@@ -444,13 +460,17 @@ export class OperationsController {
     @Param('id') id: string,
     @Body() b: TransferDto,
   ) {
-    return this.ops.transfer(this.scope(u), id, u.sub, b.toUserId, u.role);
+    return this.withConversationTurn(u, id, (scope) =>
+      this.ops.transfer(scope, id, u.sub, b.toUserId, u.role),
+    );
   }
 
   @Roles(...STAFF)
   @Post('conversations/:id/release')
   release(@CurrentUser() u: AuthUser, @Param('id') id: string) {
-    return this.ops.release(this.scope(u), id, u.sub);
+    return this.withConversationTurn(u, id, (scope) =>
+      this.ops.release(scope, id, u.sub),
+    );
   }
 
   @Roles(...STAFF)
@@ -460,7 +480,9 @@ export class OperationsController {
     @Param('id') id: string,
     @Body() b: TextDto,
   ) {
-    return this.ops.staffReply(this.scope(u), id, u.sub, b.text);
+    return this.withConversationTurn(u, id, (scope) =>
+      this.ops.staffReply(scope, id, u.sub, b.text),
+    );
   }
 
   @Roles(...STAFF)

@@ -56,6 +56,7 @@ import { TurnLockService } from './turn-lock.service';
   ],
   exports: [
     ChatOrchestrator,
+    TurnLockService,
     InventoryEngine,
     JourneyStore,
     ClaudeConversationService,
