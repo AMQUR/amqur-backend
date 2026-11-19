@@ -84,7 +84,19 @@ jobs:
       - name: E2E suites
         run: |
           set -a && . ./test-infra/.env.test && set +a
-          npm run test:e2e
+          # Keep the machine-readable result and the full log so an intermittent failure names
+          # its own test and assertion (expected/received) instead of being lost with the runner.
+          set -o pipefail # the tee below must not mask a jest failure
+          mkdir -p e2e-results
+          npm run test:e2e -- --json --outputFile=e2e-results/jest-results.json 2>&1 | tee e2e-results/jest-output.log
+      - name: Upload E2E results (failing test names, assertions, logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: e2e-results/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload AI evaluation report
         if: always()
         uses: actions/upload-artifact@v4

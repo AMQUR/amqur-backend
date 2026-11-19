@@ -284,7 +284,21 @@ describe('customer journeys (HTTP, Postgres)', () => {
       | { url: string }
       | undefined;
     expect(credit?.url).toMatch(/^\/public\/credit-link\//);
-    expect(credit!.url).not.toMatch(/sam|@|555/i); // no PII in URL
+    // No PII in the URL. The token is `<base64url payload>.<base64url HMAC>`, i.e. random
+    // text that can spell "sam" or "555" by chance, so a text match on it proves nothing and
+    // fails at random. Assert what the link actually carries: opaque ids and an expiry only.
+    expect(credit!.url).not.toMatch(/[@?#]/); // no address, query string or fragment
+    const [payloadB64, mac, ...rest] = credit!.url
+      .slice('/public/credit-link/'.length)
+      .split('.');
+    expect(rest).toEqual([]);
+    expect(mac).toMatch(/^[A-Za-z0-9_-]{43}$/); // HMAC-SHA256 and nothing else
+    const linkPayload = JSON.parse(
+      Buffer.from(payloadB64, 'base64url').toString('utf8'),
+    ) as Record<string, unknown>;
+    expect(Object.keys(linkPayload).sort()).toEqual(['e', 'f', 't']);
+    expect(linkPayload.t).toBe(tenantId);
+    expect(typeof linkPayload.e).toBe('number');
 
     await c.say('Sam Rivera');
     const t8 = await c.say('sam.rivera@example.com');
@@ -338,6 +352,7 @@ describe('customer journeys (HTTP, Postgres)', () => {
       creditLinkState: 'OFFERED',
       tradeInterest: true,
     });
+    expect(linkPayload.f).toBe(fin!.id); // the link names the finance request, not the person
     expect(lead).toMatchObject({
       firstName: 'Sam',
       lastName: 'Rivera',
