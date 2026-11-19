@@ -20,6 +20,8 @@ export type LeadDeliveryRow = {
   attempts: number;
   replayCount: number;
   providerName: string | null;
+  /** How the hand-off was made: 'sandbox' never reached a store. Null until a hand-off happens. */
+  deliveryMode?: 'sandbox' | 'live' | null;
   providerMessageId: string | null;
   crmRecordRef: string | null;
   blockedReason: string | null;
@@ -127,10 +129,19 @@ const BLOCK_REASONS: Record<string, string> = {
   sandbox_recipient_not_reserved: 'Sandbox mode only sends to reserved test addresses.',
   smtp_host_not_loopback: 'Sandbox mode only uses the local test mail server.',
   invalid_adf: 'The lead could not be turned into a valid ADF document.',
+  sandbox_in_production: 'Live sending is not fully set up, and test delivery is not allowed in production. Nothing was sent.',
+  lead_location_changed: 'The lead moved to another rooftop after it was queued. Nothing was sent.',
 };
 export function blockedReasonText(code: string | null): string {
   if (!code) return 'No reason recorded.';
   return BLOCK_REASONS[code] ?? `Reason code: ${code}`;
+}
+
+/** Plain words for how a delivery was handed off. A test hand-off must never read as a real one. */
+export function deliveryModeLabel(mode: LeadDeliveryRow['deliveryMode']): string | null {
+  if (mode === 'sandbox') return 'Test delivery — not sent to the store';
+  if (mode === 'live') return 'Live delivery';
+  return null;
 }
 
 export type Capability = { canReplay: boolean; canReconcile: boolean };

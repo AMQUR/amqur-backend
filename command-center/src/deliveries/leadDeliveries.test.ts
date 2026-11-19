@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LADDER, actorLabel, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
+import { LADDER, deliveryModeLabel, actorLabel, blockedReasonText, capability, isConfirmedInCrm, listPath, needsAttention, reconcileBody, routeReadiness, statusSummary, statusTone, tally, type LeadDeliveryRoute, type LeadDeliveryStatus } from './leadDeliveries';
 
 const ALL: LeadDeliveryStatus[] = ['QUEUED', 'SENT', 'ACCEPTED', 'DELIVERED', 'CRM_PARSED', 'CRM_MATCHED', 'CRM_REJECTED', 'FAILED', 'DEAD', 'BLOCKED'];
 
@@ -61,5 +61,13 @@ describe('lead delivery ledger helpers', () => {
     expect(actorLabel('system:outbox')).toBe('automatic');
     expect(actorLabel('cli:adf-sandbox-demo')).toBe('automatic');
     expect(actorLabel('cmwmxuser0001')).toBe('by staff');
+  });
+  it('labels a test hand-off so it cannot be read as a real one, and explains the newer block reasons', () => {
+    expect(deliveryModeLabel('sandbox')).toMatch(/not sent to the store/);
+    expect(deliveryModeLabel('live')).toBe('Live delivery');
+    expect(deliveryModeLabel(null)).toBeNull();
+    expect(deliveryModeLabel(undefined)).toBeNull();
+    expect(blockedReasonText('sandbox_in_production')).toMatch(/Nothing was sent/);
+    expect(blockedReasonText('lead_location_changed')).toMatch(/another rooftop/);
   });
 });

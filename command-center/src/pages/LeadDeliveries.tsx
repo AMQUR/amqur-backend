@@ -19,6 +19,7 @@ import {
   type LeadDeliveryRoute,
   type LeadDeliveryRow,
   type LeadDeliveryStatus,
+  deliveryModeLabel,
 } from '../deliveries/leadDeliveries';
 
 /**
@@ -137,6 +138,7 @@ export function LeadDeliveries({ locationId }: { locationId: string }) {
                 <p className="muted small">
                   To <code>{r.destinationMasked ?? 'no destination'}</code>
                   {r.providerName && ` · via ${r.providerName}`}
+                  {deliveryModeLabel(r.deliveryMode) && ` · ${deliveryModeLabel(r.deliveryMode)}`}
                   {r.providerMessageId && ` · message id ${r.providerMessageId.slice(0, 40)}`}
                   {r.crmRecordRef && ` · CRM record ${r.crmRecordRef}`}
                   {` · attempts ${r.attempts}`}
