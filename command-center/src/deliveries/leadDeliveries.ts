@@ -195,7 +195,8 @@ export type Capability = {
 };
 /** Mirrors the server's role rules; the server is still the authority. */
 export function capability(
-  row: Pick<LeadDeliveryRow, 'status' | 'providerMessageId' | 'lastErrorCode'>,
+  row: Pick<LeadDeliveryRow, 'status'> &
+    Partial<Pick<LeadDeliveryRow, 'providerMessageId' | 'lastErrorCode'>>,
   role: string,
 ): Capability {
   const replayable = ['FAILED', 'DEAD', 'BLOCKED'].includes(row.status);
