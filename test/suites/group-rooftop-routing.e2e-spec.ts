@@ -1012,7 +1012,7 @@ describe('group-site rooftop routing', () => {
         | undefined;
       expect(formCard!.consent.text.EMAIL).toMatch(/Está bien que la agencia/);
       expect(formCard!.consent.text.CALL).toMatch(/me llame/);
-      expect(offered.reply).not.toMatch(/(the|your|please)/i);
+      expect(offered.reply).not.toMatch(/\b(the|your|please)\b/i);
 
       const submitted = await v.say('', {
         ...ES,
