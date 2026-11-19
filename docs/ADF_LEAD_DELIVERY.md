@@ -233,6 +233,14 @@ phone or email is not recognised.
   appointment state, consent summary, source and UTM). Never the transcript. A requested
   appointment is worded "REQUESTED by customer - NOT confirmed"; only a `CONFIRMED` appointment
   with verified availability is worded as confirmed.
+- The comment line is `Label: value; Label: value` with `key=value` pairs, and some inputs are
+  customer-influenced. So that customer text can never forge a server-asserted segment
+  ("Appointment: CONFIRMED…", "Consent: text=yes"): `utm_*`, `Source` and `Preferred contact`
+  must match `[A-Za-z0-9._~-]{1,80}` or are **dropped** (not repaired) — enforced in the chat
+  DTO (`pageContext.utm*` is dropped, the request still succeeds) and again in the serializer
+  (`src/common/security/comment-token.ts`); the free text inside the "Requested action" and
+  "Appointment" segments has `;` and `=` removed. A UTM value with spaces or other characters is
+  therefore not forwarded to the CRM.
 - `<vendor><vendorname>` is the rooftop's own name; `<provider><name>` is `ADF_PROVIDER_NAME`.
 - Every text node and attribute is hand-escaped. Illegal XML characters, C1 controls, lone
   surrogates, bidi overrides and zero-width characters are stripped; text is NFC-normalised;
