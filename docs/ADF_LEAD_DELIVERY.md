@@ -277,6 +277,12 @@ subject carries the AMQUR lead reference only. `XML_BODY` sends the document as 
 rejected if it contains CR, LF or another control character.
 
 The `Message-ID` is `<lead-delivery.{deliveryId}@{sender domain}>` and is stable across retries.
+It is written to the delivery row (`providerMessageId`) with `lastErrorCode = send_dispatched`
+**before** the transport is called, so a crash between SMTP acceptance and the ACCEPTED write
+still leaves a durable identifier for receiver de-duplication. An operator who verifies the
+message out-of-band may `POST /ops/lead-deliveries/:id/assert-accepted` (audited) to move
+`SENT → ACCEPTED` without a second send; that is not a CRM match and does not claim exactly-once
+SMTP delivery.
 
 ## Idempotency and retries
 

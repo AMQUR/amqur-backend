@@ -9,9 +9,27 @@ import { LeadDeliveryService } from './lead-delivery.service';
 import {
   LEAD_APPOINTMENT_UPDATE_TOPIC,
   LeadAppointmentUpdateService,
+  stableAppointmentUpdateMessageId,
 } from './lead-appointment-update.service';
 import { SandboxSinkTransport } from './transports/sandbox-sink.transport';
 import { SmtpLeadTransport } from './transports/smtp.transport';
+
+describe('stableAppointmentUpdateMessageId', () => {
+  it('builds a durable id from the update row and from-address domain', () => {
+    expect(
+      stableAppointmentUpdateMessageId(
+        'update-1',
+        'leads@relay.amqur.example.invalid',
+      ),
+    ).toBe('<lead-appointment-update.update-1@relay.amqur.example.invalid>');
+  });
+
+  it('falls back when from-address has no domain', () => {
+    expect(stableAppointmentUpdateMessageId('u', 'noreply@')).toBe(
+      '<lead-appointment-update.u@amqur.example.invalid>',
+    );
+  });
+});
 
 describe('R8 appointment update abandonment', () => {
   const key = { id: 'update', tenantId: 'tenant', outboxEventId: 'outbox' };

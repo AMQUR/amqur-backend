@@ -5,6 +5,8 @@ import { OUTBOX_MAX_ATTEMPTS } from '../../src/integrations/core/outbox.service'
 import {
   ACCEPT_RECORD_PENDING,
   LeadDeliveryService,
+  SEND_DISPATCHED,
+  stableLeadDeliveryMessageId,
 } from '../../src/integrations/adf/lead-delivery.service';
 import { LeadDeliveryRouteService } from '../../src/integrations/adf/lead-delivery-route.service';
 import { SandboxSinkTransport } from '../../src/integrations/adf/transports/sandbox-sink.transport';
@@ -1043,6 +1045,105 @@ describe('ADF lead delivery — review findings (R1–R4, R9, R11, R14, R15)', (
       });
       await attempt(b.id);
       expect(sinkFor(b.id)).toHaveLength(1);
+    });
+  });
+
+  // ───────────────────────────────────────── durable Message-ID + operator assert
+
+  describe('durable Message-ID is persisted before transport; operator may assert ACCEPTED without resend', () => {
+    it('writes the stable Message-ID and send_dispatched on the SENT claim before the transport runs', async () => {
+      const lead = await newLead('one');
+      const d = (await submit('one', lead.id))!;
+      const from =
+        process.env.ADF_FROM_ADDRESS || 'adf-sandbox@amqur.example.invalid';
+      let sawPrePersist = false;
+      const realSend = sink.send.bind(sink);
+      jest.spyOn(sink, 'send').mockImplementationOnce(async (m) => {
+        const row = await ctx.prisma.leadDelivery.findUniqueOrThrow({
+          where: { id: d.id },
+        });
+        expect(row.status).toBe('SENT');
+        expect(row.lastErrorCode).toBe(SEND_DISPATCHED);
+        expect(row.providerMessageId).toBe(
+          stableLeadDeliveryMessageId(d.id, from),
+        );
+        expect(m.messageId).toBe(row.providerMessageId);
+        sawPrePersist = true;
+        return realSend(m);
+      });
+      const after = await attempt(d.id);
+      expect(sawPrePersist).toBe(true);
+      expect(after).toMatchObject({ status: 'ACCEPTED' });
+      // Sandbox receipt overwrites providerMessageId with the sink id; Message-ID in MIME stayed stable.
+      expect(sinkFor(d.id)[0]?.messageId).toMatch(
+        new RegExp(`^<lead-delivery\\.${d.id}@`),
+      );
+    });
+
+    it('assertAccepted moves SENT→ACCEPTED with the durable Message-ID and never calls the transport', async () => {
+      const lead = await newLead('one');
+      const d = (await submit('one', lead.id))!;
+      const from =
+        process.env.ADF_FROM_ADDRESS || 'adf-sandbox@amqur.example.invalid';
+      const messageId = stableLeadDeliveryMessageId(d.id, from);
+      // Leave the row in SENT+send_dispatched with a full hand-off claim (routeId required by
+      // the ACCEPTED receipt check) without calling the transport.
+      jest.spyOn(sink, 'send').mockImplementationOnce(async () => {
+        throw new Error('transport_must_not_run_for_assert_setup');
+      });
+      // Force the SENT claim by running attempt until the transport throws, then restore.
+      try {
+        await attempt(d.id);
+      } catch {
+        /* expected — transport mocked to throw before accept */
+      }
+      jest.restoreAllMocks();
+      const mid = await ctx.prisma.leadDelivery.findUniqueOrThrow({
+        where: { id: d.id },
+      });
+      // If the mock threw inside send, the handler may have marked FAILED. Re-arm as the
+      // ambiguous SENT window the operator is meant to resolve.
+      await ctx.prisma.leadDelivery.update({
+        where: { id: d.id },
+        data: {
+          status: 'SENT',
+          sentAt: mid.sentAt ?? new Date(),
+          attempts: Math.max(mid.attempts, 1),
+          routeId: mid.routeId ?? ids.one.routeId,
+          deliveryMode: mid.deliveryMode ?? 'sandbox',
+          providerMessageId: messageId,
+          providerName: null,
+          providerRawStatus: null,
+          acceptedAt: null,
+          lastErrorCode: SEND_DISPATCHED,
+          lastErrorAt: new Date(),
+          failedAt: null,
+        },
+      });
+      const send = jest.spyOn(sink, 'send');
+      const out = await deliveries.assertAccepted(
+        { tenantId: ids.one.tenantId, locationId: null },
+        d.id,
+        { note: 'Verified Message-ID in the sandbox mailbox capture' },
+        staffId,
+      );
+      expect(out).toMatchObject({
+        status: 'ACCEPTED',
+        providerMessageId: messageId,
+        providerName: 'operator-asserted',
+        lastErrorCode: null,
+      });
+      expect(send).not.toHaveBeenCalled();
+      expect(await history(d.id)).toEqual(
+        expect.arrayContaining(['ACCEPTED:operator_accept_assertion']),
+      );
+      const audit = await ctx.prisma.auditLog.findFirst({
+        where: {
+          action: 'lead_delivery.accept_asserted',
+          resourceId: d.id,
+        },
+      });
+      expect(audit?.userId).toBe(staffId);
     });
   });
 });

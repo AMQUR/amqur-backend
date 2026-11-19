@@ -104,6 +104,16 @@ describe('TurnLockService (in-process; no REDIS_URL)', () => {
     }
     await expect(lock.run('t1:z', work)).resolves.toBe('ok');
   });
+
+  it('passes a held handle whose fence is empty when Redis is not required', async () => {
+    const lock = new TurnLockService();
+    await lock.run('t1:local', async (held) => {
+      expect(held.fence).toBe('');
+      expect(held.signal.aborted).toBe(false);
+      held.assertHeld();
+      return 'ok';
+    });
+  });
 });
 
 describe('TurnLockService (distributed)', () => {
@@ -115,6 +125,7 @@ describe('TurnLockService (distributed)', () => {
     else process.env.REDIS_URL = initialRedisUrl;
     if (initialTier === undefined) delete process.env.DEPLOYMENT_TIER;
     else process.env.DEPLOYMENT_TIER = initialTier;
+    jest.clearAllMocks();
   });
 
   it('refuses hosted turns when Redis is missing', async () => {
@@ -138,6 +149,7 @@ describe('TurnLockService (distributed)', () => {
       on: (event: string, callback: () => void) => events.set(event, callback),
       set,
       eval: jest.fn().mockResolvedValue(1),
+      disconnect: jest.fn(),
     }));
     const lock = new TurnLockService();
     const work = jest.fn(async () => 'ok');
@@ -152,5 +164,77 @@ describe('TurnLockService (distributed)', () => {
     events.get('ready')?.();
     await expect(run()).resolves.toBe('ok');
     expect(work).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails the turn and does not RELEASE when a renew reports the lease is gone', async () => {
+    process.env.REDIS_URL = 'redis://127.0.0.1:6379';
+    const events = new Map<string, () => void>();
+    const evalFn = jest
+      .fn()
+      // first renew while the turn is in flight → token mismatch
+      .mockResolvedValueOnce(0)
+      .mockResolvedValue(1);
+    (Redis as unknown as jest.Mock).mockImplementation(() => ({
+      on: (event: string, callback: () => void) => events.set(event, callback),
+      set: jest.fn().mockResolvedValue('OK'),
+      eval: evalFn,
+      disconnect: jest.fn(),
+    }));
+    const lock = new TurnLockService();
+    events.get('ready')?.();
+
+    let heldRef: { assertHeld: () => void; signal: AbortSignal } | null = null;
+    let resolveBody!: (v: string) => void;
+    const turn = lock.run(
+      'tenant:conversation',
+      (held) => {
+        heldRef = held;
+        expect(held.fence.length).toBeGreaterThan(0);
+        return new Promise<string>((resolve) => {
+          resolveBody = resolve;
+        });
+      },
+      { ttlMs: 90 },
+    );
+
+    // Wait for at least one renew interval (ttl/3 ≈ 30ms).
+    await new Promise((r) => setTimeout(r, 50));
+    expect(evalFn).toHaveBeenCalled();
+    expect(heldRef!.signal.aborted).toBe(true);
+    expect(() => heldRef!.assertHeld()).toThrow(ServiceUnavailableException);
+    // Completing the body after lease loss must still fail closed (no successful return).
+    resolveBody('should-not-return');
+    await expect(turn).rejects.toBeInstanceOf(ServiceUnavailableException);
+    // RELEASE must never run after loss — would delete a peer's key.
+    const releaseCalls = evalFn.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && c[0].includes('del'),
+    );
+    expect(releaseCalls).toHaveLength(0);
+  });
+
+  it('returns success only when the lease is still held at the end of the turn', async () => {
+    process.env.REDIS_URL = 'redis://127.0.0.1:6379';
+    const events = new Map<string, () => void>();
+    const evalFn = jest.fn().mockResolvedValue(1);
+    (Redis as unknown as jest.Mock).mockImplementation(() => ({
+      on: (event: string, callback: () => void) => events.set(event, callback),
+      set: jest.fn().mockResolvedValue('OK'),
+      eval: evalFn,
+      disconnect: jest.fn(),
+    }));
+    const lock = new TurnLockService();
+    events.get('ready')?.();
+    await expect(
+      lock.run('tenant:conversation', async (held) => {
+        held.assertHeld();
+        return 'ok';
+      }),
+    ).resolves.toBe('ok');
+    // RELEASE (del) after a successful hold.
+    expect(
+      evalFn.mock.calls.some(
+        (c) => typeof c[0] === 'string' && c[0].includes('del'),
+      ),
+    ).toBe(true);
   });
 });

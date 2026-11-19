@@ -79,12 +79,29 @@ export { SENT_STALE_MS };
  * ACCEPTED from them on the next attempt and is NEVER handed to a transport again.
  */
 export const ACCEPT_RECORD_PENDING = 'accepted_record_pending';
+/**
+ * `lastErrorCode` of a SENT row whose durable Message-ID has been written and whose transport
+ * hand-off has started (or is about to). Distinguishes "never handed off" from "may have been
+ * accepted by SMTP". A crash after SMTP 250 and before ACCEPTED still leaves this marker + the
+ * stable Message-ID so a receiver can de-duplicate an at-least-once resend, and so an operator
+ * can assert acceptance without a second send.
+ */
+export const SEND_DISPATCHED = 'send_dispatched';
 /** `lastErrorCode` of a row dead-lettered because its outbox event was abandoned (no handler run). */
 export const OUTBOX_ABANDONED_CODE = 'outbox_abandoned';
 /** Same outcome, found by the defensive sweep rather than the abandon hook. */
 export const OUTBOX_DEAD_SWEEP_CODE = 'outbox_dead_sweep';
 const ACCEPT_WRITE_ATTEMPTS = 3;
 const ACCEPT_WRITE_BACKOFF_MS = 75;
+
+/** Stable RFC 5322 Message-ID for one delivery row. Same across every retry of that row. */
+export function stableLeadDeliveryMessageId(
+  deliveryId: string,
+  fromAddress: string,
+): string {
+  const domain = destinationDomain(fromAddress) || 'amqur.example.invalid';
+  return `<lead-delivery.${deliveryId}@${domain}>`;
+}
 
 type Db = Prisma.TransactionClient | PrismaService;
 type AcceptedReceipt = TransportReceipt & { providerMessageId: string };
@@ -781,6 +798,12 @@ export class LeadDeliveryService implements OnModuleInit {
     }
 
     const attempt = d.attempts + 1;
+    // Durable delivery identifier BEFORE any transport call. Survives a crash between SMTP
+    // acceptance and the ACCEPTED write so a receiver (and operator reconcile) can de-duplicate.
+    const messageId =
+      d.providerMessageId && d.providerMessageId.startsWith('<lead-delivery.')
+        ? d.providerMessageId
+        : stableLeadDeliveryMessageId(d.id, env.fromAddress);
     const claimed = await this.apply(
       this.prisma,
       d,
@@ -796,6 +819,10 @@ export class LeadDeliveryService implements OnModuleInit {
           destinationMasked: route.destinationMasked,
           payloadSha256: createHash('sha256').update(xml).digest('hex'),
           payloadBytes: Buffer.byteLength(xml, 'utf8'),
+          // Pre-declare the Message-ID. providerName stays null until the transport accepts.
+          providerMessageId: messageId,
+          lastErrorCode: SEND_DISPATCHED,
+          lastErrorAt: new Date(),
         },
       },
     );
@@ -817,7 +844,7 @@ export class LeadDeliveryService implements OnModuleInit {
             routeEnvironment: route.environment,
             correlationId: d.correlationId,
             // Stable across retries so a receiver can de-duplicate an at-least-once resend.
-            messageId: `<lead-delivery.${d.id}@${destinationDomain(env.fromAddress) || 'amqur.example.invalid'}>`,
+            messageId,
             from: env.fromAddress,
             to: destination,
             subject: `New lead amqur-lead-${lead.id}`,
@@ -1303,6 +1330,74 @@ export class LeadDeliveryService implements OnModuleInit {
         },
       });
     });
+    return this.get(scope, id);
+  }
+
+  /**
+   * Staff assertion that a SENT delivery whose durable Message-ID was already dispatched was
+   * accepted by the mail relay (verified out-of-band). Moves SENT → ACCEPTED without calling a
+   * transport. Does NOT create a CRM match and does NOT claim exactly-once SMTP delivery — it
+   * only records that a second send is unnecessary. Audited.
+   */
+  async assertAccepted(
+    scope: { tenantId: string; locationId: string | null },
+    id: string,
+    input: { note: string },
+    userId: string,
+  ) {
+    const d = await this.owned(scope, id);
+    if (d.status !== 'SENT')
+      throw new ConflictException(`not_assertable:${d.status}`);
+    const messageId = d.providerMessageId?.trim();
+    if (!messageId || !messageId.startsWith('<lead-delivery.'))
+      throw new ConflictException('missing_durable_message_id');
+    const note = input.note?.trim();
+    if (!note || note.length < 8)
+      throw new BadRequestException(
+        'note must explain how acceptance was verified (min 8 chars)',
+      );
+    await this.prisma.$transaction(async (tx) => {
+      const moved = await this.apply(
+        tx,
+        d,
+        'ACCEPTED',
+        {
+          kind: 'operator_accept_assertion',
+          actor: userId,
+          providerMessageId: messageId,
+          note: redactForLog(note).slice(0, 300),
+        },
+        {
+          actor: userId,
+          data: {
+            providerName: d.providerName ?? 'operator-asserted',
+            providerMessageId: messageId,
+            providerRawStatus: 'operator_asserted',
+            acceptedAt: new Date(),
+            lastErrorCode: null,
+            lastErrorAt: null,
+          },
+        },
+      );
+      if (!moved) throw new ConflictException('delivery_changed_concurrently');
+      await tx.auditLog.create({
+        data: {
+          tenantId: d.tenantId,
+          userId,
+          action: 'lead_delivery.accept_asserted',
+          resource: 'lead_delivery',
+          resourceId: d.id,
+          metadata: {
+            fromStatus: d.status,
+            providerMessageId: messageId,
+            note: redactForLog(note).slice(0, 300),
+          },
+        },
+      });
+    });
+    this.unrecordedReceipts.delete(d.id);
+    for (const listener of this.acceptedListeners)
+      await listener({ id: d.id, tenantId: d.tenantId }).catch(() => undefined);
     return this.get(scope, id);
   }
 

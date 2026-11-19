@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
+  OUTBOX_LEASE_MS,
   OUTBOX_MAX_ATTEMPTS,
   OUTBOX_WORKER_ID,
   OutboxService,
@@ -140,26 +141,55 @@ export class OutboxProcessorService {
           );
           continue;
         }
+        // Renew the lease while the handler runs so a long (but healthy) attempt is not
+        // reclaimed mid-flight. If renew fails, the handler may still finish but markPublished
+        // / markFailed will refuse an expired lease.
+        const renew = setInterval(() => {
+          void this.outbox.renewHandling(row.id, workerId).then((ok) => {
+            if (!ok) this.metrics.increment('outbox.lease_renew_lost');
+          });
+        }, Math.floor(OUTBOX_LEASE_MS / 3));
+        renew.unref?.();
         try {
           const res = await handler(row.payload as Record<string, unknown>, {
             id: row.id,
             tenantId: row.tenantId,
             attempts,
           });
-          await this.outbox.markPublished(row.id, workerId, res?.note);
+          const published = await this.outbox.markPublished(
+            row.id,
+            workerId,
+            res?.note,
+          );
+          if (published.count !== 1) {
+            this.metrics.increment('outbox.lease_lost');
+            this.logger.warn(
+              `Outbox ${row.id} topic=${row.topic} handler finished after lease loss — result not published`,
+            );
+            continue;
+          }
           this.metrics.increment('outbox.published');
           processed += 1;
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : 'dispatch_failed';
           const permanent = err instanceof PermanentOutboxError;
-          await this.outbox.markFailed(row.id, msg, attempts, {
+          const failed = await this.outbox.markFailed(row.id, msg, attempts, {
             workerId,
             permanent,
           });
+          if (failed.count !== 1) {
+            this.metrics.increment('outbox.lease_lost');
+            this.logger.warn(
+              `Outbox ${row.id} topic=${row.topic} handler failed after lease loss — outcome not recorded`,
+            );
+            continue;
+          }
           this.metrics.increment(permanent ? 'outbox.dead' : 'outbox.retry');
           this.logger.warn(
             `Outbox ${row.id} topic=${row.topic} failed attempt=${attempts} permanent=${permanent}: ${msg}`,
           );
+        } finally {
+          clearInterval(renew);
         }
       }
     } finally {

@@ -36,6 +36,12 @@ const E = {
     result: 'REJECTED',
     actor: 'user-1',
   } as DeliveryEvidence,
+  operatorAccept: {
+    kind: 'operator_accept_assertion',
+    actor: 'user-1',
+    providerMessageId: '<lead-delivery.d1@amqur.example.invalid>',
+    note: 'verified in mailbox',
+  } as DeliveryEvidence,
   retryable: {
     kind: 'transport_error',
     code: 'smtp_deferred_451',
@@ -93,6 +99,22 @@ describe('lead delivery state machine', () => {
     expect(go('ACCEPTED', 'CRM_REJECTED', E.rejected)).toEqual(
       moved('CRM_REJECTED'),
     );
+  });
+
+  it('an operator may assert ACCEPTED from SENT with the durable Message-ID (no transport call)', () => {
+    expect(go('SENT', 'ACCEPTED', E.operatorAccept)).toEqual(moved('ACCEPTED'));
+    expect(
+      go('SENT', 'ACCEPTED', {
+        kind: 'operator_accept_assertion',
+        actor: 'user-1',
+        providerMessageId: '',
+      }).ok,
+    ).toBe(false);
+    expect(
+      go('QUEUED', 'ACCEPTED', E.operatorAccept).ok,
+    ).toBe(false);
+    // Operator assertion is not a CRM match.
+    expect(go('SENT', 'CRM_MATCHED', E.operatorAccept).ok).toBe(false);
   });
 
   it('never skips forward without the state before it', () => {

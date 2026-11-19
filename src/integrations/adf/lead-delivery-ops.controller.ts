@@ -33,6 +33,10 @@ class ReconcileDto {
   @IsOptional() @IsString() @MaxLength(300) note?: string;
 }
 
+class AssertAcceptedDto {
+  @IsString() @MaxLength(300) note!: string;
+}
+
 const STAFF = ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'STAFF'] as const;
 
 /**
@@ -109,5 +113,25 @@ export class LeadDeliveryOpsController {
     @Query('tenantId') tenantId?: string,
   ) {
     return this.deliveries.reconcile(this.scope(u, tenantId), id, b, u.sub);
+  }
+
+  /**
+   * Mark a SENT delivery ACCEPTED after out-of-band verification that the durable Message-ID
+   * was accepted by the relay. Never re-sends. Does not create a CRM match.
+   */
+  @Roles('SUPER_ADMIN', 'ADMIN')
+  @Post('lead-deliveries/:id/assert-accepted')
+  assertAccepted(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() b: AssertAcceptedDto,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    return this.deliveries.assertAccepted(
+      this.scope(u, tenantId),
+      id,
+      b,
+      u.sub,
+    );
   }
 }

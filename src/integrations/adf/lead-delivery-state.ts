@@ -53,6 +53,17 @@ export type DeliveryEvidence =
       crmRecordRef?: string | null;
       actor: string;
     }
+  /**
+   * Staff assertion that a previously dispatched SMTP message was accepted by the relay
+   * (e.g. verified in the dealership mailbox after a crash between SMTP 250 and the ACCEPTED
+   * write). Never implies CRM match. Requires the durable pre-declared Message-ID.
+   */
+  | {
+      kind: 'operator_accept_assertion';
+      actor: string;
+      providerMessageId: string;
+      note?: string | null;
+    }
   | { kind: 'operator_replay'; actor: string }
   /** An environment-level block reason (see REEVALUABLE_BLOCK_REASONS) no longer applies. */
   | { kind: 'gate_reevaluation'; reason: string }
@@ -141,6 +152,13 @@ const RULES: Record<DeliveryStatus, Rule[]> = {
         nonEmpty(e.providerName) &&
         nonEmpty(e.providerMessageId) &&
         nonEmpty(e.rawStatus),
+    },
+    {
+      from: ['SENT'],
+      evidence: (e) =>
+        e.kind === 'operator_accept_assertion' &&
+        nonEmpty(e.actor) &&
+        nonEmpty(e.providerMessageId),
     },
   ],
   DELIVERED: [

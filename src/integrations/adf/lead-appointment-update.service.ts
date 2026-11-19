@@ -61,6 +61,23 @@ export const LEAD_APPOINTMENT_UPDATE_TOPIC =
 export const UPDATES_NOT_SUPPORTED = 'destination_does_not_accept_updates';
 /** Same meaning as for a lead delivery: accepted by the transport, record still outstanding. */
 const ACCEPT_RECORD_PENDING = 'accepted_record_pending';
+/**
+ * `lastErrorCode` of a SENT row whose durable Message-ID has been written and whose transport
+ * hand-off has started (or is about to). Distinguishes "never handed off" from "may have been
+ * accepted by SMTP". A crash after SMTP 250 and before ACCEPTED still leaves this marker + the
+ * stable Message-ID so a receiver can de-duplicate an at-least-once resend, and so an operator
+ * can assert acceptance without a second send.
+ */
+export const SEND_DISPATCHED = 'send_dispatched';
+
+/** Stable RFC 5322 Message-ID for one appointment-update row. Same across every retry of that row. */
+export function stableAppointmentUpdateMessageId(
+  updateId: string,
+  fromAddress: string,
+): string {
+  const domain = destinationDomain(fromAddress) || 'amqur.example.invalid';
+  return `<lead-appointment-update.${updateId}@${domain}>`;
+}
 const ABANDONABLE_UPDATE_STATUSES: LeadAppointmentUpdateStatus[] = [
   'QUEUED',
   'SENT',
@@ -709,6 +726,13 @@ export class LeadAppointmentUpdateService implements OnModuleInit {
     }
 
     const attempt = u.attempts + 1;
+    // Durable delivery identifier BEFORE any transport call. Survives a crash between SMTP
+    // acceptance and the ACCEPTED write so a receiver (and operator reconcile) can de-duplicate.
+    const messageId =
+      u.providerMessageId &&
+      u.providerMessageId.startsWith('<lead-appointment-update.')
+        ? u.providerMessageId
+        : stableAppointmentUpdateMessageId(u.id, env.fromAddress);
     const claimed = await this.move(
       u,
       'SENT',
@@ -722,6 +746,10 @@ export class LeadAppointmentUpdateService implements OnModuleInit {
         destinationMasked: route.destinationMasked,
         payloadSha256: createHash('sha256').update(xml).digest('hex'),
         payloadBytes: Buffer.byteLength(xml, 'utf8'),
+        // Pre-declare the Message-ID. providerName stays null until the transport accepts.
+        providerMessageId: messageId,
+        lastErrorCode: SEND_DISPATCHED,
+        lastErrorAt: new Date(),
       },
       this.staleSentWhere(u),
     );
@@ -742,7 +770,7 @@ export class LeadAppointmentUpdateService implements OnModuleInit {
               routeId: route.id,
               correlationId: u.correlationId,
               // Stable across retries so a receiver can de-duplicate an at-least-once resend.
-              messageId: `<lead-appointment-update.${u.id}@${destinationDomain(env.fromAddress) || 'amqur.example.invalid'}>`,
+              messageId,
               from: env.fromAddress,
               to: destination,
               subject: `Appointment update for lead ${u.leadRef}`,

@@ -23,6 +23,13 @@ import { resolveDeploymentTier } from '../config/deployment-tier';
  *    An unconfigured local development or test process uses only the in-process chain.
  * A turn that cannot get the lock within `waitMs` is refused with 409 `conversation_busy`
  * (the widget shows its retry), never run in parallel.
+ *
+ * Fencing: while the turn runs, the Redis lease is renewed. If a renew reports the token is
+ * gone (another process holds the key, or the TTL elapsed without a successful renew), this
+ * process stops claiming the lease, does not DELETE another holder's key, and refuses to return
+ * a successful turn result. Cooperative callers may also watch `AbortSignal` / `assertHeld()`.
+ * Downstream side effects still rely on their own idempotency (lead delivery keys, slot CAS);
+ * the fence closes the silent parallel-turn window that previously outlived a lost lease.
  */
 type RedisLike = {
   set: (...args: Array<string | number>) => Promise<string | null>;
@@ -40,6 +47,16 @@ const RENEW = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('
 
 export const TURN_LOCK_TTL_MS = 30_000;
 export const TURN_LOCK_WAIT_MS = 20_000;
+
+/** Cooperative fencing handle passed to the turn body when a remote lease is held. */
+export type TurnLockHeld = {
+  /** Opaque fencing token (Redis lock value). Empty when only the in-process chain is used. */
+  readonly fence: string;
+  /** Aborted when the Redis lease is observed lost. */
+  readonly signal: AbortSignal;
+  /** Throws ServiceUnavailableException if the lease has been lost. */
+  assertHeld(): void;
+};
 
 @Injectable()
 export class TurnLockService implements OnModuleDestroy {
@@ -89,7 +106,7 @@ export class TurnLockService implements OnModuleDestroy {
   /** Run `fn` holding the lock for `key` (tenant + conversation). */
   async run<T>(
     key: string,
-    fn: () => Promise<T>,
+    fn: (held: TurnLockHeld) => Promise<T>,
     opts: { waitMs?: number; ttlMs?: number } = {},
   ): Promise<T> {
     const waitMs = opts.waitMs ?? TURN_LOCK_WAIT_MS;
@@ -121,22 +138,59 @@ export class TurnLockService implements OnModuleDestroy {
 
       // 2. Cross-process.
       const token = await this.acquireRemote(key, ttlMs, deadline);
-      const renew = token
-        ? setInterval(
-            () => {
-              void this.redis
-                ?.eval(RENEW, 1, redisKey(key), token, ttlMs)
-                .catch(() => undefined);
-            },
-            Math.floor(ttlMs / 3),
-          )
-        : null;
+      const abort = new AbortController();
+      let leaseHeld = token !== null;
+      const held: TurnLockHeld = {
+        fence: token ?? '',
+        signal: abort.signal,
+        assertHeld: () => {
+          if (token !== null && !leaseHeld) throw leaseLost();
+        },
+      };
+      const markLost = (why: string) => {
+        if (!leaseHeld) return;
+        leaseHeld = false;
+        this.logger.warn(`turn lock lost key=${redactKey(key)} reason=${why}`);
+        try {
+          abort.abort();
+        } catch {
+          /* ignore */
+        }
+      };
+      const renew =
+        token && this.redis
+          ? setInterval(() => {
+              void (async () => {
+                if (!leaseHeld || !this.redis) return;
+                try {
+                  const ok = await this.redis.eval(
+                    RENEW,
+                    1,
+                    redisKey(key),
+                    token,
+                    ttlMs,
+                  );
+                  // Redis EVAL returns 1 on success, 0 when the token no longer owns the key.
+                  if (ok !== 1) markLost('renew_token_mismatch');
+                } catch {
+                  // Transient command failure: do not immediately declare loss — the next
+                  // renew may succeed before TTL. If Redis stays down, TTL expiry + mismatch
+                  // on a later renew (or acquire by a peer) will mark loss.
+                }
+              })();
+            }, Math.floor(ttlMs / 3))
+          : null;
       renew?.unref();
       try {
-        return await fn();
+        const result = await fn(held);
+        // Fail closed: never return a successful turn after the remote lease was lost.
+        // Side effects that already committed still need their own idempotency.
+        if (token !== null && !leaseHeld) throw leaseLost();
+        return result;
       } finally {
         if (renew) clearInterval(renew);
-        if (token)
+        // Only the still-holding owner may DELETE. A lost lease must not remove a peer's key.
+        if (token && leaseHeld)
           await this.redis
             ?.eval(RELEASE, 1, redisKey(key), token)
             .catch(() => undefined);
@@ -172,6 +226,9 @@ export class TurnLockService implements OnModuleDestroy {
 }
 
 const redisKey = (key: string) => `amqur:turn-lock:${key}`;
+/** Log only a short hash of the key — never conversation/user identifiers. */
+const redactKey = (key: string) =>
+  key.length <= 12 ? 'short' : `${key.slice(0, 4)}…${key.length}`;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const unavailable = () =>
   new ServiceUnavailableException({
@@ -182,4 +239,9 @@ const busy = () =>
   new ConflictException({
     message: 'conversation_busy',
     detail: 'Another message in this conversation is still being answered.',
+  });
+const leaseLost = () =>
+  new ServiceUnavailableException({
+    message: 'conversation_lease_lost',
+    detail: 'Please retry your message shortly.',
   });

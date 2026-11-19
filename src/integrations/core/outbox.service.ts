@@ -146,17 +146,44 @@ export class OutboxService {
     return count === 1;
   }
 
-  /** Only the lease holder may complete an event (guards against a slow worker after lease expiry). */
+  /**
+   * Extend the lease while a handler is still running. Returns false when this worker no longer
+   * owns an unexpired lease — the caller must stop side effects and skip markPublished/markFailed.
+   */
+  async renewHandling(
+    id: string,
+    workerId = OUTBOX_WORKER_ID,
+    leaseMs = OUTBOX_LEASE_MS,
+  ): Promise<boolean> {
+    const leaseSeconds = leaseMs / 1000;
+    const count = await this.prisma.$executeRaw`
+      UPDATE "OutboxEvent"
+         SET "leaseExpiresAt" = NOW() + make_interval(secs => ${leaseSeconds}::double precision),
+             "updatedAt" = NOW()
+       WHERE "id" = ${id}
+         AND "status" = 'PROCESSING'::"OutboxStatus"
+         AND "claimedBy" = ${workerId}
+         AND "leaseExpiresAt" > NOW()`;
+    return count === 1;
+  }
+
+  /**
+   * Only the current lease holder with an unexpired lease may complete an event. A slow worker
+   * whose lease has already been (or could be) reclaimed cannot publish or fail the row.
+   */
   async markPublished(id: string, workerId = OUTBOX_WORKER_ID, note?: string) {
-    return this.prisma.outboxEvent.updateMany({
-      where: { id, status: OutboxStatus.PROCESSING, claimedBy: workerId },
-      data: {
-        status: OutboxStatus.PUBLISHED,
-        publishedAt: new Date(),
-        leaseExpiresAt: null,
-        lastError: note ?? null,
-      },
-    });
+    const count = await this.prisma.$executeRaw`
+      UPDATE "OutboxEvent"
+         SET "status" = 'PUBLISHED'::"OutboxStatus",
+             "publishedAt" = NOW(),
+             "leaseExpiresAt" = NULL,
+             "lastError" = ${note ?? null},
+             "updatedAt" = NOW()
+       WHERE "id" = ${id}
+         AND "status" = 'PROCESSING'::"OutboxStatus"
+         AND "claimedBy" = ${workerId}
+         AND "leaseExpiresAt" > NOW()`;
+    return { count };
   }
 
   async markFailed(
@@ -177,7 +204,8 @@ export class OutboxService {
              "updatedAt" = NOW()
        WHERE "id" = ${id}
          AND "status" = 'PROCESSING'::"OutboxStatus"
-         AND "claimedBy" = ${opts.workerId ?? OUTBOX_WORKER_ID}`;
+         AND "claimedBy" = ${opts.workerId ?? OUTBOX_WORKER_ID}
+         AND "leaseExpiresAt" > NOW()`;
     return { count };
   }
 
