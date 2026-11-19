@@ -1299,6 +1299,76 @@ describe('group-site rooftop routing', () => {
       expect(await snapshot()).toEqual(after);
     });
 
+    it('groupHandoffQueue on: a handoff with no store goes to the group’s own queue, never to a guessed rooftop', async () => {
+      await setFlags('group', { groupHandoffQueue: true });
+      try {
+        const v = visitor();
+        const r = await v.say('I want to talk to a person');
+        expect(card(r, 'handoff')).toBeDefined();
+        expect(r.reply).not.toMatch(/Which store would you like\?/);
+        const done = await snapshot();
+        expect(done.group.escalations).toBe(1);
+        // an escalation only: no lead, consent, appointment or delivery in the group tenant
+        expect({ ...done.group, escalations: 0 }).toEqual(NONE);
+        for (const k of KEYS) expect(done[k]).toEqual(NONE);
+      } finally {
+        await setFlags('group', { groupHandoffQueue: false });
+      }
+    });
+
+    it('the stream endpoint routes exactly like the plain one: asks which Jeep store, then shows both, labelled', async () => {
+      const stream = async (body: Record<string, unknown>) => {
+        const r = await http()
+          .post('/api/chat/stream')
+          .set('Authorization', `Bearer ${widget.group}`)
+          .set('Origin', SIM_ORIGIN)
+          .send(body);
+        expect(r.status).toBe(200);
+        expect(r.headers['content-type']).toContain('text/event-stream');
+        const events = r.text
+          .split('\n\n')
+          .map((f) =>
+            f
+              .split('\n')
+              .filter((l) => l.startsWith('data:'))
+              .map((l) => l.slice(5).trim())
+              .join('\n'),
+          )
+          .filter(Boolean)
+          .map((d) => JSON.parse(d) as { type: string; response?: Chat });
+        const types = events.map((e) => e.type);
+        expect(types[0]).toBe('turn.started');
+        expect(types[types.length - 1]).toBe('turn.completed');
+        expect(types).not.toContain('turn.error');
+        return events[events.length - 1].response as Chat;
+      };
+      const asked = await stream({ message: 'Show me 2026 Grand Cherokees' });
+      expect(asked.vehicles ?? []).toHaveLength(0);
+      expect(asked.reply).toMatch(/North Side/);
+      expect(asked.reply).toMatch(/South Side/);
+      const both = await stream({
+        message: 'Either',
+        conversationId: asked.conversationId,
+      });
+      const stores = new Set(
+        (both.vehicles ?? []).map(
+          (x) => (x as unknown as { rooftopName: string }).rooftopName,
+        ),
+      );
+      expect(stores).toEqual(
+        new Set([
+          'Jeep of Chicago (North Side)',
+          'Dial Chrysler Dodge Jeep Ram of Chicago (South Side)',
+        ]),
+      );
+      // the same turns through the plain endpoint give the same vehicles
+      const v = visitor();
+      await v.say('Show me 2026 Grand Cherokees');
+      expect(vins(await v.say('Either'))).toEqual(vins(both));
+      const after = await snapshot();
+      for (const k of [...KEYS, 'group']) expect(after[k]).toEqual(NONE);
+    });
+
     it('service: asks which store; the two Jeep stores are never one counter', async () => {
       const v = visitor();
       const ask = await v.say('I need an oil change');
