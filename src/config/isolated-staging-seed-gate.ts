@@ -51,7 +51,9 @@ export function assertIsolatedStagingSeedAllowed(
   try {
     dbHost = new URL(env.DATABASE_URL ?? 'postgres://x@invalid/x').hostname;
   } catch {
-    fail('Refusing isolated staging seed: DATABASE_URL is not a valid URL.');
+    return fail(
+      'Refusing isolated staging seed: DATABASE_URL is not a valid URL.',
+    );
   }
 
   const allowHosts = (
