@@ -297,8 +297,16 @@ describe('ADF lead delivery (five rooftops, outbox, sandbox sink, mock SMTP)', (
       }
     }
     expect(wrongStore).toBe(0);
-    expect(sink.messages()).toHaveLength(5);
-    expect(new Set(sink.messages().map((m) => m.to)).size).toBe(5);
+    // Count only this test's five deliveries. The worker drains every pending event in the
+    // shared test database, so a delivery queued by another suite can legitimately land in the
+    // sink during this test (seen in CI: 6 messages). None of those may carry one of our leads.
+    const ourIds = new Set(KEYS.map((k) => made[k].deliveryId));
+    const ours = sink.messages().filter((m) => ourIds.has(m.deliveryId));
+    expect(ours).toHaveLength(5);
+    expect(new Set(ours.map((m) => m.to)).size).toBe(5);
+    for (const m of sink.messages().filter((x) => !ourIds.has(x.deliveryId)))
+      for (const k of KEYS)
+        expect(m.xml).not.toContain(`amqur-lead-${made[k].leadId}`);
     // No CC / BCC / extra recipient anywhere.
     for (const m of sink.messages()) expect(m.raw).not.toMatch(/^(cc|bcc):/im);
   });
