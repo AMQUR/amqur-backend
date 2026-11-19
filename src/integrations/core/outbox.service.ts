@@ -83,7 +83,8 @@ export class OutboxService {
   /**
    * Atomically claim due events for THIS worker. Uses a single UPDATE … WHERE id IN
    * (SELECT … FOR UPDATE SKIP LOCKED) so concurrent workers can never claim the same row.
-   * Rows stuck in PROCESSING with an expired lease (crashed worker) are reclaimed.
+   * Rows stuck in PROCESSING with an expired lease (crashed worker) are reclaimed, and the
+   * abandoned attempt is counted.
    */
   async claimPending(
     limit = 50,
@@ -99,6 +100,10 @@ export class OutboxService {
              "claimedAt" = NOW(),
              "claimedBy" = ${workerId},
              "leaseExpiresAt" = NOW() + make_interval(secs => ${leaseSeconds}::double precision),
+             -- A row reclaimed after its lease expired was being handled by a worker that died
+             -- or hung: that counts as an attempt. Without this, an event that crashes its
+             -- worker every time is retried forever and never reaches the attempt limit.
+             "attempts" = o."attempts" + CASE WHEN o."status" = 'PROCESSING'::"OutboxStatus" THEN 1 ELSE 0 END,
              "updatedAt" = NOW()
        WHERE o."id" IN (
          SELECT "id" FROM "OutboxEvent"

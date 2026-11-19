@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { OUTBOX_WORKER_ID, OutboxService } from './outbox.service';
+import {
+  OUTBOX_MAX_ATTEMPTS,
+  OUTBOX_WORKER_ID,
+  OutboxService,
+} from './outbox.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import axios from 'axios';
 import { MetricsService } from '../../observability/metrics.service';
@@ -60,6 +64,21 @@ export class OutboxProcessorService {
       this.metrics.increment('outbox.claimed', rows.length);
       for (const row of rows) {
         const handler = this.handlers.get(row.topic);
+        // Only abandoned (lease-expired) attempts can bring a claimed row to the limit:
+        // handled failures are dead-lettered in markFailed. Stop instead of crashing again.
+        if (row.attempts >= OUTBOX_MAX_ATTEMPTS) {
+          await this.outbox.markFailed(
+            row.id,
+            'abandoned_after_repeated_lease_expiry',
+            row.attempts,
+            { workerId, permanent: true },
+          );
+          this.metrics.increment('outbox.dead');
+          this.logger.error(
+            `Outbox ${row.id} topic=${row.topic} abandoned ${row.attempts} times (worker died or hung) → DEAD`,
+          );
+          continue;
+        }
         const attempts = row.attempts + 1;
         if (!handler) {
           await this.outbox.markFailed(

@@ -1,5 +1,8 @@
 import { createE2eApp, E2eCtx, seedTwoTenants } from '../helpers/e2e-app';
-import { OutboxService } from '../../src/integrations/core/outbox.service';
+import {
+  OUTBOX_MAX_ATTEMPTS,
+  OutboxService,
+} from '../../src/integrations/core/outbox.service';
 import { OutboxProcessorService } from '../../src/integrations/core/outbox-processor.service';
 import { AppointmentService } from '../../src/appointments/appointment.service';
 
@@ -85,6 +88,39 @@ describe('production domains (Postgres)', () => {
       expect(stale.count).toBe(0);
       const ok = await outbox.markPublished(ev.id, 'live-worker');
       expect(ok.count).toBe(1);
+    });
+
+    it('an event whose worker dies every time is counted and dead-lettered, never retried forever', async () => {
+      const outbox = ctx.app.get(OutboxService);
+      const proc = ctx.app.get(OutboxProcessorService);
+      let handled = 0;
+      proc.registerHandler('test.crashloop', () => {
+        handled += 1;
+        return Promise.resolve({ note: 'should_not_run' });
+      });
+      const ev = await outbox.enqueue({
+        tenantId: seed.alpha.tenant.id,
+        topic: 'test.crashloop',
+        payload: {},
+        idempotencyKey: `test-crashloop-${Date.now()}`,
+      });
+      // The first claim is not an attempt yet; each later reclaim of the expired lease counts
+      // the abandoned one. (Negative lease = the worker "died" immediately.)
+      const mine = async () =>
+        (await outbox.claimPending(500, 'dying-worker', -1000)).find(
+          (r) => r.id === ev.id,
+        );
+      expect((await mine())?.attempts).toBe(0);
+      for (let n = 1; n <= OUTBOX_MAX_ATTEMPTS; n += 1)
+        expect((await mine())?.attempts).toBe(n);
+      // Leave it abandoned once more, then let a healthy worker pick it up: it must stop.
+      await proc.processBatch(500, 'healthy-worker');
+      const row = await ctx.prisma.outboxEvent.findUniqueOrThrow({
+        where: { id: ev.id },
+      });
+      expect(row.status).toBe('DEAD');
+      expect(row.lastError).toBe('abandoned_after_repeated_lease_expiry');
+      expect(handled).toBe(0);
     });
 
     it('unknown topics are dead-lettered, not silently published', async () => {
