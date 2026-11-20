@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryIngestionService } from '../integrations/vauto/inventory-ingestion.service';
 import { VAutoSftpIngestionService } from '../integrations/vauto/vauto-sftp-ingestion.service';
+import { tryAcquireSftpIngestLock } from './sftp-ingest-lock';
 
 @Injectable()
 export class InventorySyncService {
@@ -73,6 +74,13 @@ export class InventorySyncService {
       this.logger.warn('Dial Difference SFTP sync already in progress — skip');
       return;
     }
+    const release = await tryAcquireSftpIngestLock();
+    if (!release) {
+      this.logger.warn(
+        'Dial Difference SFTP sync skipped — another worker holds the Redis lock',
+      );
+      return;
+    }
     this.sftpRunning = true;
     try {
       const results = await this.sftpIngestion.runAllSources();
@@ -86,6 +94,7 @@ export class InventorySyncService {
       this.logger.error(`Dial Difference SFTP sync failed: ${msg}`);
     } finally {
       this.sftpRunning = false;
+      await release();
     }
   }
 }

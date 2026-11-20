@@ -80,9 +80,9 @@ describe('VAutoSftpIngestionService', () => {
   });
 
   it('detects XML/JSON/CSV formats without guessing unsupported bodies', () => {
-    expect(
-      service.detectFormat('inv.xml', Buffer.from('<adf></adf>')),
-    ).toBe('XML');
+    expect(service.detectFormat('inv.xml', Buffer.from('<adf></adf>'))).toBe(
+      'XML',
+    );
     expect(
       service.detectFormat('inv.json', Buffer.from('{"vehicles":[]}')),
     ).toBe('JSON');
@@ -146,6 +146,54 @@ describe('VAutoSftpIngestionService', () => {
     );
     expect(result.status).toBe('SKIPPED_UNMAPPED_TENANT');
     expect(upsertVehicles).not.toHaveBeenCalled();
+    await transport.dispose();
+  });
+
+  it('rejects size-drop anomalies and preserves last-known-good inventory', async () => {
+    tenantFindFirst.mockResolvedValue({
+      id: 'tenant-jeep',
+      slug: 'jeep-of-chicago',
+    });
+    locationFindFirst.mockResolvedValue({
+      id: 'loc-jeep',
+      inventoryMinRecords: 1,
+    });
+    vehicleCount.mockResolvedValue(50);
+    parseFeed.mockReturnValue([
+      {
+        vin: '1C4HJXDG0FW000001',
+        year: 2025,
+        make: 'Jeep',
+        model: 'Wrangler',
+      },
+    ]);
+    jest.spyOn(VehicleNormalizer, 'normalize').mockReturnValue({
+      vin: '1C4HJXDG0FW000001',
+      year: 2025,
+      make: 'Jeep',
+      model: 'Wrangler',
+    } as never);
+
+    const transport = new FixtureSftpTransport(FIXTURE_ROOT);
+    const result = await service.runOneSource(
+      service.source('jeep_north/new')!,
+      transport,
+    );
+
+    expect(result.status).toBe('REJECTED_ANOMALY');
+    expect(result.preservedInventory).toBe(true);
+    expect(
+      result.anomalies?.some((a) => a.startsWith('size_drop_anomaly')),
+    ).toBe(true);
+    expect(upsertVehicles).not.toHaveBeenCalled();
+    expect(updateVehicleLifecycle).not.toHaveBeenCalled();
+    expect(importUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'REJECTED_ANOMALY',
+        }),
+      }),
+    );
     await transport.dispose();
   });
 });
