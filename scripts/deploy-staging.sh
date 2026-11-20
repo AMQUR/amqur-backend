@@ -41,22 +41,24 @@ deploy_service() {
   railway up --service "${svc}" --environment "${ENV_NAME}" --ci
 }
 
+# Isolated staging service names (amqur-platform-staging).
 case "${TARGET}" in
-  api) deploy_service api ;;
-  worker) deploy_service worker ;;
+  api|backend-staging) deploy_service backend-staging ;;
+  worker|worker-staging) deploy_service worker-staging ;;
   all)
-    deploy_service api
-    deploy_service worker
+    deploy_service backend-staging
+    deploy_service worker-staging
     ;;
   *)
-    echo "Usage: $0 [api|worker|all]" >&2
+    echo "Usage: $0 [api|worker|all|backend-staging|worker-staging]" >&2
     exit 1
     ;;
 esac
 
 echo "==> verifying deployed release identity"
 EXPECTED_SHA="$(git rev-parse HEAD)"
-scripts/verify-release.sh "https://staging-api.dialusnow.com" "${EXPECTED_SHA}" || {
+STAGING_API_URL="${STAGING_API_URL:-https://backend-staging-staging-b699.up.railway.app}"
+scripts/verify-release.sh "${STAGING_API_URL}" "${EXPECTED_SHA}" || {
   echo "WARNING: release verification failed — deployed commit does not match ${EXPECTED_SHA}" >&2
   exit 1
 }

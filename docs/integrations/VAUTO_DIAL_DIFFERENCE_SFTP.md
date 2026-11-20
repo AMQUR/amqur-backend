@@ -1,9 +1,13 @@
 # Dial Difference vAuto inventory — SFTPGo → AMQUR
 
-**Status:** `IMPLEMENTED NOT CONNECTED`  
+**Status:** `CONNECTED — WAITING FOR VAUTO FILES` (live worker auth verified 2026-11-20T18:47Z; all ten directories EMPTY)  
 **Date:** 2026-11-20  
 
 AMQUR extends the existing vAuto HTTPS feed provider with a **read-only** SFTP transport for the dedicated Dial Difference inventory server. This is **not** the Google VLA / `sftp.dialautogroup.com` pipeline. Do not modify upload accounts, VLA automation, or the Dial Difference website reader.
+
+**Read-only diagnostic (staging worker only):**  
+`AMQUR_SFTP_DIAGNOSTIC=1 node scripts/diagnose-vauto-sftp-readonly.mjs`  
+Ledger: `docs/AMQUR_VAUTO_TEN_FEED_VERIFICATION.md` (workspace) / evidence under `docs/evidence/vauto-sftp-20261120/`.
 
 ## Endpoint (owner-provisioned)
 
@@ -54,7 +58,7 @@ AMQUR_VAUTO_PUBLISH_PHOTOS=false
 INVENTORY_SYNC_ENABLED=false
 ```
 
-Until `AMQUR_VAUTO_SFTP_PASSWORD` is present in the authorized secret store and `AMQUR_VAUTO_SFTP_ENABLED=true` on staging, live ingest stays off. Fixtures under `fixtures/vauto/dial-difference-sftp/` exercise the pipeline without credentials.
+Password is present on isolated staging `worker-staging` and live authentication succeeded (2026-11-20). **Ingest remains off** until `AMQUR_VAUTO_SFTP_ENABLED=true` is explicitly approved after real files arrive. Fixtures under `fixtures/vauto/dial-difference-sftp/` exercise the pipeline without credentials.
 
 Customer-facing **prices** and **photos** stay suppressed until dealership approval (`AMQUR_VAUTO_PUBLISH_*`).
 
