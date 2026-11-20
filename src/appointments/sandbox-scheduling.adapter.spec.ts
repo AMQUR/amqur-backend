@@ -39,19 +39,19 @@ const withEnv = async (env: string, fn: () => unknown) => {
 };
 
 describe('SandboxSchedulingAdapter', () => {
-  it('offers a deterministic grid for the next four days', async () => {
+  it('offers a deterministic grid for the next ten days', async () => {
     const a = new SandboxSchedulingAdapter();
     const q = {
       department: 'TEST_DRIVE' as const,
       fromUtc: now.toISOString(),
-      toUtc: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+      toUtc: new Date(now.getTime() + 14 * 86_400_000).toISOString(),
     };
     const first = await a.getAvailability(ctx(), q);
     expect(first).toEqual(await a.getAvailability(ctx(), q));
     expect(first).toEqual(sandboxSlots(now));
-    expect(first).toHaveLength(16);
+    expect(first).toHaveLength(40);
     expect(first[0].startUtc).toBe('2026-10-14T15:00:00.000Z');
-    expect(first[15].startUtc).toBe('2026-10-17T21:00:00.000Z');
+    expect(first[39].startUtc).toBe('2026-10-23T21:00:00.000Z');
     expect(sandboxTakenSlotStart(now)).toBe(first[1].startUtc);
     expect(a.sandbox).toBe(true);
     expect(a.providerId).toBe(SANDBOX_SCHEDULER_PROVIDER);
@@ -109,7 +109,7 @@ describe('SandboxSchedulingAdapter', () => {
     const q = {
       department: 'SALES' as const,
       fromUtc: now.toISOString(),
-      toUtc: new Date(now.getTime() + 7 * 86_400_000).toISOString(),
+      toUtc: new Date(now.getTime() + 14 * 86_400_000).toISOString(),
     };
     expect(
       (await a.getAvailability(ctx(), q)).map((s) => s.startUtc),
@@ -127,10 +127,18 @@ describe('SandboxSchedulingAdapter', () => {
     ).toMatchObject({ kind: 'confirmed' });
   });
 
-  it('respects a durable booking for the slot, and frees it on cancel', async () => {
+  it('hides durable bookings from availability and drops stale local holds after cancel', async () => {
     const booked = jest.fn().mockResolvedValue(true);
     const a = new SandboxSchedulingAdapter(booked);
     const startUtc = sandboxSlots(now)[3].startUtc;
+    const q = {
+      department: 'SALES' as const,
+      fromUtc: now.toISOString(),
+      toUtc: new Date(now.getTime() + 14 * 86_400_000).toISOString(),
+    };
+    expect((await a.getAvailability(ctx(), q)).map((s) => s.startUtc)).not.toContain(
+      startUtc,
+    );
     expect(
       await a.create(ctx(), { department: 'SALES', startUtc }),
     ).toMatchObject({
@@ -140,6 +148,17 @@ describe('SandboxSchedulingAdapter', () => {
     booked.mockResolvedValue(false);
     const ok = await a.create(ctx(), { department: 'SALES', startUtc });
     if (ok.kind !== 'confirmed') throw new Error('expected confirmed');
+    // Simulate a remote cancel: durable free, but this process still holds the claim.
+    booked.mockResolvedValue(false);
+    const held = (
+      a as unknown as {
+        held: Map<string, { claimedAt: number }>;
+      }
+    ).held;
+    for (const v of held.values()) v.claimedAt = Date.now() - 60_000;
+    expect((await a.getAvailability(ctx(), q)).map((s) => s.startUtc)).toContain(
+      startUtc,
+    );
     await a.cancel(ctx(), ok.externalId);
     expect(
       await a.create(ctx({ idempotencyKey: 'other' }), {
@@ -174,13 +193,13 @@ describe('sandbox scheduler can never exist in production', () => {
           startUtc: sandboxSlots(now)[0].startUtc,
         }),
       ).rejects.toThrow('sandbox_scheduler_forbidden_in_production');
-      expect(() =>
+      await expect(
         a.getAvailability(ctx(), {
           department: 'SALES',
           fromUtc: '',
           toUtc: '',
         }),
-      ).toThrow('sandbox_scheduler_forbidden_in_production');
+      ).rejects.toThrow('sandbox_scheduler_forbidden_in_production');
     });
   });
 

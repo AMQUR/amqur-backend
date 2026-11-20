@@ -474,7 +474,7 @@ describe('AppointmentService — provider receipts', () => {
       sandbox: true,
       connectionId: 'conn-1',
     });
-    expect(offer!.slots).toHaveLength(16);
+    expect(offer!.slots).toHaveLength(40);
   });
 });
 

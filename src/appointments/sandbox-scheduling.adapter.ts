@@ -22,7 +22,8 @@ import { sandboxFacilitiesAllowed } from '../config/deployment-tier';
 export const SANDBOX_SCHEDULER_PROVIDER = 'MOCK';
 export const SANDBOX_SCHEDULER_NAME = 'Sandbox scheduler';
 export const SANDBOX_SLOT_HOURS_UTC = [15, 17, 19, 21] as const;
-export const SANDBOX_HORIZON_DAYS = 4;
+/** Next N UTC days (exclusive of today). Sized for multi-engine hosted browser matrices. */
+export const SANDBOX_HORIZON_DAYS = 10;
 export const SANDBOX_SLOT_MINUTES = 45;
 const TAKEN_HOUR_UTC = 17;
 
@@ -65,7 +66,7 @@ function dayStartUtc(now: Date, plusDays: number): number {
   );
 }
 
-/** The deterministic grid: tomorrow..+4 days (UTC), four fixed starts per day. */
+/** The deterministic grid: tomorrow..+HORIZON days (UTC), four fixed starts per day. */
 export function sandboxSlots(now: Date): AvailabilitySlot[] {
   const out: AvailabilitySlot[] = [];
   for (let d = 1; d <= SANDBOX_HORIZON_DAYS; d += 1) {
@@ -112,11 +113,17 @@ export class SandboxSchedulingAdapter implements ServiceSchedulingProviderAdapte
   readonly providerId = SANDBOX_SCHEDULER_PROVIDER;
   readonly displayName = SANDBOX_SCHEDULER_NAME;
   readonly sandbox = true;
-  /** slot key → { idempotencyKey, ref } of the booking that holds it (process-local). */
+  /**
+   * slot key → booking that holds it (process-local). `claimedAt` lets availability
+   * drop stale holds after a cancel ran on another process (API vs worker) once the
+   * durable CONFIRMED row is gone, without freeing an in-flight create.
+   */
   private readonly held = new Map<
     string,
-    { key: string; ref: string; start: number }
+    { key: string; ref: string; start: number; claimedAt: number }
   >();
+  /** In-flight claim grace before a hold without a durable row is treated as stale. */
+  private static readonly HOLD_GRACE_MS = 30_000;
 
   constructor(
     private readonly alreadyBooked: SandboxBookedLookup = () =>
@@ -145,7 +152,7 @@ export class SandboxSchedulingAdapter implements ServiceSchedulingProviderAdapte
       if (v.start < now.getTime()) this.held.delete(k);
   }
 
-  getAvailability(
+  async getAvailability(
     ctx: SchedulingContext,
     q: {
       department: SchedulingDepartment;
@@ -158,16 +165,32 @@ export class SandboxSchedulingAdapter implements ServiceSchedulingProviderAdapte
     const now = ctx.now ?? new Date();
     const from = Date.parse(q.fromUtc);
     const to = Date.parse(q.toUtc);
-    return Promise.resolve(
-      sandboxSlots(now).filter((s) => {
-        const t = Date.parse(s.startUtc);
-        // Slots already held by another booking are not offered; the designated "taken" slot
-        // stays visible on purpose so the lost-race path can be exercised.
-        return (
-          t >= from && t <= to && !this.held.has(this.slotKey(ctx, s.startUtc))
-        );
-      }),
-    );
+    this.prune(now);
+    const out: AvailabilitySlot[] = [];
+    for (const s of sandboxSlots(now)) {
+      const t = Date.parse(s.startUtc);
+      if (t < from || t > to) continue;
+      const key = this.slotKey(ctx, s.startUtc);
+      const durableTaken = await this.alreadyBooked(ctx, s.startUtc);
+      const holder = this.held.get(key);
+      if (holder) {
+        if (durableTaken) continue;
+        // Cancel on the worker clears durable state but not this process's hold.
+        if (
+          Date.now() - holder.claimedAt >=
+          SandboxSchedulingAdapter.HOLD_GRACE_MS
+        ) {
+          this.held.delete(key);
+        } else {
+          continue;
+        }
+      } else if (durableTaken) {
+        continue;
+      }
+      // Designated "taken" slot stays visible so the lost-race path can be exercised.
+      out.push(s);
+    }
+    return out;
   }
 
   async create(
@@ -197,9 +220,19 @@ export class SandboxSchedulingAdapter implements ServiceSchedulingProviderAdapte
 
     this.prune(now);
     const key = this.slotKey(ctx, startUtc);
-    const holder = this.held.get(key);
-    if (holder && holder.key !== ctx.idempotencyKey)
-      return { kind: 'unavailable', reason: 'slot_taken', alternatives };
+    let holder = this.held.get(key);
+    if (holder && holder.key !== ctx.idempotencyKey) {
+      // Stale hold after a remote cancel (durable row gone, grace elapsed).
+      if (
+        !(await this.alreadyBooked(ctx, startUtc)) &&
+        Date.now() - holder.claimedAt >= SandboxSchedulingAdapter.HOLD_GRACE_MS
+      ) {
+        this.held.delete(key);
+        holder = undefined;
+      } else {
+        return { kind: 'unavailable', reason: 'slot_taken', alternatives };
+      }
+    }
     const ref = sandboxReference(ctx.idempotencyKey, startUtc);
     // Claim synchronously (single-threaded) BEFORE any await: two concurrent selections of the
     // same slot can never both pass this point.
@@ -207,6 +240,7 @@ export class SandboxSchedulingAdapter implements ServiceSchedulingProviderAdapte
       key: ctx.idempotencyKey,
       ref,
       start: start.getTime(),
+      claimedAt: Date.now(),
     });
     if (!holder && (await this.alreadyBooked(ctx, startUtc))) {
       this.held.delete(key);
