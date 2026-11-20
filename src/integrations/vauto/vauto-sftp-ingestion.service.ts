@@ -70,6 +70,33 @@ export class VAutoSftpIngestionService {
     return Boolean(host && user && pass && fp);
   }
 
+  /**
+   * Operator-safe Dial Difference SFTP status (no secrets).
+   * Does not open a network connection — configuration and flag presence only.
+   */
+  operatorStatus(): {
+    ingestEnabled: boolean;
+    inventorySyncEnabled: boolean;
+    credentialsConfigured: boolean;
+    publishPrices: boolean;
+    publishPhotos: boolean;
+    hostConfigured: boolean;
+    feedSourceCount: number;
+  } {
+    return {
+      ingestEnabled: this.isEnabled(),
+      inventorySyncEnabled:
+        this.config.get<string>('INVENTORY_SYNC_ENABLED') === 'true',
+      credentialsConfigured: this.credentialsConfigured(),
+      publishPrices: this.publishPrices(),
+      publishPhotos: this.publishPhotos(),
+      hostConfigured: Boolean(
+        (this.config.get<string>('AMQUR_VAUTO_SFTP_HOST') ?? '').trim(),
+      ),
+      feedSourceCount: DIAL_DIFFERENCE_FEED_SOURCES.length,
+    };
+  }
+
   private publishPrices(): boolean {
     return this.config.get<string>('AMQUR_VAUTO_PUBLISH_PRICES') === 'true';
   }

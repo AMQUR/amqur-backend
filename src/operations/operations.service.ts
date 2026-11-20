@@ -59,6 +59,7 @@ import { mergePolicy } from '../finance/financial-assumption-policy';
 import { isValidTimeZone, parseIsoDate } from '../common/time/zoned-time';
 import { redactCreditSensitive } from '../common/security/sensitive-data';
 import { InventoryEngine } from '../chat/engines/inventory.engine';
+import { VAutoSftpIngestionService } from '../integrations/vauto/vauto-sftp-ingestion.service';
 import { assignableStaffWhere } from '../leads/round-robin';
 
 type Scope = { tenantId: string; locationId: string | null };
@@ -117,6 +118,7 @@ export class OperationsService {
     private readonly tekion: TekionProvider,
     private readonly credit: CreditApplicationService,
     private readonly inventory: InventoryEngine,
+    private readonly vautoSftp: VAutoSftpIngestionService,
   ) {}
 
   /** Vehicle table browse for Command Center — DB price/status only. */
@@ -1456,6 +1458,7 @@ export class OperationsService {
             rejected: r.rejectedCount,
             anomalies: r.anomalyFlags,
           })),
+          dialDifferenceSftp: this.vautoSftp.operatorStatus(),
         },
         llm: await this.llm.health(),
       },

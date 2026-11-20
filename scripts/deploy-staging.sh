@@ -55,10 +55,19 @@ case "${TARGET}" in
     ;;
 esac
 
-echo "==> verifying deployed release identity"
 EXPECTED_SHA="$(git rev-parse HEAD)"
 STAGING_API_URL="${STAGING_API_URL:-https://backend-staging-staging-b699.up.railway.app}"
-scripts/verify-release.sh "${STAGING_API_URL}" "${EXPECTED_SHA}" || {
-  echo "WARNING: release verification failed — deployed commit does not match ${EXPECTED_SHA}" >&2
-  exit 1
-}
+# API /version only moves when backend-staging is deployed.
+case "${TARGET}" in
+  worker|worker-staging)
+    echo "==> worker-only deploy: skip API /version check (expected SHA ${EXPECTED_SHA})"
+    echo "    Confirm worker stamp via: railway ssh -s worker-staging -- 'node -e \"console.log(require(\\\"./release.json\\\").commitSha)\"'"
+    ;;
+  *)
+    echo "==> verifying deployed API release identity"
+    scripts/verify-release.sh "${STAGING_API_URL}" "${EXPECTED_SHA}" || {
+      echo "WARNING: release verification failed — deployed commit does not match ${EXPECTED_SHA}" >&2
+      exit 1
+    }
+    ;;
+esac
