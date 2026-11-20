@@ -136,9 +136,9 @@ describe('SandboxSchedulingAdapter', () => {
       fromUtc: now.toISOString(),
       toUtc: new Date(now.getTime() + 14 * 86_400_000).toISOString(),
     };
-    expect((await a.getAvailability(ctx(), q)).map((s) => s.startUtc)).not.toContain(
-      startUtc,
-    );
+    expect(
+      (await a.getAvailability(ctx(), q)).map((s) => s.startUtc),
+    ).not.toContain(startUtc);
     expect(
       await a.create(ctx(), { department: 'SALES', startUtc }),
     ).toMatchObject({
@@ -156,9 +156,9 @@ describe('SandboxSchedulingAdapter', () => {
       }
     ).held;
     for (const v of held.values()) v.claimedAt = Date.now() - 60_000;
-    expect((await a.getAvailability(ctx(), q)).map((s) => s.startUtc)).toContain(
-      startUtc,
-    );
+    expect(
+      (await a.getAvailability(ctx(), q)).map((s) => s.startUtc),
+    ).toContain(startUtc);
     await a.cancel(ctx(), ok.externalId);
     expect(
       await a.create(ctx({ idempotencyKey: 'other' }), {
