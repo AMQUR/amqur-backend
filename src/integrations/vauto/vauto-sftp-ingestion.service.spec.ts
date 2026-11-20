@@ -39,7 +39,7 @@ describe('VAutoSftpIngestionService', () => {
     } as never,
     {
       get: (k: string) => configMap[k],
-    } as ConfigService,
+    } as unknown as ConfigService,
     { parseFeed } as never,
     {
       upsertVehicles,
@@ -71,7 +71,7 @@ describe('VAutoSftpIngestionService', () => {
   it('is disabled by default flag', () => {
     const off = new VAutoSftpIngestionService(
       {} as never,
-      { get: () => 'false' } as ConfigService,
+      { get: () => 'false' } as unknown as ConfigService,
       {} as never,
       {} as never,
       { increment: jest.fn() } as never,
