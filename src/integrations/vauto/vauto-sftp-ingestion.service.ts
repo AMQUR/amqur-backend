@@ -21,6 +21,11 @@ import { FixtureSftpTransport } from './sftp/fixture-sftp-transport';
 import { SftpGoClient } from './sftp/sftpgo-client';
 import type { InventorySftpTransport } from './sftp/sftp-transport';
 import type { InventoryFeedFormat } from '../core/inventory-feed.provider';
+import {
+  rawRecordsHaveVinHeader,
+  shouldRejectFeedValidation,
+  validateNormalizedFeedVehicles,
+} from './feed-record-validation';
 
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -310,16 +315,47 @@ export class VAutoSftpIngestionService {
       });
 
       const records = this.feed.parseFeed(format, file.body.toString('utf8'));
-      const vehicles = records
+      const rawRows = Array.isArray(records)
+        ? (records as Array<Record<string, unknown>>)
+        : [];
+      const hardSchema: string[] = [];
+      if (
+        format === 'CSV' &&
+        rawRows.length > 0 &&
+        !rawRecordsHaveVinHeader(rawRows)
+      ) {
+        hardSchema.push('schema_missing_vin_header');
+      }
+
+      const normalized = records
         .map((r) => VehicleNormalizer.normalize(r))
-        .filter((v): v is NonNullable<typeof v> => v !== null)
-        .map((v) => ({
-          ...v,
+        .filter((v): v is NonNullable<typeof v> => v !== null);
+
+      const validated = validateNormalizedFeedVehicles(normalized);
+      const vehicles = validated.accepted.map((v) => {
+        const base = normalized.find(
+          (n) => n.vin.toUpperCase().trim() === v.vin,
+        )!;
+        return {
+          ...base,
+          vin: v.vin,
+          stock: v.stock ?? base.stock,
           condition: source.condition,
           source: `vauto_sftp:${source.feedSourceKey}`,
-        }));
+        };
+      });
 
-      const anomalies: string[] = [];
+      const anomalies: string[] = [...hardSchema, ...validated.anomalies];
+      anomalies.push(
+        ...shouldRejectFeedValidation(validated, {
+          requireVinHeader: format === 'CSV' && rawRows.length > 0,
+          hasVinHeader:
+            format !== 'CSV' ||
+            rawRows.length === 0 ||
+            rawRecordsHaveVinHeader(rawRows),
+        }).filter((a) => !anomalies.includes(a)),
+      );
+
       const minRecords = location.inventoryMinRecords ?? 1;
       if (vehicles.length < minRecords) {
         anomalies.push(`below_min_records:${vehicles.length}<${minRecords}`);
@@ -334,7 +370,19 @@ export class VAutoSftpIngestionService {
         );
       }
 
-      if (anomalies.length) {
+      // Duplicate VINs / missing VIN header / empty / size-drop → preserve LKG.
+      const reject =
+        hardSchema.length > 0 ||
+        validated.duplicateVinCount > 0 ||
+        anomalies.some(
+          (a) =>
+            a.startsWith('below_min_records') ||
+            a === 'empty_normalized_inventory' ||
+            a.startsWith('size_drop_anomaly') ||
+            a === 'schema_missing_vin_header',
+        );
+
+      if (reject) {
         this.metrics.increment('inventory.sftp.import.rejected');
         await this.prisma.inventoryImportRun.update({
           where: { id: run.id },
@@ -342,7 +390,8 @@ export class VAutoSftpIngestionService {
             status: InventoryImportStatus.REJECTED_ANOMALY,
             recordCount: records.length,
             validCount: vehicles.length,
-            rejectedCount: records.length - vehicles.length,
+            rejectedCount:
+              records.length - vehicles.length + validated.rejectedCount,
             anomalyFlags: anomalies as unknown as Prisma.InputJsonValue,
             errorMessage: anomalies.join('; ').slice(0, 500),
             completedAt: new Date(),
@@ -357,36 +406,40 @@ export class VAutoSftpIngestionService {
         };
       }
 
-      await this.prisma.inventoryImportRun.update({
-        where: { id: run.id },
-        data: {
-          status: InventoryImportStatus.RECONCILING,
-          recordCount: records.length,
-          validCount: vehicles.length,
-          rejectedCount: records.length - vehicles.length,
-        },
-      });
+      await this.prisma.$transaction(async (tx) => {
+        await tx.inventoryImportRun.update({
+          where: { id: run.id },
+          data: {
+            status: InventoryImportStatus.RECONCILING,
+            recordCount: records.length,
+            validCount: vehicles.length,
+            rejectedCount: validated.rejectedCount,
+          },
+        });
 
-      await this.inventory.upsertVehicles(tenant.id, location.id, vehicles, {
-        source: `vauto_sftp:${source.feedSourceKey}`,
-        importRunId: run.id,
-        freshnessState: InventoryFreshnessState.FRESH,
-        feedSourceKey: source.feedSourceKey,
-        publishPrices: this.publishPrices(),
-        publishPhotos: this.publishPhotos(),
-      });
+        await this.inventory.upsertVehicles(tenant.id, location.id, vehicles, {
+          source: `vauto_sftp:${source.feedSourceKey}`,
+          importRunId: run.id,
+          freshnessState: InventoryFreshnessState.FRESH,
+          feedSourceKey: source.feedSourceKey,
+          publishPrices: this.publishPrices(),
+          publishPhotos: this.publishPhotos(),
+          tx,
+        });
 
-      await this.inventory.updateVehicleLifecycle(location.id, {
-        feedSourceKey: source.feedSourceKey,
-        snapshotStartedAt: run.startedAt,
-      });
+        await this.inventory.updateVehicleLifecycle(location.id, {
+          feedSourceKey: source.feedSourceKey,
+          snapshotStartedAt: run.startedAt,
+          tx,
+        });
 
-      await this.prisma.inventoryImportRun.update({
-        where: { id: run.id },
-        data: {
-          status: InventoryImportStatus.SUCCEEDED,
-          completedAt: new Date(),
-        },
+        await tx.inventoryImportRun.update({
+          where: { id: run.id },
+          data: {
+            status: InventoryImportStatus.SUCCEEDED,
+            completedAt: new Date(),
+          },
+        });
       });
       this.metrics.increment('inventory.sftp.import.succeeded');
 

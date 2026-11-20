@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InventoryVehicle } from '../chat/types/vehicle.types';
 import { VehicleStatus, Prisma, InventoryFreshnessState } from '@prisma/client';
 
+type DbClient = Prisma.TransactionClient | PrismaService;
+
 export type UpsertVehiclesMeta = {
   source?: string;
   importRunId?: string;
@@ -12,6 +14,8 @@ export type UpsertVehiclesMeta = {
   publishPrices?: boolean;
   /** When false, strip photo URLs (rights not verified). */
   publishPhotos?: boolean;
+  /** Optional interactive-transaction client for atomic ingest. */
+  tx?: Prisma.TransactionClient;
 };
 
 @Injectable()
@@ -81,6 +85,7 @@ export class InventoryService {
     vehicles: InventoryVehicle[],
     meta?: UpsertVehiclesMeta,
   ) {
+    const db: DbClient = meta?.tx ?? this.prisma;
     const now = new Date();
     const source = meta?.source ?? null;
     const importRunId = meta?.importRunId ?? null;
@@ -100,7 +105,7 @@ export class InventoryService {
         ? ((v.photos as Prisma.InputJsonValue) ?? undefined)
         : [];
 
-      const existing = await this.prisma.vehicle.findUnique({
+      const existing = await db.vehicle.findUnique({
         where: { tenantId_vin: { tenantId, vin } },
         select: { status: true, explicitSoldEvidence: true },
       });
@@ -108,7 +113,7 @@ export class InventoryService {
         existing?.status === VehicleStatus.SOLD &&
         Boolean(existing.explicitSoldEvidence?.trim());
 
-      await this.prisma.vehicle.upsert({
+      await db.vehicle.upsert({
         where: {
           tenantId_vin: { tenantId, vin },
         },
@@ -189,8 +194,10 @@ export class InventoryService {
       snapshotStartedAt: Date;
       /** Days in MISSING before REMOVED_FROM_LISTING (default 14). */
       removedAfterDays?: number;
+      tx?: Prisma.TransactionClient;
     },
   ) {
+    const db: DbClient = opts.tx ?? this.prisma;
     const removedAfterDays = opts.removedAfterDays ?? 14;
     const removedThreshold = new Date(
       opts.snapshotStartedAt.getTime() - removedAfterDays * 24 * 60 * 60 * 1000,
@@ -201,7 +208,7 @@ export class InventoryService {
       ? { feedSourceKey: opts.feedSourceKey }
       : { feedSourceKey: null };
 
-    await this.prisma.vehicle.updateMany({
+    await db.vehicle.updateMany({
       where: {
         locationId,
         ...sourceFilter,
@@ -224,7 +231,7 @@ export class InventoryService {
       },
     });
 
-    await this.prisma.vehicle.updateMany({
+    await db.vehicle.updateMany({
       where: {
         locationId,
         ...sourceFilter,

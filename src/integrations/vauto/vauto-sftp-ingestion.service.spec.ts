@@ -26,17 +26,24 @@ describe('VAutoSftpIngestionService', () => {
     AMQUR_VAUTO_PUBLISH_PHOTOS: 'false',
   };
 
+  const prismaMock = {
+    tenant: { findFirst: tenantFindFirst },
+    location: { findFirst: locationFindFirst },
+    vehicle: { count: vehicleCount },
+    inventoryImportRun: {
+      create: importCreate,
+      update: importUpdate,
+      findFirst: importFindFirst,
+    },
+    $transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({
+        inventoryImportRun: { update: importUpdate },
+      }),
+    ),
+  };
+
   const service = new VAutoSftpIngestionService(
-    {
-      tenant: { findFirst: tenantFindFirst },
-      location: { findFirst: locationFindFirst },
-      vehicle: { count: vehicleCount },
-      inventoryImportRun: {
-        create: importCreate,
-        update: importUpdate,
-        findFirst: importFindFirst,
-      },
-    } as never,
+    prismaMock as never,
     {
       get: (k: string) => configMap[k],
     } as unknown as ConfigService,
