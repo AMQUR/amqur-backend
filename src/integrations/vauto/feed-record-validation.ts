@@ -8,11 +8,7 @@ const VIN_RE = /^[A-HJ-NPR-Z0-9]{17}$/i;
 const STOCK_RE = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,39}$/;
 
 /** Columns that may carry VIN in CSV/object feeds (case-insensitive match on keys). */
-export const VIN_HEADER_ALIASES = [
-  'vin',
-  'vehiclevin',
-  'vehicle_vin',
-] as const;
+export const VIN_HEADER_ALIASES = ['vin', 'vehiclevin', 'vehicle_vin'] as const;
 
 export type FeedVehicleCandidate = {
   vin: string;
@@ -84,8 +80,7 @@ export function validateNormalizedFeedVehicles(
     seen.set(vin, { ...v, vin, stock: v.stock?.trim() || undefined });
   }
 
-  if (invalidVinCount)
-    anomalies.push(`invalid_vin_count:${invalidVinCount}`);
+  if (invalidVinCount) anomalies.push(`invalid_vin_count:${invalidVinCount}`);
   if (invalidStockCount)
     anomalies.push(`invalid_stock_count:${invalidStockCount}`);
   if (duplicateVinCount)

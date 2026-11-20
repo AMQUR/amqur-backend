@@ -48,8 +48,7 @@ export class OpsAlertService {
         summary: alert.summary.slice(0, 400),
         context: alert.context ?? {},
         at: new Date().toISOString(),
-        deploymentTier:
-          this.config.get<string>('DEPLOYMENT_TIER') ?? 'unknown',
+        deploymentTier: this.config.get<string>('DEPLOYMENT_TIER') ?? 'unknown',
       };
       await axios.post(url, body, {
         timeout: 8_000,

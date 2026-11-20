@@ -42,7 +42,9 @@ describe('VAutoSftpIngestionService', () => {
     ),
   };
 
-  const opsAlerts = { notify: jest.fn().mockResolvedValue({ delivered: false }) };
+  const opsAlerts = {
+    notify: jest.fn().mockResolvedValue({ delivered: false }),
+  };
 
   const service = new VAutoSftpIngestionService(
     prismaMock as never,

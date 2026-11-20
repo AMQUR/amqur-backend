@@ -226,7 +226,7 @@ export class VAutoSftpIngestionService {
     listed.sort((a, b) => b.modifyTimeMs - a.modifyTimeMs);
     const chosen = listed[0];
 
-      const run = await this.prisma.inventoryImportRun.create({
+    const run = await this.prisma.inventoryImportRun.create({
       data: {
         tenantId: tenant.id,
         locationId: location.id,
@@ -475,9 +475,8 @@ export class VAutoSftpIngestionService {
           completedAt: new Date(),
         },
       });
-      const authish = /auth|password|host_key|fingerprint|ECONN|timed?\s?out/i.test(
-        msg,
-      );
+      const authish =
+        /auth|password|host_key|fingerprint|ECONN|timed?\s?out/i.test(msg);
       await this.opsAlerts.notify({
         code: authish
           ? 'inventory.sftp.auth_or_transport_failed'

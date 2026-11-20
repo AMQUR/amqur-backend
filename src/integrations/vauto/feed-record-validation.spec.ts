@@ -31,9 +31,7 @@ describe('feed-record-validation', () => {
     expect(r.duplicateVinCount).toBe(1);
     expect(r.invalidVinCount).toBe(1);
     expect(r.invalidStockCount).toBe(1);
-    expect(shouldRejectFeedValidation(r)).toEqual([
-      'duplicate_vin_in_feed:1',
-    ]);
+    expect(shouldRejectFeedValidation(r)).toEqual(['duplicate_vin_in_feed:1']);
   });
 
   it('hard-rejects missing VIN header when required', () => {

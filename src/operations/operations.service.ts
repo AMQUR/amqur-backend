@@ -149,53 +149,55 @@ export class OperationsService {
       tenantId: scope.tenantId,
       ...(scope.locationId ? { locationId: scope.locationId } : {}),
     };
-    const [freshness, recentImports, failedImports, byFeed] = await Promise.all([
-      this.prisma.vehicle.groupBy({
-        by: ['freshnessState'],
-        where: {
-          ...base,
-          status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD', 'MISSING'] },
-        },
-        _count: { _all: true },
-      }),
-      this.prisma.inventoryImportRun.findMany({
-        where: base,
-        orderBy: { startedAt: 'desc' },
-        take: 25,
-        select: {
-          id: true,
-          status: true,
-          feedSourceKey: true,
-          sourceCondition: true,
-          transport: true,
-          startedAt: true,
-          completedAt: true,
-          recordCount: true,
-          validCount: true,
-          rejectedCount: true,
-          anomalyFlags: true,
-          errorMessage: true,
-        },
-      }),
-      this.prisma.inventoryImportRun.count({
-        where: {
-          ...base,
-          status: { in: ['FAILED', 'REJECTED_ANOMALY'] },
-          startedAt: { gte: new Date(Date.now() - 7 * 86_400_000) },
-        },
-      }),
-      this.prisma.inventoryImportRun.findMany({
-        where: { ...base, feedSourceKey: { not: null } },
-        orderBy: { startedAt: 'desc' },
-        take: 100,
-        select: {
-          feedSourceKey: true,
-          status: true,
-          startedAt: true,
-          validCount: true,
-        },
-      }),
-    ]);
+    const [freshness, recentImports, failedImports, byFeed] = await Promise.all(
+      [
+        this.prisma.vehicle.groupBy({
+          by: ['freshnessState'],
+          where: {
+            ...base,
+            status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD', 'MISSING'] },
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.inventoryImportRun.findMany({
+          where: base,
+          orderBy: { startedAt: 'desc' },
+          take: 25,
+          select: {
+            id: true,
+            status: true,
+            feedSourceKey: true,
+            sourceCondition: true,
+            transport: true,
+            startedAt: true,
+            completedAt: true,
+            recordCount: true,
+            validCount: true,
+            rejectedCount: true,
+            anomalyFlags: true,
+            errorMessage: true,
+          },
+        }),
+        this.prisma.inventoryImportRun.count({
+          where: {
+            ...base,
+            status: { in: ['FAILED', 'REJECTED_ANOMALY'] },
+            startedAt: { gte: new Date(Date.now() - 7 * 86_400_000) },
+          },
+        }),
+        this.prisma.inventoryImportRun.findMany({
+          where: { ...base, feedSourceKey: { not: null } },
+          orderBy: { startedAt: 'desc' },
+          take: 100,
+          select: {
+            feedSourceKey: true,
+            status: true,
+            startedAt: true,
+            validCount: true,
+          },
+        }),
+      ],
+    );
 
     const latestByFeed = new Map<
       string,

@@ -532,10 +532,7 @@ export class OperationsController {
   /** Import history + Dial Difference SFTP flag/credential presence (no secrets). */
   @Roles(...STAFF)
   @Get('inventory/health')
-  inventoryHealth(
-    @CurrentUser() u: AuthUser,
-    @Query('locationId') l?: string,
-  ) {
+  inventoryHealth(@CurrentUser() u: AuthUser, @Query('locationId') l?: string) {
     return this.ops.inventoryHealth(this.scope(u, undefined, l));
   }
 
