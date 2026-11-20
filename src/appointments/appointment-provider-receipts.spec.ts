@@ -467,6 +467,7 @@ describe('AppointmentService — provider receipts', () => {
         locationId: 'l1',
         type: 'SALES',
         now,
+        horizonDays: 14,
       },
     );
     expect(offer).toMatchObject({
