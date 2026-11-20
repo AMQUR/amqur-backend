@@ -119,6 +119,9 @@ export const envValidationSchema = Joi.object({
     .optional()
     .default('false'),
 
+  /** Optional HTTPS webhook for ops alerts (SFTP/freshness/lead). Empty = skip. */
+  OPS_ALERT_WEBHOOK_URL: Joi.string().uri().optional().allow(''),
+
   GOOGLE_CLIENT_EMAIL: Joi.string().optional().allow(''),
   GOOGLE_PRIVATE_KEY: Joi.string().optional().allow(''),
 

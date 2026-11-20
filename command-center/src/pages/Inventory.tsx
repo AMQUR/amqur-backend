@@ -30,8 +30,16 @@ type InventoryHealth = {
   failedOrRejectedImports7d?: number;
   latestImportByFeed?: Record<
     string,
-    { status: string; startedAt: string; validCount: number | null }
+    { status: string; startedAt: string | null; validCount: number | null; displayName?: string }
   >;
+  tenFeeds?: Array<{
+    feedSourceKey: string;
+    status: string;
+    startedAt: string | null;
+    validCount: number | null;
+    displayName: string;
+  }>;
+  pricePhotoPolicy?: { publishPrices: boolean; publishPhotos: boolean; provenance: string };
   note?: string;
 };
 
@@ -139,17 +147,42 @@ export function Inventory({ locationId }: { locationId: string }) {
               ))}
           </ul>
           {health.note && <p className="muted small">{health.note}</p>}
-          {health.latestImportByFeed && Object.keys(health.latestImportByFeed).length > 0 && (
+          {(health.tenFeeds ?? Object.entries(health.latestImportByFeed ?? {}).map(([feedSourceKey, row]) => ({
+            feedSourceKey,
+            ...row,
+            displayName: row.displayName ?? feedSourceKey,
+          }))).length > 0 && (
             <ul className="kv">
-              {Object.entries(health.latestImportByFeed).map(([feed, row]) => (
-                <li key={feed}>
-                  <span>{feed}</span>
-                  <Badge tone={row.status === 'SUCCEEDED' ? 'ok' : 'warn'}>
+              {(
+                health.tenFeeds ??
+                Object.entries(health.latestImportByFeed ?? {}).map(([feedSourceKey, row]) => ({
+                  feedSourceKey,
+                  ...row,
+                  displayName: row.displayName ?? feedSourceKey,
+                }))
+              ).map((row) => (
+                <li key={row.feedSourceKey}>
+                  <span>{row.displayName}</span>
+                  <Badge
+                    tone={
+                      row.status === 'SUCCEEDED'
+                        ? 'ok'
+                        : row.status === 'NEVER_RUN'
+                          ? 'neutral'
+                          : 'warn'
+                    }
+                  >
                     {row.status} · {row.validCount ?? '—'}
                   </Badge>
                 </li>
               ))}
             </ul>
+          )}
+          {health.pricePhotoPolicy && (
+            <p className="muted small">
+              Prices {health.pricePhotoPolicy.publishPrices ? 'on' : 'off'} · Photos{' '}
+              {health.pricePhotoPolicy.publishPhotos ? 'on' : 'off'}. {health.pricePhotoPolicy.provenance}
+            </p>
           )}
         </Card>
       )}

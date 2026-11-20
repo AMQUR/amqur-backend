@@ -42,6 +42,8 @@ describe('VAutoSftpIngestionService', () => {
     ),
   };
 
+  const opsAlerts = { notify: jest.fn().mockResolvedValue({ delivered: false }) };
+
   const service = new VAutoSftpIngestionService(
     prismaMock as never,
     {
@@ -53,6 +55,7 @@ describe('VAutoSftpIngestionService', () => {
       updateVehicleLifecycle,
     } as never,
     { increment: jest.fn() } as never,
+    opsAlerts as never,
   );
 
   beforeEach(() => {
@@ -82,8 +85,46 @@ describe('VAutoSftpIngestionService', () => {
       {} as never,
       {} as never,
       { increment: jest.fn() } as never,
+      { notify: jest.fn() } as never,
     );
     expect(off.isEnabled()).toBe(false);
+  });
+
+  it('rejects duplicate VINs in one snapshot and preserves inventory', async () => {
+    tenantFindFirst.mockResolvedValue({
+      id: 'tenant-jeep',
+      slug: 'jeep-of-chicago',
+    });
+    locationFindFirst.mockResolvedValue({
+      id: 'loc-jeep',
+      inventoryMinRecords: 1,
+    });
+    parseFeed.mockReturnValue([
+      { vin: '1C4HJXDG0FW000001', year: 2025, make: 'Jeep', model: 'A' },
+      { vin: '1C4HJXDG0FW000001', year: 2025, make: 'Jeep', model: 'B' },
+    ]);
+    jest
+      .spyOn(VehicleNormalizer, 'normalize')
+      .mockImplementation((raw: { vin: string; model: string }) => ({
+        vin: raw.vin,
+        year: 2025,
+        make: 'Jeep',
+        model: raw.model,
+      }));
+
+    const transport = new FixtureSftpTransport(FIXTURE_ROOT);
+    const result = await service.runOneSource(
+      service.source('jeep_north/new')!,
+      transport,
+    );
+    expect(result.status).toBe('REJECTED_ANOMALY');
+    expect(result.preservedInventory).toBe(true);
+    expect(
+      result.anomalies?.some((a) => a.startsWith('duplicate_vin_in_feed')),
+    ).toBe(true);
+    expect(upsertVehicles).not.toHaveBeenCalled();
+    expect(opsAlerts.notify).toHaveBeenCalled();
+    await transport.dispose();
   });
 
   it('detects XML/JSON/CSV formats without guessing unsupported bodies', () => {

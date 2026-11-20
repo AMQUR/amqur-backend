@@ -60,6 +60,7 @@ import { isValidTimeZone, parseIsoDate } from '../common/time/zoned-time';
 import { redactCreditSensitive } from '../common/security/sensitive-data';
 import { InventoryEngine } from '../chat/engines/inventory.engine';
 import { VAutoSftpIngestionService } from '../integrations/vauto/vauto-sftp-ingestion.service';
+import { DIAL_DIFFERENCE_FEED_SOURCES } from '../integrations/vauto/dial-difference-feed-map';
 import { assignableStaffWhere } from '../leads/round-robin';
 
 type Scope = { tenantId: string; locationId: string | null };
@@ -198,15 +199,30 @@ export class OperationsService {
 
     const latestByFeed = new Map<
       string,
-      { status: string; startedAt: Date; validCount: number | null }
+      {
+        status: string;
+        startedAt: Date | null;
+        validCount: number | null;
+        displayName: string;
+      }
     >();
+    for (const src of DIAL_DIFFERENCE_FEED_SOURCES) {
+      latestByFeed.set(src.feedSourceKey, {
+        status: 'NEVER_RUN',
+        startedAt: null,
+        validCount: null,
+        displayName: src.displayName,
+      });
+    }
     for (const row of byFeed) {
       const key = row.feedSourceKey!;
-      if (!latestByFeed.has(key)) {
+      const existing = latestByFeed.get(key);
+      if (existing && existing.status === 'NEVER_RUN') {
         latestByFeed.set(key, {
           status: row.status,
           startedAt: row.startedAt,
           validCount: row.validCount,
+          displayName: existing.displayName,
         });
       }
     }
@@ -217,9 +233,20 @@ export class OperationsService {
         freshness.map((v) => [v.freshnessState, v._count._all]),
       ),
       failedOrRejectedImports7d: failedImports,
+      /** Always ten Dial Difference feeds — NEVER_RUN until an import attempt exists. */
+      tenFeeds: [...latestByFeed.entries()].map(([feedSourceKey, row]) => ({
+        feedSourceKey,
+        ...row,
+      })),
       latestImportByFeed: Object.fromEntries(latestByFeed),
       recentImports,
-      note: 'SFTP operatorStatus is configuration presence only — use the staging diagnostic for live directory listing. Empty import history does not mean SFTP auth failed.',
+      pricePhotoPolicy: {
+        publishPrices: this.vautoSftp.operatorStatus().publishPrices,
+        publishPhotos: this.vautoSftp.operatorStatus().publishPhotos,
+        provenance:
+          'Fail-closed: prices/photos are stripped at upsert unless AMQUR_VAUTO_PUBLISH_* is true. No separate provenance columns; source string + importRunId + publish flags are the evidence.',
+      },
+      note: 'SFTP operatorStatus is configuration presence only — use the staging diagnostic for live directory listing. NEVER_RUN/empty feeds must not be treated as zero vehicles or sold. Missing≠sold.',
     };
   }
 

@@ -940,6 +940,7 @@ model InventoryImportRun {
   rejectedCount    Int?
   anomalyFlags     Json?
 
+  /// Allowlisted remote feed path only (e.g. /jeep_north/new/file.csv). Never a local raw dump of PII/inventory bodies.
   rawArtifactPath String?
   errorMessage    String?
 

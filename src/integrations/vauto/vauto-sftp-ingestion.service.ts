@@ -12,6 +12,7 @@ import { InventoryFeedService } from '../../inventory-feed/inventory-feed.servic
 import { VehicleNormalizer } from '../../inventory-feed/normalizer/vehicle.normalizer';
 import { InventoryService } from '../../inventory/inventory.service';
 import { MetricsService } from '../../observability/metrics.service';
+import { OpsAlertService } from '../../observability/ops-alert.service';
 import {
   DIAL_DIFFERENCE_FEED_SOURCES,
   type DialDifferenceFeedSource,
@@ -59,6 +60,7 @@ export class VAutoSftpIngestionService {
     private readonly feed: InventoryFeedService,
     private readonly inventory: InventoryService,
     private readonly metrics: MetricsService,
+    private readonly opsAlerts: OpsAlertService,
   ) {}
 
   isEnabled(): boolean {
@@ -224,7 +226,7 @@ export class VAutoSftpIngestionService {
     listed.sort((a, b) => b.modifyTimeMs - a.modifyTimeMs);
     const chosen = listed[0];
 
-    const run = await this.prisma.inventoryImportRun.create({
+      const run = await this.prisma.inventoryImportRun.create({
       data: {
         tenantId: tenant.id,
         locationId: location.id,
@@ -234,6 +236,8 @@ export class VAutoSftpIngestionService {
         sourceCondition: source.condition,
         status: InventoryImportStatus.PENDING,
         sourceIdentifier: chosen.remotePath,
+        // Allowlisted remote path only — never a local raw export body.
+        rawArtifactPath: chosen.remotePath.slice(0, 500),
       },
     });
 
@@ -397,6 +401,16 @@ export class VAutoSftpIngestionService {
             completedAt: new Date(),
           },
         });
+        await this.opsAlerts.notify({
+          code: 'inventory.sftp.rejected_anomaly',
+          severity: 'warning',
+          summary: `SFTP feed rejected anomalies for ${source.feedSourceKey}`,
+          context: {
+            feedSourceKey: source.feedSourceKey,
+            anomalyCount: anomalies.length,
+            preservedInventory: true,
+          },
+        });
         return {
           feedSourceKey: source.feedSourceKey,
           status: 'REJECTED_ANOMALY',
@@ -459,6 +473,20 @@ export class VAutoSftpIngestionService {
           status: InventoryImportStatus.FAILED,
           errorMessage: msg.slice(0, 500),
           completedAt: new Date(),
+        },
+      });
+      const authish = /auth|password|host_key|fingerprint|ECONN|timed?\s?out/i.test(
+        msg,
+      );
+      await this.opsAlerts.notify({
+        code: authish
+          ? 'inventory.sftp.auth_or_transport_failed'
+          : 'inventory.sftp.import_failed',
+        severity: authish ? 'critical' : 'warning',
+        summary: `SFTP import failed for ${source.feedSourceKey}`,
+        context: {
+          feedSourceKey: source.feedSourceKey,
+          errorClass: authish ? 'auth_or_transport' : 'import',
         },
       });
       return {

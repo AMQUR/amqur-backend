@@ -110,6 +110,7 @@
     "typescript-eslint": "^8.64.0"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.0"
+    "deepmerge-ts": "^8.0.0",
+    "effect": "3.22.5"
   }
 }
