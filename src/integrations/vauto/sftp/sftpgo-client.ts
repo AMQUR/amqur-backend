@@ -45,7 +45,7 @@ export class SftpGoClient implements InventorySftpTransport {
         const ok = hostKeyMatches(key, this.cfg.hostFingerprintSha256);
         if (!ok) {
           // Log fingerprint only (not the password).
-          // eslint-disable-next-line no-console
+
           console.warn(
             `sftp_host_key_mismatch actual=${sshHostFingerprintSha256(key)}`,
           );

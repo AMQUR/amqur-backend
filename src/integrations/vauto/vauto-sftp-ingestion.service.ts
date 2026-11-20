@@ -340,19 +340,14 @@ export class VAutoSftpIngestionService {
         },
       });
 
-      await this.inventory.upsertVehicles(
-        tenant.id,
-        location.id,
-        vehicles,
-        {
-          source: `vauto_sftp:${source.feedSourceKey}`,
-          importRunId: run.id,
-          freshnessState: InventoryFreshnessState.FRESH,
-          feedSourceKey: source.feedSourceKey,
-          publishPrices: this.publishPrices(),
-          publishPhotos: this.publishPhotos(),
-        },
-      );
+      await this.inventory.upsertVehicles(tenant.id, location.id, vehicles, {
+        source: `vauto_sftp:${source.feedSourceKey}`,
+        importRunId: run.id,
+        freshnessState: InventoryFreshnessState.FRESH,
+        feedSourceKey: source.feedSourceKey,
+        publishPrices: this.publishPrices(),
+        publishPhotos: this.publishPhotos(),
+      });
 
       await this.inventory.updateVehicleLifecycle(location.id, {
         feedSourceKey: source.feedSourceKey,

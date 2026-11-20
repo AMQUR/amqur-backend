@@ -212,10 +212,7 @@ export class InventoryService {
         locationId,
         ...sourceFilter,
         status: VehicleStatus.MISSING,
-        OR: [
-          { lastSeenAt: null },
-          { lastSeenAt: { lt: removedThreshold } },
-        ],
+        OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: removedThreshold } }],
       },
       data: {
         status: VehicleStatus.REMOVED_FROM_LISTING,
