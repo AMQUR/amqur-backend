@@ -64,4 +64,23 @@ describe('mergePublicBranding', () => {
     const b = mergePublicBranding({ primaryColor: 123 }, null, null);
     expect(b.primaryColor).toBe(DEFAULT_PUBLIC_BRANDING.primaryColor);
   });
+
+  it('theme is null by default and only allow-listed values pass', () => {
+    expect(mergePublicBranding({}, {}).theme).toBeNull();
+    expect(mergePublicBranding({ theme: 'neutral' }, {}).theme).toBe('neutral');
+    expect(
+      mergePublicBranding({ theme: 'neutral' }, { theme: 'showroom' }).theme,
+    ).toBe('showroom');
+    for (const bad of [
+      'Showroom',
+      'dark',
+      '',
+      7,
+      true,
+      null,
+      { a: 1 },
+      'neutral ',
+    ])
+      expect(mergePublicBranding({ theme: bad }, {}).theme).toBeNull();
+  });
 });

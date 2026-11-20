@@ -39,3 +39,4 @@ command-center/*.tsbuildinfo
 # Playwright output
 command-center/test-results/
 command-center/playwright-report/
+.local-secrets/

@@ -1,0 +1,64 @@
+# Isolated soak stack: the services of docker-compose.test.yml that the soak harness needs, on
+# their own compose project (`amqur-soak`) and their own loopback-only host ports, so a soak run
+# can never collide with the shared test stack (55432/56379/18081-18085/11025) or the local demo.
+#
+# One deliberate difference from docker-compose.test.yml: Postgres keeps its data in a named
+# volume instead of tmpfs. The dependency-loss phase does `docker stop` / `docker start` on
+# Postgres, and a tmpfs data directory would come back empty (a different failure from "the
+# database was down for a minute"). `stack.sh down` removes the volume.
+#
+#   docker compose -p amqur-soak --project-directory . -f test/soak/infra/compose.soak.yml up -d --wait
+name: amqur-soak
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: amqur_test
+      POSTGRES_PASSWORD: amqur_test_pw
+      POSTGRES_DB: amqur_test
+    ports:
+      - "127.0.0.1:${SOAK_PG_PORT:-57432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U amqur_test -d amqur_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - soak-pgdata:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:${SOAK_REDIS_PORT:-57379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+  mock-crm:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./test-infra/mocks:/app:ro
+    command: ["node", "mock-crm.mjs"]
+    ports:
+      - "127.0.0.1:${SOAK_CRM_PORT:-19081}:8081"
+    environment:
+      PORT: "8081"
+      FAIL_MODE: "none"
+  mock-smtp:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./test-infra/mocks:/app:ro
+    command: ["node", "mock-smtp.mjs"]
+    ports:
+      - "127.0.0.1:${SOAK_SMTP_PORT:-12025}:1025"
+      - "127.0.0.1:${SOAK_SMTP_HTTP_PORT:-19085}:8085"
+    environment:
+      SMTP_PORT: "1025"
+      HTTP_PORT: "8085"
+      FAIL_MODE: "none"
+
+volumes:
+  soak-pgdata:

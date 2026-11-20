@@ -23,6 +23,16 @@
     "test:infra:reset": "bash test-infra/scripts/infra-reset.sh",
     "test:load": "node scripts/load-profiles.mjs",
     "test:soak": "SOAK_MINUTES=30 node scripts/soak.mjs",
+    "soak:stack:up": "bash test/soak/infra/stack.sh up",
+    "soak:stack:reset": "bash test/soak/infra/stack.sh reset",
+    "soak:stack:down": "bash test/soak/infra/stack.sh down",
+    "soak:api": "bash test/soak/infra/start-api.sh",
+    "soak:run": "bash test/soak/infra/soak-env.sh node test/soak/soak.mjs",
+    "soak:concurrency": "bash test/soak/infra/soak-env.sh node test/soak/concurrency.mjs",
+    "soak:outbox": "bash test/soak/infra/soak-env.sh node test/soak/outbox-failure.mjs",
+    "soak:sse-abort": "bash test/soak/infra/soak-env.sh node test/soak/sse-abort.mjs",
+    "soak:deps": "bash test/soak/infra/soak-env.sh node test/soak/dependency-loss.mjs",
+    "soak:rate-limit": "bash test/soak/infra/soak-env.sh node test/soak/rate-limit.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
@@ -34,11 +44,16 @@
     "build:all": "npm run build && npm run build:cc",
     "credit:destination": "ts-node --transpile-only scripts/credit-destination.ts",
     "seed:local-demo": "ts-node --transpile-only scripts/seed-local-demo.ts",
+    "adf:sandbox-demo": "ts-node --transpile-only scripts/adf-sandbox-demo.ts",
+    "seed:local-demo:lead-route": "ts-node --transpile-only scripts/seed-local-demo-lead-route.ts",
+    "seed:group-rooftops": "ts-node --transpile-only scripts/seed-group-rooftops.ts",
+    "seed:isolated-staging": "ts-node --transpile-only scripts/seed-isolated-staging-five-rooftops.ts",
     "start:local-demo": "bash scripts/start-local-demo.sh",
     "test:simulator": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=simulator",
     "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",
     "ai:check": "ts-node --transpile-only scripts/ai-check.ts",
-    "eval:live-model": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=live-model"
+    "eval:live-model": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=live-model",
+    "diagnose:vauto-sftp": "AMQUR_SFTP_DIAGNOSTIC=1 node scripts/diagnose-vauto-sftp-readonly.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",
@@ -62,11 +77,13 @@
     "googleapis": "^170.1.0",
     "ioredis": "^5.11.1",
     "joi": "^18.0.2",
+    "nodemailer": "^10.6.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "prisma": "^6.19.2",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "ssh2-sftp-client": "^12.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -77,6 +94,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
+    "@types/ssh2-sftp-client": "^9.0.6",
     "@types/supertest": "^6.0.2",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",
@@ -92,6 +110,7 @@
     "typescript-eslint": "^8.64.0"
   },
   "overrides": {
-    "deepmerge-ts": "^8.0.0"
+    "deepmerge-ts": "^8.0.0",
+    "effect": "3.22.5"
   }
 }

@@ -248,3 +248,104 @@ describe('understandTurn — inventory filter criteria', () => {
     expect(r.entities.vehicle?.maxMileage).toBe(50000);
   });
 });
+
+describe('understandTurn — Spanish safety, handoff and complaint (golden-eval regressions)', () => {
+  it.each([
+    'Se me fueron los frenos mientras manejaba',
+    'Me fallaron los frenos en la autopista',
+    'Sale humo del motor de mi carro',
+    'Huele a gasolina dentro del carro',
+    'Acabo de tener un accidente',
+    'Se me apagó el carro en la autopista',
+  ])('treats "%s" as urgent safety, never as a parts or booking flow', (m) => {
+    const got = ids(m);
+    expect(got).toContain('SAFETY_URGENT');
+  });
+
+  it.each([
+    'Por favor comuníqueme con una persona',
+    'Quiero hablar con un asesor',
+    'Páseme con un vendedor',
+    'Necesito una persona real',
+    'Que me llame alguien por favor',
+  ])('hands off on "%s"', (m) => {
+    expect(ids(m)).toContain('HUMAN_HANDOFF');
+  });
+
+  it('does not treat a Spanish identity question as a transfer request', () => {
+    expect(ids('¿Usted es una persona?')).not.toContain('HUMAN_HANDOFF');
+    expect(ids('¿Estoy hablando con un robot?')).not.toContain('HUMAN_HANDOFF');
+  });
+
+  it('routes a customer who is already working with a named colleague to staff', () => {
+    expect(ids("I'm already talking with Richie")).toContain('HUMAN_HANDOFF');
+    expect(ids('Ya estoy hablando con Richie')).toContain('HUMAN_HANDOFF');
+    // talking with the assistant itself is not a staff relationship
+    expect(ids("I'm already talking with you about it")).not.toContain(
+      'HUMAN_HANDOFF',
+    );
+  });
+
+  it('recognises Spanish frustration as a complaint', () => {
+    expect(
+      ids('Es la tercera vez que pregunto y nadie me llama. Estoy furioso.'),
+    ).toContain('COMPLAINT');
+  });
+
+  it('keeps ordinary Spanish brake service as service, not an emergency', () => {
+    expect(ids('Quiero revisar los frenos el viernes')).not.toContain(
+      'SAFETY_URGENT',
+    );
+  });
+});
+
+describe('understandTurn — holdout-eval regressions (steering and loss of control)', () => {
+  it.each([
+    'The steering wheel locked up for a second on the highway and now the wheel shakes. Can I drive it to you tomorrow?',
+    'My steering locks up when I turn left',
+    'I lost my power steering on the expressway',
+    'The brake pedal went to the floor this morning',
+    'I think a wheel is coming off',
+    "I can't steer",
+    'Se me trabó el volante en la autopista',
+    'No puedo frenar',
+    'Perdí la dirección hidráulica',
+  ])('treats "%s" as urgent safety', (m) => {
+    expect(ids(m)).toContain('SAFETY_URGENT');
+  });
+
+  it.each([
+    'Perdí la dirección de la agencia, ¿me la manda?',
+    'Do you sell steering wheel covers?',
+    'How much is a wheel alignment?',
+  ])('does not raise a safety alarm for "%s"', (m) => {
+    expect(ids(m)).not.toContain('SAFETY_URGENT');
+  });
+});
+
+describe('understandTurn — generic inventory browse (five-rooftop journey regression)', () => {
+  it.each([
+    'What vehicles do you have in stock?',
+    'What do you have in stock?',
+    "What's available?",
+    'Show me your inventory',
+    'Can I see your cars?',
+    'Do you have any cars available?',
+    'Which trucks do you have on the lot?',
+    '¿Qué vehículos tienen?',
+    '¿Qué tienen disponible?',
+    'Muéstreme el inventario',
+  ])('treats "%s" as a request to see inventory', (m) => {
+    expect(ids(m)).toContain('INVENTORY_SEARCH');
+  });
+
+  it.each([
+    'What are your hours?',
+    'Do you have a service department?',
+    'What do you have for brake pads?',
+    'My brakes failed, what do I do?',
+    'What is available for an oil change on Friday?',
+  ])('does not turn "%s" into an inventory search', (m) => {
+    expect(ids(m)).not.toContain('INVENTORY_SEARCH');
+  });
+});

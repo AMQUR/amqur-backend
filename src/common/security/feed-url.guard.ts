@@ -57,6 +57,19 @@ export function assertFeedUrlAllowed(rawUrl: string): URL {
     .map((h) => h.trim().toLowerCase())
     .filter(Boolean);
 
+  const tier = (process.env.DEPLOYMENT_TIER ?? '').toLowerCase();
+  const hosted =
+    tier === 'staging' ||
+    tier === 'production' ||
+    process.env.NODE_ENV === 'production';
+
+  // Hosted tiers must set an explicit host allowlist — empty allowlist is SSRF-open.
+  if (hosted && allowlist.length === 0) {
+    throw new BadRequestException(
+      'INVENTORY_FEED_ALLOWED_HOSTS is required on hosted deployments',
+    );
+  }
+
   if (allowlist.length > 0 && !allowlist.includes(host)) {
     throw new BadRequestException(
       `Feed host "${host}" is not in INVENTORY_FEED_ALLOWED_HOSTS`,

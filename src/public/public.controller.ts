@@ -7,6 +7,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreHoursService } from '../locations/store-hours.service';
 import { formatClock } from '../common/time/zoned-time';
+import { rateLimit } from '../common/rate-limits';
 
 @Controller('public')
 export class PublicController {
@@ -24,7 +25,7 @@ export class PublicController {
   @Throttle({
     // Production: 60/min per tenant+IP. Test/load lab: raised for parallel browser engines.
     default: {
-      limit: process.env.NODE_ENV === 'test' ? 5_000 : 60,
+      limit: rateLimit(60, 5_000),
       ttl: 60_000,
     },
   })
@@ -92,7 +93,7 @@ export class PublicController {
   @Throttle({
     default: {
       // Production: 30/min. Test/load lab: raised for paced profiles.
-      limit: process.env.NODE_ENV === 'test' ? 5_000 : 30,
+      limit: rateLimit(30, 5_000),
       ttl: 60_000,
     },
   })

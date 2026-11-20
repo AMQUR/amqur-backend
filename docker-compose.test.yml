@@ -61,6 +61,21 @@ services:
     environment:
       PORT: "8083"
 
+  # Mock SMTP for ADF lead-delivery tests. Keeps mail in memory only; never relays.
+  mock-smtp:
+    image: node:22-alpine
+    working_dir: /app
+    volumes:
+      - ./test-infra/mocks:/app:ro
+    command: ["node", "mock-smtp.mjs"]
+    ports:
+      - "127.0.0.1:11025:1025"
+      - "127.0.0.1:18085:8085"
+    environment:
+      SMTP_PORT: "1025"
+      HTTP_PORT: "8085"
+      FAIL_MODE: "none"
+
   widget-host:
     image: nginx:1.27-alpine
     ports:

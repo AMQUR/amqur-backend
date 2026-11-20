@@ -257,3 +257,20 @@ describe('contact phone questions (live-probe regression 2026-10-14)', () => {
     expect(u(m).entities.askPhone).toBeUndefined();
   });
 });
+
+describe('identity question in Spanish (holdout-eval regression)', () => {
+  it.each([
+    'Antes de seguir, dígame: ¿estoy escribiéndole a una persona o a una máquina?',
+    '¿Le escribo a una persona?',
+    '¿Me contesta un robot?',
+    '¿Estoy chateando con un humano?',
+  ])('recognises "%s" as asking what the assistant is', (m) => {
+    expect(classifySocial(m).acts).toContain('identity');
+  });
+
+  it('does not treat a request for a salesperson as an identity question', () => {
+    expect(
+      classifySocial('Quiero que me escriba un asesor mañana').acts,
+    ).not.toContain('identity');
+  });
+});

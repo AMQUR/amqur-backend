@@ -74,7 +74,8 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Start disposable test stack
-        run: docker compose -f docker-compose.test.yml up -d --wait postgres redis mock-crm mock-inventory
+        # mock-smtp is the loopback mail sink for the ADF lead-delivery suites (reserved test addresses only).
+        run: docker compose -f docker-compose.test.yml up -d --wait postgres redis mock-crm mock-inventory mock-smtp
       - name: Migrate (clean DB) + verify no drift in new migrations
         run: |
           set -a && . ./test-infra/.env.test && set +a
@@ -83,7 +84,19 @@ jobs:
       - name: E2E suites
         run: |
           set -a && . ./test-infra/.env.test && set +a
-          npm run test:e2e
+          # Keep the machine-readable result and the full log so an intermittent failure names
+          # its own test and assertion (expected/received) instead of being lost with the runner.
+          set -o pipefail # the tee below must not mask a jest failure
+          mkdir -p e2e-results
+          npm run test:e2e -- --json --outputFile=e2e-results/jest-results.json 2>&1 | tee e2e-results/jest-output.log
+      - name: Upload E2E results (failing test names, assertions, logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: e2e-results/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload AI evaluation report
         if: always()
         uses: actions/upload-artifact@v4
@@ -102,6 +115,7 @@ jobs:
           cache: npm
           cache-dependency-path: command-center/package-lock.json
       - run: npm --prefix command-center ci
+      - run: npm --prefix command-center test
       - run: npm --prefix command-center run build
 
   sbom:

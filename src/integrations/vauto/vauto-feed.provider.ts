@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InventoryFeedService } from '../../inventory-feed/inventory-feed.service';
 import { VehicleNormalizer } from '../../inventory-feed/normalizer/vehicle.normalizer';
 import { assertFeedUrlAllowed } from '../../common/security/feed-url.guard';
@@ -20,15 +21,43 @@ export class VAutoFeedProvider implements InventoryFeedProvider {
   readonly providerId = 'vauto';
   private readonly logger = new Logger(VAutoFeedProvider.name);
 
-  constructor(private readonly feed: InventoryFeedService) {}
+  constructor(
+    private readonly feed: InventoryFeedService,
+    private readonly config: ConfigService,
+  ) {}
 
   isLiveConfigured(): boolean {
-    // Live when a location has inventoryFeedUrl — checked per-call
+    // HTTPS feed URLs are per-location; SFTP path is separately gated.
     return true;
   }
 
+  /**
+   * Honest health: transport library ready; SFTP ingest remains off unless flagged.
+   * Does not open a network connection or report false LIVE readiness.
+   */
   async healthCheck(): Promise<{ ok: boolean; detail?: string }> {
-    return { ok: true, detail: 'feed_transport_ready' };
+    const sftpEnabled =
+      this.config.get<string>('AMQUR_VAUTO_SFTP_ENABLED') === 'true';
+    const syncEnabled =
+      this.config.get<string>('INVENTORY_SYNC_ENABLED') === 'true';
+    const passwordSet = Boolean(
+      (this.config.get<string>('AMQUR_VAUTO_SFTP_PASSWORD') ?? '').trim(),
+    );
+    const fpSet = Boolean(
+      (
+        this.config.get<string>('AMQUR_VAUTO_SFTP_HOST_FINGERPRINT') ?? ''
+      ).trim(),
+    );
+    return {
+      ok: true,
+      detail: [
+        'https_feed_transport_ready',
+        `sftp_ingest=${sftpEnabled ? 'enabled' : 'disabled'}`,
+        `inventory_sync=${syncEnabled ? 'enabled' : 'disabled'}`,
+        `sftp_password=${passwordSet ? 'set' : 'missing'}`,
+        `sftp_host_fingerprint=${fpSet ? 'set' : 'missing'}`,
+      ].join(';'),
+    };
   }
 
   async fetchSnapshot(params: {

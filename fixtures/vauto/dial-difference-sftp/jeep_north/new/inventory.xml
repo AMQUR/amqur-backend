@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FIXTURE — Dial Difference SFTP layout. Not live dealership stock. -->
+<adf>
+  <prospect>
+    <vehicle interest="buy" status="available">
+      <year>2025</year><make>Jeep</make><model>Wrangler</model><trim>Sport</trim>
+      <vin>1C4HJXDG0FW000001</vin><stock>JN-NEW-1</stock>
+      <mileage units="mi">12</mileage>
+      <price type="sale" currency="USD">44995</price>
+      <bodystyle>SUV</bodystyle>
+    </vehicle>
+  </prospect>
+  <prospect>
+    <vehicle interest="buy" status="available">
+      <year>2025</year><make>Jeep</make><model>Grand Cherokee</model><trim>Laredo</trim>
+      <vin>1C4RJFBG0FW000002</vin><stock>JN-NEW-2</stock>
+      <mileage units="mi">8</mileage>
+      <price type="sale" currency="USD">51995</price>
+      <bodystyle>SUV</bodystyle>
+    </vehicle>
+  </prospect>
+</adf>

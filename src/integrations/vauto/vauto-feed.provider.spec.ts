@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { VAutoFeedProvider } from './vauto-feed.provider';
 import { InventoryFeedService } from '../../inventory-feed/inventory-feed.service';
 
@@ -7,7 +8,24 @@ describe('VAutoFeedProvider anomaly guards', () => {
     fetchFeed: jest.fn(),
   } as unknown as InventoryFeedService;
 
-  const provider = new VAutoFeedProvider(feed);
+  const config = {
+    get: (k: string) =>
+      ({
+        AMQUR_VAUTO_SFTP_ENABLED: 'false',
+        INVENTORY_SYNC_ENABLED: 'false',
+        AMQUR_VAUTO_SFTP_PASSWORD: '',
+        AMQUR_VAUTO_SFTP_HOST_FINGERPRINT: '',
+      })[k],
+  } as unknown as ConfigService;
+
+  const provider = new VAutoFeedProvider(feed, config);
+
+  it('reports honest SFTP flag state without claiming live ingest', async () => {
+    const h = await provider.healthCheck();
+    expect(h.ok).toBe(true);
+    expect(h.detail).toContain('sftp_ingest=disabled');
+    expect(h.detail).toContain('sftp_password=missing');
+  });
 
   it('rejects empty normalized inventory', async () => {
     (feed.parseFeed as jest.Mock).mockReturnValue([]);

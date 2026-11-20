@@ -15,8 +15,15 @@ model DealerGroup {
   slug String @unique
   name String
 
-  tenants     Tenant[]
+  tenants     Tenant[]                @relation("DealerGroupTenants")
   memberships DealerGroupMembership[]
+
+  /// The ONE tenant that is this group's own website ("group site"). Only a conversation in
+  /// this tenant can ever shop across the group's rooftops, and only with the
+  /// `groupSiteShopping` flag on it and `groupInventoryListed` on each rooftop. Null = no
+  /// group shopping at all. See docs/CHAT_STREAM_CONTRACT.md §6.
+  groupSiteTenantId String? @unique
+  groupSiteTenant   Tenant? @relation("DealerGroupSite", fields: [groupSiteTenantId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -52,7 +59,9 @@ model Tenant {
   name String
 
   dealerGroupId String?
-  dealerGroup   DealerGroup? @relation(fields: [dealerGroupId], references: [id], onDelete: SetNull)
+  dealerGroup   DealerGroup? @relation("DealerGroupTenants", fields: [dealerGroupId], references: [id], onDelete: SetNull)
+  /// Set when this tenant is the designated group website of a DealerGroup.
+  groupSiteOf   DealerGroup? @relation("DealerGroupSite")
 
   /// Optional comma-separated allowlist of widget origins (e.g. https://dealer.com)
   allowedOrigins String?
@@ -125,6 +134,8 @@ model Tenant {
   workflowRuns            WorkflowRun[]
   toolActionRequests      ToolActionRequest[]
   workflowVersions        WorkflowVersion[]
+  leadDeliveryRoutes      LeadDeliveryRoute[]
+  leadDeliveries          LeadDelivery[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -242,6 +253,7 @@ model Location {
   priceQuoteRequests     PriceQuoteRequest[]
   conversationPlaybooks  ConversationPlaybook[]
   promptVersions         PromptVersion[]
+  leadDeliveryRoutes     LeadDeliveryRoute[]
 
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -340,6 +352,16 @@ model Vehicle {
   source     String?
   lastSeenAt DateTime?
 
+  /// Which of the ten Dial Difference sources last verified this VIN (e.g. chevy/new).
+  /// Lifecycle reconciliation for one source must never rewrite another source's stock.
+  feedSourceKey String?
+
+  /// When the listing was removed from active inventory without a vendor "sold" signal.
+  listingRemovedAt DateTime?
+
+  /// Vendor-supplied sold/status evidence required before status=SOLD (never inferred from absence).
+  explicitSoldEvidence String?
+
   /// Derived freshness for customer-facing disclosure
   freshnessState InventoryFreshnessState @default(UNAVAILABLE)
 
@@ -378,7 +400,15 @@ enum VehicleStatus {
   AVAILABLE
   IN_TRANSIT
   HOLD
+  /// Present previously; not in the latest *successful* snapshot for its feedSourceKey.
   MISSING
+  /// Temporarily held aside while a partial/failed import is investigated.
+  PENDING_RECONCILIATION
+  /// No longer listed in verified feeds; NOT proof of a retail sale.
+  REMOVED_FROM_LISTING
+  /// Failed validation / rooftop mismatch / bad VIN — never customer-visible.
+  QUARANTINED
+  /// Only when the vendor (or staff) supplies explicit sold evidence.
   SOLD
 }
 
@@ -518,6 +548,8 @@ model Lead {
   notes          String?
   nextBestAction String?
 
+  deliveries LeadDelivery[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -611,11 +643,46 @@ model Appointment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  providerReceipts AppointmentProviderReceipt[]
+
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status])
   @@index([tenantId, scheduledAt])
   @@index([tenantId, locationId, requestedAt])
   @@index([conversationId])
+  /// Latest appointment of a lead (ADF lead delivery).
+  @@index([tenantId, leadId, createdAt])
+}
+
+/// One row per scheduling-provider response for an appointment (append-only). An appointment
+/// may only be CONFIRMED by a provider in the same transaction that writes a CONFIRMED receipt.
+/// `providerRef` is unique per tenant+provider, so one provider booking can never back two
+/// appointments. `sandbox` marks demo-scheduler receipts — never a real dealership booking.
+model AppointmentProviderReceipt {
+  id String @id @default(cuid())
+
+  tenantId String
+
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  /// Scheduling provider id as registered in SchedulingProviderRegistry
+  provider       String
+  /// Provider booking reference (null when the provider did not issue one)
+  providerRef    String?
+  /// CONFIRMED | PENDING | UNAVAILABLE | FAILED | CONFLICT
+  status         String
+  /// Start the provider confirmed (UTC) — only with status CONFIRMED
+  confirmedStart DateTime?
+  /// Provider's own status string, verbatim (truncated)
+  rawStatus      String?
+  receivedAt     DateTime  @default(now())
+  idempotencyKey String?
+  sandbox        Boolean   @default(false)
+
+  @@unique([tenantId, provider, providerRef])
+  @@index([appointmentId])
+  @@index([tenantId, receivedAt])
 }
 
 enum AppointmentType {
@@ -862,6 +929,10 @@ model InventoryImportRun {
 
   status InventoryImportStatus @default(PENDING)
 
+  /// Dial Difference path key, e.g. chevy/new — isolates New vs Used reconciliation.
+  feedSourceKey   String?
+  sourceCondition String?
+
   sourceIdentifier String?
   checksum         String?
   recordCount      Int?
@@ -869,6 +940,7 @@ model InventoryImportRun {
   rejectedCount    Int?
   anomalyFlags     Json?
 
+  /// Allowlisted remote feed path only (e.g. /jeep_north/new/file.csv). Never a local raw dump of PII/inventory bodies.
   rawArtifactPath String?
   errorMessage    String?
 
@@ -878,6 +950,7 @@ model InventoryImportRun {
   @@index([tenantId, startedAt])
   @@index([locationId, startedAt])
   @@index([status])
+  @@index([feedSourceKey, startedAt])
 }
 
 enum InventoryImportStatus {
@@ -991,6 +1064,8 @@ model OutboxEvent {
   claimedAt      DateTime?
   claimedBy      String?
   leaseExpiresAt DateTime?
+  /// Set when THIS claim's handler started (after an ownership re-check). NULL = claimed only.
+  handlerStartedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2043,4 +2118,294 @@ model ToolActionRequest {
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, locationId])
+}
+
+// ───────────────────────────── Per-rooftop lead delivery (ADF/XML) — docs/ADF_LEAD_DELIVERY.md
+
+enum LeadDeliveryChannel {
+  ADF_EMAIL
+}
+
+enum LeadDeliveryDepartment {
+  SALES
+  SERVICE
+  PARTS
+}
+
+/// Each state needs its own evidence; they are never collapsed into "success".
+enum LeadDeliveryStatus {
+  /// Row + outbox event written; nothing handed to any transport yet.
+  QUEUED
+  /// Handed to the transport (attempt in flight or outcome unknown).
+  SENT
+  /// Transport/provider acknowledged (e.g. SMTP 250 + message id). NOT delivery, NOT a CRM record.
+  ACCEPTED
+  /// Provider delivery callback only.
+  DELIVERED
+  /// Explicit reconciliation input: the CRM parsed the lead.
+  CRM_PARSED
+  /// Explicit reconciliation input carrying a CRM record reference.
+  CRM_MATCHED
+  /// Explicit reconciliation input: the CRM parser rejected the lead.
+  CRM_REJECTED
+  /// Retryable transport failure (outbox backoff owns the retry).
+  FAILED
+  /// Permanent failure / attempts exhausted / invalid payload. Operator replay only.
+  DEAD
+  /// A gate was closed (route unknown/unverified/disabled, send disabled, no consent basis…).
+  BLOCKED
+}
+
+enum LeadDeliveryFormat {
+  XML_BODY
+  XML_ATTACHMENT
+}
+
+enum LeadDeliveryRouteEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
+/// Server-side destination for one rooftop department. The address is AES-256-GCM encrypted
+/// (SecretVaultService); only a keyed fingerprint and a masked display are stored in clear.
+/// Never exposed through any public/widget response.
+model LeadDeliveryRoute {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String
+  location   Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  channel     LeadDeliveryChannel          @default(ADF_EMAIL)
+  department  LeadDeliveryDepartment
+  /// SANDBOX routes may only point at reserved test domains and can never be production-enabled.
+  environment LeadDeliveryRouteEnvironment @default(SANDBOX)
+  enabled     Boolean                      @default(false)
+
+  destinationCiphertext  String
+  destinationIv          String
+  destinationAuthTag     String
+  /// HMAC-SHA256 (keyed, non-reversible) of the normalized address.
+  destinationFingerprint String
+  /// e.g. l***@d***.net
+  destinationMasked      String
+
+  format     LeadDeliveryFormat @default(XML_BODY)
+  adfVersion String             @default("1.0")
+
+  verified             Boolean   @default(false)
+  verifiedAt           DateTime?
+  verifiedBy           String?
+  verificationEvidence String?
+
+  productionEnabled   Boolean   @default(false)
+  productionEnabledAt DateTime?
+  productionEnabledBy String?
+
+  /// R8: whether THIS destination accepts appointment updates for a lead it already received.
+  /// Default NONE (nothing is sent). No dealership has confirmed a protocol yet.
+  appointmentUpdates LeadDeliveryAppointmentUpdates @default(NONE)
+
+  deliveries LeadDelivery[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, locationId, channel, department])
+  /// Target of the composite FK that makes a cross-tenant delivery→route link impossible.
+  @@unique([id, tenantId])
+  @@index([tenantId, enabled])
+}
+
+/// One row per (lead, channel, destination) attempt chain. Holds no customer contact data and
+/// no raw destination address.
+model LeadDelivery {
+  id String @id @default(cuid())
+
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  locationId String?
+
+  leadId String
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  channel    LeadDeliveryChannel    @default(ADF_EMAIL)
+  department LeadDeliveryDepartment
+
+  /// Composite FK (routeId, tenantId) → route (id, tenantId): the route is always the same tenant.
+  routeId String?
+  route   LeadDeliveryRoute? @relation(fields: [routeId, tenantId], references: [id, tenantId], onDelete: NoAction, onUpdate: NoAction)
+
+  destinationFingerprint String?
+  destinationMasked      String?
+
+  idempotencyKey String
+
+  status       LeadDeliveryStatus @default(QUEUED)
+  attempts     Int                @default(0)
+  replayCount  Int                @default(0)
+  /// 'sandbox' | 'live' — the mode of the most recent transport hand-off (null = never handed off).
+  /// A sandbox acknowledgement never counts as acknowledged for a live route.
+  deliveryMode String?
+
+  providerName      String?
+  providerMessageId String?
+  providerRawStatus String?
+  crmRecordRef      String?
+  payloadSha256     String?
+  payloadBytes      Int?
+
+  blockedReason String?
+  lastErrorCode String?
+  lastErrorAt   DateTime?
+
+  queuedAt      DateTime  @default(now())
+  sentAt        DateTime?
+  acceptedAt    DateTime?
+  deliveredAt   DateTime?
+  crmParsedAt   DateTime?
+  crmMatchedAt  DateTime?
+  crmRejectedAt DateTime?
+  failedAt      DateTime?
+  deadAt        DateTime?
+  blockedAt     DateTime?
+
+  correlationId String
+  outboxEventId String?
+
+  events             LeadDeliveryEvent[]
+  appointmentUpdates LeadAppointmentUpdate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, locationId, status])
+  @@index([leadId])
+}
+
+/// R8: per-route capability for appointment updates (proposed policy, default NONE).
+enum LeadDeliveryAppointmentUpdates {
+  /// Nothing is sent after the lead; the appointment is visible to staff only.
+  NONE
+  /// A follow-up ADF document carrying the SAME lead reference, to the SAME route.
+  ADF_FOLLOW_UP
+}
+
+/// R8: the appointment states an update can report. Never collapsed into one another.
+enum LeadAppointmentUpdateState {
+  REQUESTED
+  /// Staff set a time; no scheduling-provider receipt exists.
+  SCHEDULED
+  /// Backed by a CONFIRMED scheduling-provider receipt.
+  CONFIRMED
+  CANCELLED
+  RESCHEDULED
+  FAILED
+}
+
+enum LeadAppointmentUpdateStatus {
+  /// The destination has no update capability: recorded for staff, nothing queued or sent.
+  NOT_SENT
+  /// Held until the ORIGINAL lead delivery is accepted. Nothing has been sent.
+  WAITING_FOR_LEAD
+  QUEUED
+  SENT
+  /// Transport acknowledged. NOT delivery, NOT a CRM record.
+  ACCEPTED
+  FAILED
+  DEAD
+  BLOCKED
+}
+
+/// R8: at most one update per (lead, appointment, state) for a lead that already has its
+/// LeadDelivery. Holds references and codes only — no address, no customer contact data.
+/// It never changes the lead delivery it belongs to.
+model LeadAppointmentUpdate {
+  id String @id @default(cuid())
+
+  tenantId   String
+  locationId String?
+
+  leadId String
+
+  /// The ORIGINAL lead delivery this update follows.
+  leadDeliveryId String
+  leadDelivery   LeadDelivery @relation(fields: [leadDeliveryId], references: [id], onDelete: Cascade)
+
+  appointmentId String
+
+  state  LeadAppointmentUpdateState
+  status LeadAppointmentUpdateStatus
+
+  /// The lead identity the original delivery carried (`amqur-lead-<id>`), repeated verbatim.
+  leadRef        String
+  /// The CONFIRMED AppointmentProviderReceipt behind a CONFIRMED update (null otherwise).
+  receiptId      String?
+  /// True when any receipt of the appointment came from a sandbox / demo scheduler.
+  sandboxReceipt Boolean @default(false)
+
+  idempotencyKey String
+
+  /// Why nothing was sent (NOT_SENT / WAITING_FOR_LEAD / BLOCKED). A code, never free text.
+  reason String?
+
+  routeId                String?
+  destinationFingerprint String?
+  destinationMasked      String?
+  /// 'sandbox' | 'live' — the mode of the most recent hand-off (null = never handed off).
+  deliveryMode           String?
+
+  attempts          Int     @default(0)
+  providerName      String?
+  providerMessageId String?
+  providerRawStatus String?
+  payloadSha256     String?
+  payloadBytes      Int?
+
+  lastErrorCode String?
+  lastErrorAt   DateTime?
+
+  sentAt     DateTime?
+  acceptedAt DateTime?
+  failedAt   DateTime?
+  deadAt     DateTime?
+  blockedAt  DateTime?
+
+  correlationId String
+  outboxEventId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([leadDeliveryId, createdAt])
+  @@index([tenantId, appointmentId])
+  @@index([tenantId, leadId, createdAt])
+  @@index([status, updatedAt])
+}
+
+/// Append-only status history (evidence carries codes/ids only — never PII).
+model LeadDeliveryEvent {
+  id String @id @default(cuid())
+
+  tenantId   String
+  deliveryId String
+  delivery   LeadDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+
+  fromStatus LeadDeliveryStatus?
+  toStatus   LeadDeliveryStatus
+  reasonCode String?
+  evidence   Json?
+  /// "system" or a staff user id
+  actor      String              @default("system")
+
+  createdAt DateTime @default(now())
+
+  @@index([deliveryId, createdAt])
+  @@index([tenantId, createdAt])
 }

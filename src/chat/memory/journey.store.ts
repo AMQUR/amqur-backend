@@ -123,6 +123,8 @@ export type JourneyState = {
     requestedDate?: string | null;
     requestedTime?: string | null;
     outcome: string;
+    /** True when the confirmation came from a sandbox (demo) scheduler — said on every mention. */
+    sandbox?: boolean;
   };
   /** appointment being collected (missing date/time) */
   draftAppointment?: {
@@ -131,6 +133,8 @@ export type JourneyState = {
     note?: string;
     /** Date/time pieces already given ("Friday", then "morning") — merged across turns. */
     when?: import('../../common/time/date-phrase').ResolvedWhen;
+    /** Set when the booking paused to collect contact first (scheduler slots need it). */
+    resumeAfterContact?: boolean;
   };
   service?: {
     need?: string;
@@ -207,6 +211,12 @@ export type JourneyState = {
     landingVin?: string;
   };
   timeline?: string;
+  /** Structured cards offered to this conversation (flag `salesDeskCards`). */
+  salesDesk?: import('../sales-desk/sales-desk.types').SalesDeskState;
+  /** GROUP-SITE conversation only: store preference, bound rooftop, last listed vehicles. */
+  groupRouting?: import('../../group-routing/group-routing.types').GroupRoutingState;
+  /** ROOFTOP conversation opened from the group site (written by the server only). */
+  groupOrigin?: import('../../group-routing/group-routing.types').GroupOrigin;
 };
 
 export function emptyJourney(): JourneyState {

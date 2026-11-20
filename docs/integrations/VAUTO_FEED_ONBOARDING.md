@@ -1,6 +1,6 @@
 # vAuto feed onboarding — Dial Auto Group
 
-**Status:** BLOCKED for live feed — no authorized SFTP/HTTPS feed URL or credentials found in Railway, Keychain, or env stores.  
+**Status:** Dial Difference SFTP connector IMPLEMENTED NOT CONNECTED (see VAUTO_DIAL_DIFFERENCE_SFTP.md). Live password not in this environment; HTTPS Location.inventoryFeedUrl path unchanged.  
 **Staging inventory:** fixture XML only (`fixtures/vauto/staging-inventory.fixture.xml`).  
 **Flag:** `vAutoFeed=false` on staging seed unless `STAGING_VAUTO_FEED_URL` is set.
 

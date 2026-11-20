@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { CrmSyncStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OutboxService } from '../core/outbox.service';
@@ -14,6 +14,8 @@ import {
   TekionConnectionConfig,
 } from '../tekion/tekion.capabilities';
 import { MetricsService } from '../../observability/metrics.service';
+import { LeadDeliveryService } from '../adf/lead-delivery.service';
+import { LeadAppointmentUpdateService } from '../adf/lead-appointment-update.service';
 
 export type CrmGate =
   | { open: true; provider: 'TEKION'; connectionId: string }
@@ -45,6 +47,9 @@ export class CrmSyncService implements OnModuleInit {
     private readonly tekion: TekionProvider,
     private readonly writeback: TekionCrmWritebackService,
     private readonly metrics: MetricsService,
+    private readonly leadDelivery: LeadDeliveryService,
+    @Optional()
+    private readonly appointmentUpdates?: LeadAppointmentUpdateService,
   ) {}
 
   onModuleInit() {
@@ -65,10 +70,6 @@ export class CrmSyncService implements OnModuleInit {
         payload: { event: 'APPOINTMENT_REQUESTED', ...p },
       });
       return { note: 'forwarded_to_crm_webhook' };
-    });
-    this.processor.registerHandler('appointment.provider.cancel', async () => {
-      // No scheduling adapter is authorized today; a provider-owned booking cannot exist.
-      throw new PermanentOutboxError('no_authorized_scheduler');
     });
   }
 
@@ -154,6 +155,24 @@ export class CrmSyncService implements OnModuleInit {
           },
         });
       }
+    }
+    // Per-rooftop ADF/XML delivery (docs/ADF_LEAD_DELIVERY.md). Off unless the rooftop's
+    // `adfLeadDelivery` flag is on; idempotent per lead, so every lead change may call it.
+    // A failure here must never break the customer's chat turn — the lead is already saved.
+    try {
+      await this.leadDelivery.enqueueForLead(tenantId, leadId);
+    } catch {
+      this.metrics.increment('adf.delivery.enqueue_error');
+      this.logger.warn(`ADF lead delivery enqueue failed lead=${leadId}`);
+    }
+    // R8 (docs/ADF_LEAD_DELIVERY.md): the lead above never waits for an appointment. An
+    // appointment is a SEPARATE update for the same lead, recorded only after the lead's own
+    // delivery row exists — this picks up appointments linked to the lead after they were made.
+    try {
+      await this.appointmentUpdates?.syncLead(tenantId, leadId);
+    } catch {
+      this.metrics.increment('adf.appointment_update.sync_error');
+      this.logger.warn(`ADF appointment update sync failed lead=${leadId}`);
     }
   }
 }

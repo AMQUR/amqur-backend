@@ -35,6 +35,17 @@ function makeOperationsService(
     {},
     {},
     extras?.inventory ?? {},
+    {
+      operatorStatus: () => ({
+        ingestEnabled: false,
+        inventorySyncEnabled: false,
+        credentialsConfigured: false,
+        publishPrices: false,
+        publishPhotos: false,
+        hostConfigured: false,
+        feedSourceCount: 10,
+      }),
+    },
   ] as unknown as ConstructorParameters<typeof OperationsService>;
   return new OperationsService(...deps);
 }

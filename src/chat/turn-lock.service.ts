@@ -1,0 +1,250 @@
+import {
+  ConflictException,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { randomBytes } from 'crypto';
+import { resolveDeploymentTier } from '../config/deployment-tier';
+
+/**
+ * One turn at a time per conversation.
+ *
+ * A turn reads the conversation state, may create records (lead, consent, delivery, booking)
+ * and only then saves the state. Two turns of the SAME conversation running together both see
+ * the old state, so a lead form submitted twice at once created two leads, two consent sets and
+ * two CRM deliveries, and the loser then failed with a state conflict (soak concurrency C2/C3).
+ *
+ * Turns of one conversation are therefore serialised:
+ *  - always within this process (a promise chain per key);
+ *  - across processes with a Redis lock (SET NX PX, renewed while held, released only by its
+ *    holder). Hosted deployments and any process with Redis configured require a remote lock.
+ *    An unconfigured local development or test process uses only the in-process chain.
+ * A turn that cannot get the lock within `waitMs` is refused with 409 `conversation_busy`
+ * (the widget shows its retry), never run in parallel.
+ *
+ * Fencing: while the turn runs, the Redis lease is renewed. If a renew reports the token is
+ * gone (another process holds the key, or the TTL elapsed without a successful renew), this
+ * process stops claiming the lease, does not DELETE another holder's key, and refuses to return
+ * a successful turn result. Cooperative callers may also watch `AbortSignal` / `assertHeld()`.
+ * Downstream side effects still rely on their own idempotency (lead delivery keys, slot CAS);
+ * the fence closes the silent parallel-turn window that previously outlived a lost lease.
+ */
+type RedisLike = {
+  set: (...args: Array<string | number>) => Promise<string | null>;
+  eval: (
+    script: string,
+    keys: number,
+    ...args: Array<string | number>
+  ) => Promise<unknown>;
+  on: (ev: string, cb: (...a: unknown[]) => void) => void;
+  disconnect: () => void;
+};
+
+const RELEASE = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`;
+const RENEW = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end`;
+
+export const TURN_LOCK_TTL_MS = 30_000;
+export const TURN_LOCK_WAIT_MS = 20_000;
+
+/** Cooperative fencing handle passed to the turn body when a remote lease is held. */
+export type TurnLockHeld = {
+  /** Opaque fencing token (Redis lock value). Empty when only the in-process chain is used. */
+  readonly fence: string;
+  /** Aborted when the Redis lease is observed lost. */
+  readonly signal: AbortSignal;
+  /** Throws ServiceUnavailableException if the lease has been lost. */
+  assertHeld(): void;
+};
+
+@Injectable()
+export class TurnLockService implements OnModuleDestroy {
+  private readonly logger = new Logger(TurnLockService.name);
+  private readonly chains = new Map<string, Promise<void>>();
+  private redis: RedisLike | null = null;
+  private redisReady = false;
+  private readonly remoteRequired: boolean;
+
+  constructor() {
+    const url = process.env.REDIS_URL?.trim();
+    const tier = resolveDeploymentTier();
+    this.remoteRequired =
+      Boolean(url) || tier === 'production' || tier === 'staging';
+    if (!url) return;
+    try {
+      const Redis = require('ioredis') as new (
+        u: string,
+        o?: Record<string, unknown>,
+      ) => RedisLike;
+      const client = new Redis(url, {
+        connectTimeout: 1_500,
+        commandTimeout: 1_500,
+        maxRetriesPerRequest: 1,
+        enableOfflineQueue: false,
+        autoResendUnfulfilledCommands: false,
+      });
+      client.on('error', () => {
+        this.redisReady = false;
+      });
+      client.on('ready', () => {
+        this.redisReady = true;
+      });
+      client.on('close', () => {
+        this.redisReady = false;
+      });
+      this.redis = client;
+    } catch {
+      this.logger.error('Redis turn lock initialization failed');
+    }
+  }
+
+  onModuleDestroy() {
+    this.redis?.disconnect();
+  }
+
+  /** Run `fn` holding the lock for `key` (tenant + conversation). */
+  async run<T>(
+    key: string,
+    fn: (held: TurnLockHeld) => Promise<T>,
+    opts: { waitMs?: number; ttlMs?: number } = {},
+  ): Promise<T> {
+    const waitMs = opts.waitMs ?? TURN_LOCK_WAIT_MS;
+    const ttlMs = opts.ttlMs ?? TURN_LOCK_TTL_MS;
+    const deadline = Date.now() + waitMs;
+
+    // 1. In-process: wait for the previous turn of this key in this process.
+    const prev = this.chains.get(key) ?? Promise.resolve();
+    let releaseLocal!: () => void;
+    const mine = new Promise<void>((r) => (releaseLocal = r));
+    const tail = prev.then(() => mine);
+    this.chains.set(key, tail);
+    void tail.then(() => {
+      if (this.chains.get(key) === tail) this.chains.delete(key);
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const waited = await Promise.race([
+        prev.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(
+            () => resolve(false),
+            Math.max(0, deadline - Date.now()),
+          );
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!waited) throw busy();
+
+      // 2. Cross-process.
+      const token = await this.acquireRemote(key, ttlMs, deadline);
+      const abort = new AbortController();
+      let leaseHeld = token !== null;
+      const held: TurnLockHeld = {
+        fence: token ?? '',
+        signal: abort.signal,
+        assertHeld: () => {
+          if (token !== null && !leaseHeld) throw leaseLost();
+        },
+      };
+      const markLost = (why: string) => {
+        if (!leaseHeld) return;
+        leaseHeld = false;
+        this.logger.warn(`turn lock lost key=${redactKey(key)} reason=${why}`);
+        try {
+          abort.abort();
+        } catch {
+          /* ignore */
+        }
+      };
+      const renew =
+        token && this.redis
+          ? setInterval(
+              () => {
+                void (async () => {
+                  if (!leaseHeld || !this.redis) return;
+                  try {
+                    const ok = await this.redis.eval(
+                      RENEW,
+                      1,
+                      redisKey(key),
+                      token,
+                      ttlMs,
+                    );
+                    // Redis EVAL returns 1 on success, 0 when the token no longer owns the key.
+                    if (ok !== 1) markLost('renew_token_mismatch');
+                  } catch {
+                    // Transient command failure: do not immediately declare loss — the next
+                    // renew may succeed before TTL. If Redis stays down, TTL expiry + mismatch
+                    // on a later renew (or acquire by a peer) will mark loss.
+                  }
+                })();
+              },
+              Math.floor(ttlMs / 3),
+            )
+          : null;
+      renew?.unref();
+      try {
+        const result = await fn(held);
+        // Fail closed: never return a successful turn after the remote lease was lost.
+        // Side effects that already committed still need their own idempotency.
+        if (token !== null && !leaseHeld) throw leaseLost();
+        return result;
+      } finally {
+        if (renew) clearInterval(renew);
+        // Only the still-holding owner may DELETE. A lost lease must not remove a peer's key.
+        if (token && leaseHeld)
+          await this.redis
+            ?.eval(RELEASE, 1, redisKey(key), token)
+            .catch(() => undefined);
+      }
+    } finally {
+      releaseLocal();
+    }
+  }
+
+  /** Lock token, or null for unconfigured local development and tests. */
+  private async acquireRemote(
+    key: string,
+    ttlMs: number,
+    deadline: number,
+  ): Promise<string | null> {
+    if (!this.remoteRequired) return null;
+    if (!this.redis || !this.redisReady) throw unavailable();
+    const token = randomBytes(12).toString('base64url');
+    let delay = 15;
+    for (;;) {
+      let ok: string | null;
+      try {
+        ok = await this.redis.set(redisKey(key), token, 'PX', ttlMs, 'NX');
+      } catch {
+        throw unavailable();
+      }
+      if (ok === 'OK') return token;
+      if (Date.now() + delay > deadline) throw busy();
+      await sleep(delay);
+      delay = Math.min(delay * 2, 250);
+    }
+  }
+}
+
+const redisKey = (key: string) => `amqur:turn-lock:${key}`;
+/** Log only a short hash of the key — never conversation/user identifiers. */
+const redactKey = (key: string) =>
+  key.length <= 12 ? 'short' : `${key.slice(0, 4)}…${key.length}`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const unavailable = () =>
+  new ServiceUnavailableException({
+    message: 'conversation_temporarily_unavailable',
+    detail: 'Please retry your message shortly.',
+  });
+const busy = () =>
+  new ConflictException({
+    message: 'conversation_busy',
+    detail: 'Another message in this conversation is still being answered.',
+  });
+const leaseLost = () =>
+  new ServiceUnavailableException({
+    message: 'conversation_lease_lost',
+    detail: 'Please retry your message shortly.',
+  });

@@ -6,6 +6,7 @@ import { OutboxProcessorService } from './core/outbox-processor.service';
 import { TekionProvider } from './tekion/tekion.provider';
 import { VAutoFeedProvider } from './vauto/vauto-feed.provider';
 import { InventoryIngestionService } from './vauto/inventory-ingestion.service';
+import { VAutoSftpIngestionService } from './vauto/vauto-sftp-ingestion.service';
 import { TekionCrmWritebackService } from './tekion/tekion-crm-writeback.service';
 import { IntegrationsHealthController } from './integrations-health.controller';
 import { WebhookInboxService } from './core/webhook-inbox.service';
@@ -18,10 +19,26 @@ import { CrmSyncService } from './crm/crm-sync.service';
 import { LeadsModule } from '../leads/leads.module';
 import { MetaGraphLeadClientService } from './meta/meta-graph-lead.client';
 import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
+import { FeatureFlagsModule } from '../feature-flags/feature-flags.module';
+import { LeadDeliveryService } from './adf/lead-delivery.service';
+import { LeadAppointmentUpdateService } from './adf/lead-appointment-update.service';
+import { LeadDeliveryRouteService } from './adf/lead-delivery-route.service';
+import { LeadDeliveryOpsController } from './adf/lead-delivery-ops.controller';
+import { SandboxSinkTransport } from './adf/transports/sandbox-sink.transport';
+import { SmtpLeadTransport } from './adf/transports/smtp.transport';
 
 @Module({
-  imports: [InventoryFeedModule, InventoryModule, LeadsModule],
-  controllers: [IntegrationsHealthController, MetaLeadsWebhookController],
+  imports: [
+    InventoryFeedModule,
+    InventoryModule,
+    LeadsModule,
+    FeatureFlagsModule,
+  ],
+  controllers: [
+    IntegrationsHealthController,
+    MetaLeadsWebhookController,
+    LeadDeliveryOpsController,
+  ],
   providers: [
     SecretVaultService,
     CircuitBreakerService,
@@ -35,7 +52,13 @@ import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
     VAutoFeedProvider,
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
+    VAutoSftpIngestionService,
     TekionCrmWritebackService,
+    SandboxSinkTransport,
+    SmtpLeadTransport,
+    LeadDeliveryRouteService,
+    LeadDeliveryService,
+    LeadAppointmentUpdateService,
     CrmSyncService,
   ],
   exports: [
@@ -48,9 +71,14 @@ import { MetaLeadsInboxProcessor } from './meta/meta-leads-inbox.processor';
     VAutoFeedProvider,
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
+    VAutoSftpIngestionService,
     TekionCrmWritebackService,
     CrmSyncService,
     MetaLeadsInboxProcessor,
+    SandboxSinkTransport,
+    LeadDeliveryRouteService,
+    LeadDeliveryService,
+    LeadAppointmentUpdateService,
   ],
 })
 export class IntegrationsModule {}

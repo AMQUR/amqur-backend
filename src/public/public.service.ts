@@ -95,6 +95,7 @@ export class PublicService {
         salesEnabled: branding.salesEnabled,
         serviceEnabled: branding.serviceEnabled,
         partsEnabled: branding.partsEnabled,
+        theme: branding.theme,
       },
       features,
       proactive: features.proactiveEngagement
