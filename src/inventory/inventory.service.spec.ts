@@ -5,16 +5,18 @@ import { PrismaService } from '../prisma/prisma.service';
 describe('InventoryService', () => {
   let service: InventoryService;
   const upsert = jest.fn();
+  const findUnique = jest.fn();
 
   beforeEach(async () => {
     upsert.mockReset();
+    findUnique.mockReset().mockResolvedValue(null);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         InventoryService,
         {
           provide: PrismaService,
           useValue: {
-            vehicle: { upsert, updateMany: jest.fn() },
+            vehicle: { upsert, findUnique, updateMany: jest.fn() },
           },
         },
       ],
