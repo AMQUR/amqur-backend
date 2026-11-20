@@ -81,7 +81,8 @@
     "passport-jwt": "^4.0.1",
     "prisma": "^6.19.2",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "ssh2-sftp-client": "^12.1.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -92,6 +93,7 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^22.10.7",
     "@types/passport-jwt": "^4.0.1",
+    "@types/ssh2-sftp-client": "^9.0.6",
     "@types/supertest": "^6.0.2",
     "eslint": "^9.39.5",
     "eslint-config-prettier": "^10.1.8",

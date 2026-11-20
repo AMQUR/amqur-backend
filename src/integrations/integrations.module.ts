@@ -6,6 +6,7 @@ import { OutboxProcessorService } from './core/outbox-processor.service';
 import { TekionProvider } from './tekion/tekion.provider';
 import { VAutoFeedProvider } from './vauto/vauto-feed.provider';
 import { InventoryIngestionService } from './vauto/inventory-ingestion.service';
+import { VAutoSftpIngestionService } from './vauto/vauto-sftp-ingestion.service';
 import { TekionCrmWritebackService } from './tekion/tekion-crm-writeback.service';
 import { IntegrationsHealthController } from './integrations-health.controller';
 import { WebhookInboxService } from './core/webhook-inbox.service';
@@ -51,6 +52,7 @@ import { SmtpLeadTransport } from './adf/transports/smtp.transport';
     VAutoFeedProvider,
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
+    VAutoSftpIngestionService,
     TekionCrmWritebackService,
     SandboxSinkTransport,
     SmtpLeadTransport,
@@ -69,6 +71,7 @@ import { SmtpLeadTransport } from './adf/transports/smtp.transport';
     VAutoFeedProvider,
     NormalizedInventoryHttpProvider,
     InventoryIngestionService,
+    VAutoSftpIngestionService,
     TekionCrmWritebackService,
     CrmSyncService,
     MetaLeadsInboxProcessor,

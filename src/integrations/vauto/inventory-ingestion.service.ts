@@ -109,6 +109,7 @@ export class InventoryIngestionService {
         },
       });
 
+      const snapshotStartedAt = run.startedAt;
       await this.inventory.upsertVehicles(
         location.tenantId,
         location.id,
@@ -117,9 +118,15 @@ export class InventoryIngestionService {
           source: 'vauto_feed',
           importRunId: run.id,
           freshnessState: InventoryFreshnessState.FRESH,
+          // Legacy single-URL HTTPS feeds: prices/photos already governed by store policy elsewhere.
+          publishPrices: true,
+          publishPhotos: true,
         },
       );
-      await this.inventory.updateVehicleLifecycle(location.id);
+      // Missing from this snapshot → MISSING / REMOVED_FROM_LISTING — never auto-SOLD.
+      await this.inventory.updateVehicleLifecycle(location.id, {
+        snapshotStartedAt,
+      });
 
       await this.prisma.inventoryImportRun.update({
         where: { id: run.id },

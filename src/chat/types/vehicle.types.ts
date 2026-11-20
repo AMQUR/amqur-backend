@@ -32,6 +32,9 @@ export type InventoryVehicle = {
   status?: string;
   locationId?: string | null;
 
+  /** new | used | certified | unknown — from feed / Dial Difference directory. */
+  condition?: string | null;
+
   /** Feed freshness — ISO timestamp when last seen in inventory sync */
   lastSeenAt?: string | null;
   source?: string | null;

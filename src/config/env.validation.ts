@@ -94,6 +94,31 @@ export const envValidationSchema = Joi.object({
   /** Comma-separated hostnames allowed for inventory feed fetches */
   INVENTORY_FEED_ALLOWED_HOSTS: Joi.string().optional().allow('').default(''),
 
+  /**
+   * Dial Difference SFTPGo (read-only amqur_inventory_reader). Default off.
+   * Password must come from the server-side secret store — never commit it.
+   */
+  AMQUR_VAUTO_SFTP_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  AMQUR_VAUTO_SFTP_HOST: Joi.string().hostname().optional().allow(''),
+  AMQUR_VAUTO_SFTP_PORT: Joi.number().integer().min(1).max(65535).optional(),
+  AMQUR_VAUTO_SFTP_USER: Joi.string().optional().allow(''),
+  AMQUR_VAUTO_SFTP_PASSWORD: Joi.string().optional().allow(''),
+  AMQUR_VAUTO_SFTP_HOST_FINGERPRINT: Joi.string().optional().allow(''),
+  AMQUR_VAUTO_SFTP_MAX_BYTES: Joi.number().integer().min(1024).optional(),
+  /** Customer-facing advertised price from SFTP feeds — off until dealership approval. */
+  AMQUR_VAUTO_PUBLISH_PRICES: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  /** Vendor photos — off until image rights are documented. */
+  AMQUR_VAUTO_PUBLISH_PHOTOS: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+
   GOOGLE_CLIENT_EMAIL: Joi.string().optional().allow(''),
   GOOGLE_PRIVATE_KEY: Joi.string().optional().allow(''),
 

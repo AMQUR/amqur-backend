@@ -352,6 +352,16 @@ model Vehicle {
   source     String?
   lastSeenAt DateTime?
 
+  /// Which of the ten Dial Difference sources last verified this VIN (e.g. chevy/new).
+  /// Lifecycle reconciliation for one source must never rewrite another source's stock.
+  feedSourceKey String?
+
+  /// When the listing was removed from active inventory without a vendor "sold" signal.
+  listingRemovedAt DateTime?
+
+  /// Vendor-supplied sold/status evidence required before status=SOLD (never inferred from absence).
+  explicitSoldEvidence String?
+
   /// Derived freshness for customer-facing disclosure
   freshnessState InventoryFreshnessState @default(UNAVAILABLE)
 
@@ -390,7 +400,15 @@ enum VehicleStatus {
   AVAILABLE
   IN_TRANSIT
   HOLD
+  /// Present previously; not in the latest *successful* snapshot for its feedSourceKey.
   MISSING
+  /// Temporarily held aside while a partial/failed import is investigated.
+  PENDING_RECONCILIATION
+  /// No longer listed in verified feeds; NOT proof of a retail sale.
+  REMOVED_FROM_LISTING
+  /// Failed validation / rooftop mismatch / bad VIN — never customer-visible.
+  QUARANTINED
+  /// Only when the vendor (or staff) supplies explicit sold evidence.
   SOLD
 }
 
@@ -911,6 +929,10 @@ model InventoryImportRun {
 
   status InventoryImportStatus @default(PENDING)
 
+  /// Dial Difference path key, e.g. chevy/new — isolates New vs Used reconciliation.
+  feedSourceKey   String?
+  sourceCondition String?
+
   sourceIdentifier String?
   checksum         String?
   recordCount      Int?
@@ -927,6 +949,7 @@ model InventoryImportRun {
   @@index([tenantId, startedAt])
   @@index([locationId, startedAt])
   @@index([status])
+  @@index([feedSourceKey, startedAt])
 }
 
 enum InventoryImportStatus {
