@@ -95,7 +95,7 @@ export function currentEngineeringCheckpoint(): EngineeringScorecard {
       widgetWebsite: 8,
       securityPrivacy: 14,
       testingEvaluation: 8,
-      cicdMigrationsDeploy: 7,
+      cicdMigrationsDeploy: 8,
       observabilityRecovery: 4,
       documentationHandoff: 3,
     },
@@ -111,9 +111,9 @@ export function currentEngineeringCheckpoint(): EngineeringScorecard {
           'effect override clears Prisma high advisories; host-key authoritative attestation still owner (−1).',
         testingEvaluation: 'Live-model holdout blocked (−2).',
         cicdMigrationsDeploy:
-          'Staging may lag HEAD until redeploy; Actions token after migration (−1).',
+          'CI green on HEAD; staging API+worker SHA aligned. Main Actions RAILWAY_API_TOKEN still owner-verify after migration.',
         observabilityRecovery:
-          'Ops alert path implemented; live webhook delivery may still be unset (−1).',
+          'Ops alert path implemented; OPS_ALERT_WEBHOOK_URL unset on worker (−1).',
       },
     },
   );
