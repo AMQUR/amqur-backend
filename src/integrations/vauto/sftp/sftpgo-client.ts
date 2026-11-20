@@ -61,24 +61,27 @@ export class SftpGoClient implements InventorySftpTransport {
     const dir = assertAllowedRemotePath(remoteDir);
     const client = await this.ensureConnected();
     const entries = await client.list(dir);
-    return entries
-      .filter((e) => e.type === '-' || e.type === 'l')
-      .filter((e) => {
-        const n = e.name;
-        return (
-          !n.startsWith('.') &&
-          !n.endsWith('.tmp') &&
-          !n.endsWith('.partial') &&
-          !n.endsWith('~') &&
-          !n.endsWith('.filepart')
-        );
-      })
-      .map((e) => ({
-        name: e.name,
-        remotePath: `${dir.replace(/\/$/, '')}/${e.name}`,
-        size: Number(e.size) || 0,
-        modifyTimeMs: Number(e.modifyTime) || 0,
-      }));
+    return (
+      entries
+        // Regular files only — never follow remote symlinks (escape risk).
+        .filter((e) => e.type === '-')
+        .filter((e) => {
+          const n = e.name;
+          return (
+            !n.startsWith('.') &&
+            !n.endsWith('.tmp') &&
+            !n.endsWith('.partial') &&
+            !n.endsWith('~') &&
+            !n.endsWith('.filepart')
+          );
+        })
+        .map((e) => ({
+          name: e.name,
+          remotePath: `${dir.replace(/\/$/, '')}/${e.name}`,
+          size: Number(e.size) || 0,
+          modifyTimeMs: Number(e.modifyTime) || 0,
+        }))
+    );
   }
 
   async download(

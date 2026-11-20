@@ -5,10 +5,28 @@ import {
 } from './sftp-ingest-lock';
 
 describe('tryAcquireSftpIngestLock', () => {
-  it('returns a no-op release when Redis is unavailable', async () => {
+  const prevRedis = process.env.REDIS_URL;
+  const prevTier = process.env.DEPLOYMENT_TIER;
+
+  afterEach(() => {
+    if (prevRedis === undefined) delete process.env.REDIS_URL;
+    else process.env.REDIS_URL = prevRedis;
+    if (prevTier === undefined) delete process.env.DEPLOYMENT_TIER;
+    else process.env.DEPLOYMENT_TIER = prevTier;
+  });
+
+  it('returns a no-op release when Redis is unavailable locally', async () => {
+    delete process.env.REDIS_URL;
+    delete process.env.DEPLOYMENT_TIER;
     const release = await tryAcquireSftpIngestLock(() => null);
     expect(release).not.toBeNull();
     await expect(release!()).resolves.toBeUndefined();
+  });
+
+  it('fails closed on hosted tiers without Redis', async () => {
+    delete process.env.REDIS_URL;
+    process.env.DEPLOYMENT_TIER = 'staging';
+    await expect(tryAcquireSftpIngestLock(() => null)).resolves.toBeNull();
   });
 
   it('acquires with SET NX and releases only the held token', async () => {

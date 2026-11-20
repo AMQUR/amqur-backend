@@ -15,8 +15,11 @@ describe('host-key pinning', () => {
   it('rejects missing or mismatched fingerprints', () => {
     expect(hostKeyMatches(key, '')).toBe(false);
     expect(hostKeyMatches(key, null)).toBe(false);
-    expect(hostKeyMatches(key, 'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=')).toBe(
-      false,
-    );
+    expect(
+      hostKeyMatches(
+        key,
+        'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+      ),
+    ).toBe(false);
   });
 });

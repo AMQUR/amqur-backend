@@ -10,7 +10,10 @@ export function sshHostFingerprintSha256(hostKey: Buffer): string {
 
 function normalizeFp(fp: string): string {
   // OpenSSH often prints SHA256 fingerprints without base64 padding `=`.
-  const body = fp.trim().replace(/^SHA256:/i, '').replace(/=+$/, '');
+  const body = fp
+    .trim()
+    .replace(/^SHA256:/i, '')
+    .replace(/=+$/, '');
   return `SHA256:${body}`;
 }
 
@@ -19,5 +22,7 @@ export function hostKeyMatches(
   expected: string | undefined | null,
 ): boolean {
   if (!expected || !expected.trim()) return false;
-  return normalizeFp(sshHostFingerprintSha256(hostKey)) === normalizeFp(expected);
+  return (
+    normalizeFp(sshHostFingerprintSha256(hostKey)) === normalizeFp(expected)
+  );
 }

@@ -27,8 +27,8 @@ describe('Dial Difference feed map', () => {
     expect(() => assertAllowedRemotePath('/etc/passwd')).toThrow(
       /sftp_path_not_in_allowlist/,
     );
-    expect(() => assertAllowedRemotePath('/chevy/new/../../etc/passwd')).toThrow(
-      /sftp_path_rejected/,
-    );
+    expect(() =>
+      assertAllowedRemotePath('/chevy/new/../../etc/passwd'),
+    ).toThrow(/sftp_path_rejected/);
   });
 });

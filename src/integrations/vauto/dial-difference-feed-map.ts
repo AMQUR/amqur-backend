@@ -125,8 +125,7 @@ export function assertAllowedRemotePath(remotePath: string): string {
   }
   const allowed = DIAL_DIFFERENCE_FEED_SOURCES.some(
     (s) =>
-      normalized === s.remoteDir ||
-      normalized.startsWith(`${s.remoteDir}/`),
+      normalized === s.remoteDir || normalized.startsWith(`${s.remoteDir}/`),
   );
   if (!allowed) throw new Error('sftp_path_not_in_allowlist');
   return normalized;

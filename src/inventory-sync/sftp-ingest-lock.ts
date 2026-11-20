@@ -17,16 +17,27 @@ export const SFTP_INGEST_LOCK_KEY = 'amqur:inventory:vauto-sftp-ingest';
 /** Cover a full ten-source pass with headroom; TTL auto-expires on crash. */
 export const SFTP_INGEST_LOCK_TTL_MS = 15 * 60 * 1000;
 
+function remoteLockRequired(): boolean {
+  const tier = (process.env.DEPLOYMENT_TIER ?? '').toLowerCase();
+  return (
+    Boolean(process.env.REDIS_URL?.trim()) ||
+    tier === 'staging' ||
+    tier === 'production'
+  );
+}
+
 /**
  * Cross-process mutex for Dial Difference SFTP ingest.
- * Returns a release function when acquired, or null when another worker holds it.
- * Without REDIS_URL, returns a no-op release (caller still uses in-process guard).
+ * Returns a release function when acquired, or null when another worker holds it
+ * (or when a hosted tier lacks Redis — fail closed).
+ * Local/dev without REDIS_URL returns a no-op release (in-process guard only).
  */
 export async function tryAcquireSftpIngestLock(
   redisFactory: () => RedisLike | null = defaultRedis,
 ): Promise<(() => Promise<void>) | null> {
   const redis = redisFactory();
   if (!redis) {
+    if (remoteLockRequired()) return null;
     return async () => undefined;
   }
   const token = randomBytes(16).toString('hex');

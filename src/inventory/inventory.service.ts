@@ -94,9 +94,19 @@ export class InventoryService {
       if (!v?.vin) continue;
       const vin = v.vin.toUpperCase().trim();
       const price = publishPrices ? (v.price ?? null) : null;
+      // MSRP is also commercial pricing — suppress with the same publish gate.
+      const msrp = publishPrices ? (v.msrp ?? null) : null;
       const photos = publishPhotos
         ? ((v.photos as Prisma.InputJsonValue) ?? undefined)
         : [];
+
+      const existing = await this.prisma.vehicle.findUnique({
+        where: { tenantId_vin: { tenantId, vin } },
+        select: { status: true, explicitSoldEvidence: true },
+      });
+      const keepExplicitSold =
+        existing?.status === VehicleStatus.SOLD &&
+        Boolean(existing.explicitSoldEvidence?.trim());
 
       await this.prisma.vehicle.upsert({
         where: {
@@ -114,15 +124,20 @@ export class InventoryService {
           fuelType: v.fuelType ?? null,
           color: v.color ?? null,
           price,
-          msrp: v.msrp ?? null,
+          msrp,
           mileage: v.mileage ?? null,
           photos,
           condition: v.condition ?? undefined,
           locationId,
-          status: VehicleStatus.AVAILABLE,
+          // Never resurrect an explicitly evidenced SOLD row from a feed reappearance alone.
+          ...(keepExplicitSold
+            ? {}
+            : {
+                status: VehicleStatus.AVAILABLE,
+                listingRemovedAt: null,
+                explicitSoldEvidence: null,
+              }),
           lastSeenAt: now,
-          listingRemovedAt: null,
-          explicitSoldEvidence: null,
           source: source ?? v.source ?? undefined,
           importRunId: importRunId ?? undefined,
           freshnessState,
@@ -141,7 +156,7 @@ export class InventoryService {
           fuelType: v.fuelType ?? null,
           color: v.color ?? null,
           price,
-          msrp: v.msrp ?? null,
+          msrp,
           mileage: v.mileage ?? null,
           photos: photos ?? [],
           condition: v.condition ?? null,
@@ -180,9 +195,11 @@ export class InventoryService {
     const removedThreshold = new Date(
       opts.snapshotStartedAt.getTime() - removedAfterDays * 24 * 60 * 60 * 1000,
     );
+    // When feedSourceKey is omitted (legacy HTTPS), only touch rows that also lack a
+    // feedSourceKey. Never let an HTTPS reconcile wipe Dial Difference SFTP stock.
     const sourceFilter = opts.feedSourceKey
       ? { feedSourceKey: opts.feedSourceKey }
-      : {};
+      : { feedSourceKey: null };
 
     await this.prisma.vehicle.updateMany({
       where: {
@@ -212,7 +229,8 @@ export class InventoryService {
         locationId,
         ...sourceFilter,
         status: VehicleStatus.MISSING,
-        OR: [{ lastSeenAt: null }, { lastSeenAt: { lt: removedThreshold } }],
+        // Require a known lastSeenAt so never-seen null rows are not instantly removed.
+        lastSeenAt: { lt: removedThreshold },
       },
       data: {
         status: VehicleStatus.REMOVED_FROM_LISTING,
