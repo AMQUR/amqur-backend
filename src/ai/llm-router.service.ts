@@ -100,6 +100,7 @@ export class LlmRouterService {
       tokens: `llm:spend:tokens:${day}`,
       usd: `llm:spend:microusd:${day}`,
       tenantUsd: tenantId ? `llm:spend:microusd:${day}:${tenantId}` : null,
+      tenantTokens: tenantId ? `llm:spend:tokens:${day}:${tenantId}` : null,
     };
   }
 
@@ -127,6 +128,14 @@ export class LlmRouterService {
     const k = this.keys(tenantId);
     if ((await this.counter(k.tokens)) >= this.dailyBudget())
       return 'budget_exhausted';
+    // One tenant (one website) cannot spend the whole shared allowance.
+    const perTenant = this.num('LLM_TENANT_DAILY_TOKEN_BUDGET');
+    if (
+      perTenant !== null &&
+      k.tenantTokens &&
+      (await this.counter(k.tenantTokens)) >= perTenant
+    )
+      return 'budget_exhausted';
     const caps = this.usdCaps();
     if (caps.group === null && caps.tenant === null) return null;
     if (!this.prices()) return 'spend_cap_unpriced';
@@ -146,7 +155,10 @@ export class LlmRouterService {
     const ttl = 2 * 86_400;
     const inc = (key: string, by: number) =>
       this.cache.incrBy(key, by, ttl).catch(() => 0);
-    if (tokens) await inc(k.tokens, tokens);
+    if (tokens) {
+      await inc(k.tokens, tokens);
+      if (k.tenantTokens) await inc(k.tenantTokens, tokens);
+    }
     if (microUsd) {
       await inc(k.usd, microUsd);
       if (k.tenantUsd) await inc(k.tenantUsd, microUsd);

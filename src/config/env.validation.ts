@@ -46,6 +46,8 @@ export const envValidationSchema = Joi.object({
   OPENAI_TOOLS_API: Joi.string().valid('responses', 'chat').optional(),
   /** Kill switch for the conversation lane ('false' restores tool-lane-only behaviour). */
   OPEN_CONVERSATION_ENABLED: Joi.string().valid('true', 'false').optional(),
+  /** Model tokens one tenant may use per UTC day (unset = only the global LLM_DAILY_TOKEN_BUDGET applies). */
+  LLM_TENANT_DAILY_TOKEN_BUDGET: Joi.number().integer().min(1).optional(),
   /** Widget chat turns allowed per client address (defaults 120 per hour, 400 per day). */
   CHAT_TURNS_PER_IP_HOUR: Joi.number().integer().min(1).optional(),
   CHAT_TURNS_PER_IP_DAY: Joi.number().integer().min(1).optional(),
