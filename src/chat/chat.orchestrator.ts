@@ -456,6 +456,8 @@ type Turn = {
   urgent: boolean;
   /** Skip model polish so safety wording cannot be rewritten. */
   lockReply?: boolean;
+  /** A simulated (demo) vehicle was read this turn: the reply must be labeled as demo. */
+  simulatedThisTurn?: boolean;
   quickReplies: string[];
   /** Social opener for this turn ("Hi there!") — replaces the generic acknowledgement. */
   socialPrefix?: string;
@@ -878,6 +880,17 @@ export class ChatOrchestrator {
 
     const pressureKind = detectPressure(rawMessage);
     if (pressureKind) {
+      // A message that carries an injection or pressure phrase is often a legitimate task
+      // around it ("summarise this email", "translate this sentence"). The conversation
+      // model declines the injected part and still does the work; the fixed refusal remains
+      // the fallback when no model is available.
+      const viaModel = await this.tryOpenConversation(t, input, started, {
+        force: true,
+      });
+      if (viaModel) {
+        this.metrics.increment(`chat.redteam.${pressureKind}.conversation`);
+        return viaModel;
+      }
       this.handlePressure(t, pressureKind);
       return this.finish(t, { started });
     }
@@ -990,6 +1003,7 @@ export class ChatOrchestrator {
     t: Turn,
     input: { action?: string; vin?: string },
     started: number,
+    opts: { force?: boolean } = {},
   ): Promise<ChatResponse | null> {
     const { st, u } = t;
     if (
@@ -1007,7 +1021,6 @@ export class ChatOrchestrator {
     const intents = u.intents
       .filter((i) => i.confidence >= 0.6)
       .map((i) => i.intent as string);
-    if (u.entities.incident) return null;
     // A phone number or email belongs to the tool lane (consent, lead rules). A bare
     // introduction ("Hi, I'm Alex") is conversation: remember the name, ask for nothing.
     const contact = u.entities.contact;
@@ -1017,7 +1030,12 @@ export class ChatOrchestrator {
       return null;
     if (contact?.firstName && !st.contact.firstName)
       st.contact = { ...st.contact, firstName: contact.firstName };
-    if (
+    // Safety reports, complaints, handoff requests and contact submissions belong to the
+    // tools — but the keyword rules also fire on "a dragon who's scared of fire" and "what
+    // should you call me". These go to the conversation model only on the router's explicit
+    // verdict; with no verdict the tools keep them.
+    const toolOnly =
+      !!u.entities.incident ||
       intents.some(
         (i) =>
           ChatOrchestrator.TOOL_ONLY_INTENTS.has(i) &&
@@ -1028,9 +1046,7 @@ export class ChatOrchestrator {
             !contact.phone &&
             !contact.email
           ),
-      )
-    )
-      return null;
+      );
     const pending = st.pending && st.pending !== 'none' ? st.pending : null;
     const affirmOrDecline =
       intents.includes('AFFIRM') || intents.includes('DECLINE');
@@ -1047,7 +1063,7 @@ export class ChatOrchestrator {
     );
     const inventoryTool = await this.inventorySearchTool(t);
     let lane: 'conversation' | 'dealership';
-    if (allConversational && !pending) {
+    if (opts.force || (allConversational && !pending && !toolOnly)) {
       lane = 'conversation';
     } else {
       // The rules matched a dealership tool (or a tool question is pending): ask the router
@@ -1062,8 +1078,15 @@ export class ChatOrchestrator {
         pending,
         ruleIntents: intents,
         tenantId: t.tenantId,
+        groupSite: !!groupConversationCapability(t.tenantId, 'appointments'),
       });
-      if (verdict !== 'conversation') return null;
+      // No verdict (router unavailable): a turn the rules themselves read as conversation
+      // still gets the conversation model; anything the rules read as tool work stays put.
+      if (
+        verdict !== 'conversation' &&
+        !(verdict === null && allConversational && !toolOnly)
+      )
+        return null;
       lane = 'conversation';
       t.modelInterpreted = true;
     }
@@ -1757,7 +1780,10 @@ export class ChatOrchestrator {
 
   /** One-time, plain-language note that the demo runs on simulated inventory. */
   private noteSimulated(t: Turn, vehicles: InventoryVehicle[]) {
-    if (!vehicles.some((v) => v.simulated) || t.st.social?.demoNoted) return;
+    if (!vehicles.some((v) => v.simulated)) return;
+    // Every reply that states something about a simulated vehicle says so (see finish()).
+    t.simulatedThisTurn = true;
+    if (t.st.social?.demoNoted) return;
     t.st.social = { ...t.st.social, demoNoted: true };
     const tag = tr(
       t.lang,
@@ -8590,6 +8616,16 @@ export class ChatOrchestrator {
           st.department ? deptMap[st.department] : PlaybookDepartment.GENERAL,
         )
         .catch(() => null);
+      // Which store this chat belongs to is verified configuration, not something a handler
+      // has to have looked up: the composer may always state it. Phone numbers stay out —
+      // the egress redactor would mask them.
+      const ident = await this.openConversation
+        .storeIdentity(t.tenantId, t.locationId, '')
+        .catch(() => null);
+      if (ident?.storeName)
+        t.facts.push(
+          `STORE IDENTITY (verified): this chat is for ${ident.storeName}${ident.address ? `, ${ident.address}` : ''}${ident.groupName ? `; part of ${ident.groupName}` : ''}${ident.siblings.length ? `; other stores in the group, each a separate business: ${ident.siblings.map((x) => (x.address ? `${x.name} (${x.address})` : x.name)).join('; ')}` : ''}`,
+        );
       this.emitStatus(t, 'composing');
       const res = await this.composer.compose({
         message: t.message,
@@ -8667,6 +8703,37 @@ export class ChatOrchestrator {
         pendingKey: q.key,
       });
       segments = [reply];
+    }
+    // Simulated inventory is never presented unlabeled, whatever the model did with the draft.
+    if (
+      t.simulatedThisTurn &&
+      !/\b(?:demo|demonstration|simulated|sample data)\b|simulad|demostraci[oó]n/i.test(
+        reply,
+      )
+    ) {
+      reply = `${reply} ${tr(t.lang, '(Simulated demo inventory, not live stock.)', '(Inventario simulado de demostración, no existencias reales.)')}`;
+      segments = [reply];
+    }
+    // The tools write English or Spanish. A customer writing in another script gets the same
+    // reply in their language; numbers and status words must survive or the original is sent.
+    if (
+      !opts.forcedReply &&
+      !llmOff &&
+      /[\u0600-\u06FF\u0750-\u077F\u0900-\u097F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0E00-\u0E7F\u0590-\u05FF]/.test(
+        t.message,
+      )
+    ) {
+      const translated = await this.openConversation
+        .translateReply({
+          reply,
+          customerMessage: t.message,
+          tenantId: t.tenantId,
+        })
+        .catch(() => null);
+      if (translated) {
+        reply = translated;
+        segments = [reply];
+      }
     }
     if (ack) st.recentOpeners = [...st.recentOpeners, ack].slice(-4);
     st.lastReplySig = signature(reply);

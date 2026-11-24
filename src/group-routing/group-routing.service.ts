@@ -223,7 +223,6 @@ export class GroupRoutingService {
       !(owner && (owner.state.pending ?? 'none') !== 'none') &&
       !u.entities.vin &&
       !u.entities.stock &&
-      !u.entities.incident &&
       !u.entities.contact?.phone &&
       !u.entities.contact?.email &&
       this.conversation.isEnabled() &&
@@ -246,7 +245,9 @@ export class GroupRoutingService {
         'GREETING',
         'LANGUAGE_SWITCH',
       ]);
-      const urgent = new Set(['SAFETY_URGENT', 'COMPLAINT', 'HUMAN_HANDOFF']);
+      // A complaint or a request for a person keeps the rules; a safety keyword does not,
+      // because the first thing a driver needs is advice, not "which store?".
+      const urgent = new Set(['COMPLAINT', 'HUMAN_HANDOFF']);
       if (
         !ruleIntents.every((i) => conversational.has(i)) &&
         !ruleIntents.some((i) => urgent.has(i))
@@ -261,6 +262,7 @@ export class GroupRoutingService {
           ruleIntents,
           tenantId: input.tenantId,
           inventoryTool: false,
+          groupSite: !bound,
         });
         if (lane === 'conversation') {
           this.metrics.increment('group_routing.conversation_lane');
