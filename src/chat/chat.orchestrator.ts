@@ -65,6 +65,7 @@ import { OpenConversationService } from './conversation/open-conversation.servic
 import { isRecallQuestion } from './conversation/recall';
 import {
   DEALER_FOCUSES,
+  DEALER_DIRECTORY_PHONE_DIGITS,
   buildDealershipCard,
   dealerDirectoryFor,
   type DealerFocus,
@@ -85,7 +86,10 @@ import {
 import { AnalyticsService } from '../analytics/analytics.service';
 import { MetricsService } from '../observability/metrics.service';
 import { OutboxService } from '../integrations/core/outbox.service';
-import { redactCreditSensitive } from '../common/security/sensitive-data';
+import {
+  redactCreditSensitive,
+  redactForLlm,
+} from '../common/security/sensitive-data';
 import {
   chooseAcknowledgement,
   compose,
@@ -691,7 +695,30 @@ export class ChatOrchestrator {
         ? APPOINTMENT_SELECTED_MARKER
         : null;
     const rawMessage = structured ? '' : (input.message ?? '').trim();
-    const redacted = structured ?? redactCreditSensitive(rawMessage);
+    let redacted = structured ?? redactCreditSensitive(rawMessage);
+    // Where no lead or booking tool is connected, contact details typed into the chat cannot
+    // reach anyone. They are masked before the message is stored, and the reply below gives
+    // the store's own contact routes instead of collecting them.
+    const typedContact =
+      !structured &&
+      (/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/.test(
+        rawMessage,
+      ) ||
+        /[\w.+-]+@[\w-]+\.[\w.-]+/.test(rawMessage));
+    const noDelivery = structured
+      ? false
+      : await this.noDeliveryRoute(tenantId, input.locationId);
+    // A store's own published number quoted back ("is 773-423-3000 your sales line?") is not
+    // the customer's contact detail.
+    const quotesStoreNumber =
+      typedContact &&
+      DEALER_DIRECTORY_PHONE_DIGITS.size > 0 &&
+      (rawMessage.match(/\d[\d\s().-]{8,}\d/g) ?? []).every((n) =>
+        DEALER_DIRECTORY_PHONE_DIGITS.has(n.replace(/\D/g, '').slice(-10)),
+      ) &&
+      !/[\w.+-]+@[\w-]+\.[\w.-]+/.test(rawMessage);
+    const customerContact = typedContact && !quotesStoreNumber;
+    if (customerContact && noDelivery) redacted = redactForLlm(redacted);
 
     // Critical: the customer's message is persisted before any processing (redacted).
     await this.store.appendMessage(s, 'USER', redacted, {
@@ -923,6 +950,12 @@ export class ChatOrchestrator {
     // ── open-conversation lane: general questions, reasoning, writing, automotive expertise
     // and anything else no dealership tool answers go to the conversation model with the
     // whole transcript. Returns null to continue on the tool lane below.
+    const direct = await this.directContactInstead(t, input, started, {
+      typedContact: customerContact,
+      noDelivery,
+    });
+    if (direct) return direct;
+
     const open = await this.tryOpenConversation(t, input, started);
     if (open) return open;
 
@@ -1275,6 +1308,87 @@ export class ChatOrchestrator {
   }
 
   private readonly tenantSlugs = new Map<string, string | null>();
+
+  /**
+   * True when this tenant has a verified store directory and neither lead capture nor booking
+   * is connected: a callback request or typed contact details could not be delivered.
+   */
+  private async noDeliveryRoute(
+    tenantId: string,
+    locationId: string | null | undefined,
+  ): Promise<boolean> {
+    const mode = this.openConversation.directoryMode();
+    if (mode === 'off') return false;
+    let slug = this.tenantSlugs.get(tenantId);
+    if (slug === undefined) {
+      slug =
+        (
+          await this.prisma.tenant
+            .findUnique({ where: { id: tenantId }, select: { slug: true } })
+            .catch(() => null)
+        )?.slug ?? null;
+      if (this.tenantSlugs.size > 500) this.tenantSlugs.clear();
+      this.tenantSlugs.set(tenantId, slug);
+    }
+    if (!slug || !dealerDirectoryFor(slug)) return false;
+    if (mode === 'force') return true;
+    const check = (c: CapabilityName) =>
+      groupConversationCapability(tenantId, c) ??
+      this.capabilities.check(tenantId, locationId ?? null, c);
+    const [leads, appointments] = await Promise.all([
+      check('leadCapture'),
+      check('appointments'),
+    ]);
+    return !leads.allowed && !appointments.allowed;
+  }
+
+  /**
+   * A request for a person, a callback, or typed contact details, where nothing can deliver
+   * it: say so, store nothing, and show the store's own phone and contact page. Never for a
+   * safety report, a complaint or a customer-reported incident, which keep their own path.
+   */
+  private async directContactInstead(
+    t: Turn,
+    input: { action?: string; vin?: string },
+    started: number,
+    flags: { typedContact: boolean; noDelivery: boolean },
+  ): Promise<ChatResponse | null> {
+    if (!flags.noDelivery || !t.message || input.action || input.vin)
+      return null;
+    if (t.s.channel === 'SMS' || t.u.entities.incident) return null;
+    const intents = t.u.intents
+      .filter((i) => i.confidence >= 0.6)
+      .map((i) => i.intent as string);
+    if (intents.includes('SAFETY_URGENT') || intents.includes('COMPLAINT'))
+      return null;
+    const wantsPerson = intents.includes('HUMAN_HANDOFF');
+    if (!wantsPerson && !flags.typedContact) return null;
+    const directory = await this.dealerDirectory(t);
+    if (!directory) return null;
+
+    const lang = t.lang === 'es' ? 'es' : 'en';
+    t.cards = t.cards.filter((c) => c.kind !== 'dealership');
+    for (const d of directory.stores)
+      t.cards.push(buildDealershipCard(d, 'visit', lang));
+    t.sources.add('dealer_directory');
+    t.handled.add('HUMAN_HANDOFF');
+    t.handled.add('PROVIDE_CONTACT');
+    t.lockReply = true;
+    this.metrics.increment('chat.direct_contact_instead');
+    const one = directory.stores.length === 1;
+    const reply = flags.typedContact
+      ? tr(
+          t.lang,
+          `This chat can’t pass contact details to the team yet, so I haven’t saved the details you typed and nobody has been notified. The quickest way to reach someone is to call ${one ? 'the store' : 'the store you want'} or use its contact page, below.`,
+          `Este chat todavía no puede enviar datos de contacto al equipo, así que no guardé lo que escribió y nadie ha sido notificado. Lo más rápido es llamar a ${one ? 'la agencia' : 'la agencia que le interesa'} o usar su página de contacto, abajo.`,
+        )
+      : tr(
+          t.lang,
+          `I can’t connect you to a person or leave a message for the team from this chat yet, and I’d rather not take your number when nobody would receive it. The quickest way to reach someone is to call ${one ? 'the store' : 'the store you want'} or use its contact page, below.`,
+          `Todavía no puedo comunicarle con una persona ni dejar un mensaje al equipo desde este chat, y prefiero no pedirle su número si nadie lo recibiría. Lo más rápido es llamar a ${one ? 'la agencia' : 'la agencia que le interesa'} o usar su página de contacto, abajo.`,
+        );
+    return this.finish(t, { forcedReply: reply, started });
+  }
 
   /**
    * The verified store directory for this conversation, or null when the tenant has none.

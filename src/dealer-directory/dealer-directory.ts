@@ -196,6 +196,14 @@ export const DEALER_DIRECTORY_HOSTS: ReadonlySet<string> = new Set(
     .map((u) => new URL(u).hostname),
 );
 
+/** Every store phone in the directory, digits only (10 digits). */
+export const DEALER_DIRECTORY_PHONE_DIGITS: ReadonlySet<string> = new Set(
+  GROUPS.flatMap((g) => g.stores)
+    .flatMap((s) => Object.values(s.phones))
+    .map((p) => p.replace(/\D/g, ''))
+    .filter((p) => p.length === 10),
+);
+
 export type DealerDirectoryView = {
   /** The store this conversation belongs to; null on the group site. */
   self: DealerStore | null;
