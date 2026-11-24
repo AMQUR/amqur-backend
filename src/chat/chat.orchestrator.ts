@@ -884,9 +884,12 @@ export class ChatOrchestrator {
       // around it ("summarise this email", "translate this sentence"). The conversation
       // model declines the injected part and still does the work; the fixed refusal remains
       // the fallback when no model is available.
-      const viaModel = await this.tryOpenConversation(t, input, started, {
-        force: true,
-      });
+      // Never for a turn that also reports an incident: that keeps the fixed safety path.
+      // The lane itself cannot act, and its reply guard rejects any claimed approval,
+      // booking or confirmation, so the fixed refusals lose nothing by going second.
+      const viaModel = u.entities.incident
+        ? null
+        : await this.tryOpenConversation(t, input, started, { force: true });
       if (viaModel) {
         this.metrics.increment(`chat.redteam.${pressureKind}.conversation`);
         return viaModel;
