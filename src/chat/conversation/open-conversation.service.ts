@@ -148,6 +148,24 @@ export class OpenConversationService {
     );
   }
 
+  /** Per-provider model for a tier, so the same call works whichever provider is primary. */
+  private tierModels(
+    tier: 'conversation' | 'router',
+  ): Record<string, string | undefined> {
+    const openai = this.config
+      .get<string>(
+        tier === 'conversation'
+          ? 'OPENAI_CONVERSATION_MODEL'
+          : 'OPENAI_ROUTER_MODEL',
+      )
+      ?.trim();
+    return {
+      anthropic:
+        tier === 'conversation' ? this.conversationModel() : this.routerModel(),
+      openai: openai || undefined,
+    };
+  }
+
   routerModel(): string {
     return (
       this.config.get<string>('LLM_ROUTER_MODEL')?.trim() || 'claude-haiku-5-5'
@@ -215,7 +233,7 @@ export class OpenConversationService {
         .route({
           system,
           messages: [{ role: 'user', content: user }],
-          model: this.routerModel(),
+          modelByProvider: this.tierModels('router'),
           effort: 'low',
           maxTokens: 400,
           timeoutMs: 6000,
@@ -271,7 +289,7 @@ export class OpenConversationService {
             content: `CUSTOMER MESSAGE:\n${redactCreditSensitive(input.customerMessage).slice(0, 400)}\n\nASSISTANT REPLY:\n${input.reply.slice(0, 2500)}`,
           },
         ],
-        model: this.routerModel(),
+        modelByProvider: this.tierModels('router'),
         effort: 'low',
         maxTokens: 1500,
         timeoutMs: 8000,
@@ -726,7 +744,7 @@ export class OpenConversationService {
       this.router.route({
         system,
         messages: [...messages, ...extra],
-        model: this.conversationModel(),
+        modelByProvider: this.tierModels('conversation'),
         effort: this.effortFor(lastUser),
         maxTokens: 4000,
         timeoutMs: 90_000,

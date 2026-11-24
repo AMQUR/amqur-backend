@@ -410,3 +410,23 @@ describe('LlmRouterService', () => {
     }
   });
 });
+
+describe('LlmRouterService.modelFor', () => {
+  it('gives each vendor only a model id that is its own', () => {
+    expect(LlmRouterService.modelFor('anthropic', 'claude-opus-5-5')).toBe(
+      'claude-opus-5-5',
+    );
+    expect(
+      LlmRouterService.modelFor('openai', 'claude-opus-5-5'),
+    ).toBeUndefined();
+    expect(
+      LlmRouterService.modelFor('openai', undefined, {
+        openai: 'gpt-x',
+        anthropic: 'claude-y',
+      }),
+    ).toBe('gpt-x');
+    expect(
+      LlmRouterService.modelFor('anthropic', undefined, { openai: 'gpt-x' }),
+    ).toBeUndefined();
+  });
+});

@@ -14,6 +14,8 @@ export type LlmGenerateParams = {
   tenantId?: string;
   /** Model for this call (task-based routing). Providers that do not serve it use their default. */
   model?: string;
+  /** Model per provider id for this call (task tier), e.g. { openai: 'x', anthropic: 'y' }. */
+  modelByProvider?: Record<string, string | undefined>;
   /** Reasoning depth for models that support it. */
   effort?: 'low' | 'medium' | 'high';
   /**

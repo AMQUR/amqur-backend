@@ -416,6 +416,36 @@ export class JourneyStore {
     });
   }
 
+  /**
+   * One visitor's transcript across the conversations the group router bound together (the
+   * group-site conversation and the rooftop conversation it handed off to), oldest first.
+   * The ids come from server-side routing state, never from the request. A turn the router
+   * recorded in both conversations appears once.
+   */
+  async recentMessagesAcross(conversationIds: string[], take = 12) {
+    const ids = [...new Set(conversationIds.filter(Boolean))];
+    if (!ids.length) return [];
+    const rows = await this.prisma.message.findMany({
+      where: { conversationId: { in: ids } },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: { role: true, content: true, createdAt: true },
+    });
+    const out: typeof rows = [];
+    for (const r of rows.reverse()) {
+      const dup = out
+        .slice(-4)
+        .some(
+          (o) =>
+            o.role === r.role &&
+            o.content === r.content &&
+            Math.abs(o.createdAt.getTime() - r.createdAt.getTime()) < 15_000,
+        );
+      if (!dup) out.push(r);
+    }
+    return out;
+  }
+
   async recentMessages(conversationId: string, take = 12) {
     const rows = await this.prisma.message.findMany({
       where: { conversationId },

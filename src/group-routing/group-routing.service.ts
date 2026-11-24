@@ -76,6 +76,8 @@ export type GroupChatInput = {
 type EngineInput = Omit<GroupChatInput, 'rooftopRef'> & {
   pinnedVin?: string;
   resumeSearch?: boolean;
+  /** The visitor's group-site and bound-rooftop conversations: one transcript for memory. */
+  linkedConversationIds?: string[];
 };
 type Engine = (input: EngineInput) => Promise<ChatResponse>;
 
@@ -766,6 +768,10 @@ export class GroupRoutingService {
     const res = await this.inventory.runScoped(scope, () =>
       c.engine({
         ...plain,
+        linkedConversationIds: [
+          c.group.conversationId,
+          ...(c.owner ? [c.owner.conversationId] : []),
+        ],
         language: plain.language ?? c.lang,
         ...(opts.resume ? { resumeSearch: true } : {}),
       }),
@@ -963,6 +969,10 @@ export class GroupRoutingService {
     void _r;
     const res = await c.engine({
       ...plain,
+      linkedConversationIds: [
+        c.group.conversationId,
+        ...(c.owner ? [c.owner.conversationId] : []),
+      ],
       message: opts.message ?? plain.message,
       action: opts.action ?? plain.action,
       vin: opts.vin ?? plain.vin,

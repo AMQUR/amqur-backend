@@ -222,6 +222,24 @@ export class LlmRouterService {
     @Optional() private readonly compatible?: CompatibleLlmProviders,
   ) {}
 
+  /**
+   * A model id belongs to one vendor. The caller may name a model per provider
+   * (`modelByProvider`); a bare `model` goes only to the vendor whose naming it matches. Any
+   * provider without a match uses its own configured default.
+   */
+  static modelFor(
+    providerId: string,
+    model?: string,
+    byProvider?: Record<string, string | undefined>,
+  ): string | undefined {
+    const named = byProvider?.[providerId]?.trim();
+    if (named) return named;
+    if (!model) return undefined;
+    const isClaude = model.startsWith('claude');
+    if (providerId === 'anthropic') return isClaude ? model : undefined;
+    return undefined;
+  }
+
   private allProviders(): LlmProvider[] {
     return [this.anthropic, this.openai, ...(this.compatible?.list() ?? [])];
   }
@@ -373,11 +391,11 @@ export class LlmRouterService {
             ...safe,
             timeoutMs,
             // A model id belongs to one vendor; the fallback provider uses its own default.
-            model:
-              provider.providerId === 'anthropic' &&
-              safe.model?.startsWith('claude')
-                ? safe.model
-                : undefined,
+            model: LlmRouterService.modelFor(
+              provider.providerId,
+              safe.model,
+              safe.modelByProvider,
+            ),
             onTextDelta: params.onTextDelta
               ? (d, reset) => {
                   if (d) emitted = true;

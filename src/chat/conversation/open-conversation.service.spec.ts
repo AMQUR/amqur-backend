@@ -123,7 +123,10 @@ describe('OpenConversationService', () => {
     });
     expect(deltas.join('')).toBe('Islamabad.');
     const p = calls[0];
-    expect(p.model).toBe('claude-opus-5-5');
+    expect(p.modelByProvider).toEqual({
+      anthropic: 'claude-opus-5-5',
+      openai: undefined,
+    });
     expect(p.messages.map((m) => m.role)).toEqual([
       'user',
       'assistant',

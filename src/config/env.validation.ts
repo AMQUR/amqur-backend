@@ -39,6 +39,9 @@ export const envValidationSchema = Joi.object({
     .optional(),
   /** Small fast model that decides conversation vs dealership-tool lane. */
   LLM_ROUTER_MODEL: Joi.string().optional().allow(''),
+  /** OpenAI model per task tier (default: OPENAI_MODEL for both). */
+  OPENAI_CONVERSATION_MODEL: Joi.string().optional().allow(''),
+  OPENAI_ROUTER_MODEL: Joi.string().optional().allow(''),
   /** Kill switch for the conversation lane ('false' restores tool-lane-only behaviour). */
   OPEN_CONVERSATION_ENABLED: Joi.string().valid('true', 'false').optional(),
 

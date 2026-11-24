@@ -22,7 +22,14 @@ const ROUTING_CTX =
   /\b(routing|aba)\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{9})\b/gi;
 const ACCOUNT_CTX =
   /\b(account|acct)\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{6,17})\b/gi;
-const PASSWORD_CTX = /\b(password|passcode|pin|pwd)\s*(?:is|:|=)\s*\S+/gi;
+const PASSWORD_CTX =
+  /\b(pass(?:word|code|phrase)?|passw0rd|pwd|pw|pin)\s*(?:is|was|:|=)\s*\S+/gi;
+/**
+ * "my login is alex@example.com / Hunter2", "username: sam password: abc", "sign in with
+ * sam:abc123": the secret half of an id/secret pair typed next to a login word.
+ */
+const LOGIN_PAIR =
+  /(\b(?:log[- ]?in|sign[- ]?in|user(?:name)?|credentials?|account)\b[^\n]{0,80}?(?:[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b[\w.-]{3,}))(\s*[/:|]\s*)(\S{4,})/gi;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
@@ -68,9 +75,10 @@ export function detectCreditSensitive(text: string): SensitiveKind[] {
 /** Replace credit-sensitive values (keeps the rest of the message usable). */
 export function redactCreditSensitive(text: string): string {
   let out = text.replace(
-    PASSWORD_CTX,
-    (m) => `${m.split(/\s*(?:is|:|=)\s*/i)[0]} [REDACTED]`,
+    LOGIN_PAIR,
+    (_m, id: string, sep: string) => `${id}${sep}[REDACTED]`,
   );
+  out = out.replace(PASSWORD_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(ROUTING_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(ACCOUNT_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(CARD, (m) => {

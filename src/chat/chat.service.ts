@@ -63,6 +63,9 @@ export class ChatService {
                 | ((text: string, reset?: boolean) => void)
                 | undefined,
               signal: turn.signal as AbortSignal | undefined,
+              linkedConversationIds: (
+                turn as { linkedConversationIds?: string[] }
+              ).linkedConversationIds,
               tenantId: turn.tenantId,
               locationId: turn.locationId ?? null,
               userId: turn.userId,
