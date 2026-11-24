@@ -971,6 +971,7 @@ export class ChatOrchestrator {
     'SMALL_TALK',
     'GREETING',
     'LANGUAGE_SWITCH',
+    'HOURS_LOCATION',
     'AFFIRM',
     'DECLINE',
   ]);

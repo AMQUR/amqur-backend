@@ -122,8 +122,10 @@ describe('OpenConversationService', () => {
       'user',
     ]);
     expect(p.messages[0].content).toContain('black SUV');
-    const last = p.messages[2].content;
-    expect(last).toContain('capital of Pakistan');
+    expect(p.messages[2].content).toBe('What is the capital of Pakistan?');
+    // Verified store facts ride in the system channel, which the PII redactor leaves alone.
+    const last = p.system ?? '';
+    expect(last).toContain('555-0100');
     expect(last).toContain('Dial Chevy of Chicago');
     expect(last).toContain('Dial Auto Group');
     expect(last).toContain('Dial Nissan of Chicago');
