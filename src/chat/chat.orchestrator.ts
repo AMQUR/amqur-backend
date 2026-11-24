@@ -894,9 +894,13 @@ export class ChatOrchestrator {
       // Never for a turn that also reports an incident: that keeps the fixed safety path.
       // The lane itself cannot act, and its reply guard rejects any claimed approval,
       // booking or confirmation, so the fixed refusals lose nothing by going second.
-      const viaModel = u.entities.incident
-        ? null
-        : await this.tryOpenConversation(t, input, started, { force: true });
+      // Only a request about the assistant's own instructions goes to the model first (it is
+      // usually a summarise/translate task around the phrase). Attempts to make it assert a
+      // price, stock, fitment, approval or opt-out keep the fixed refusal.
+      const viaModel =
+        u.entities.incident || pressureKind !== 'system_prompt'
+          ? null
+          : await this.tryOpenConversation(t, input, started, { force: true });
       if (viaModel) {
         this.metrics.increment(`chat.redteam.${pressureKind}.conversation`);
         return viaModel;
@@ -1175,6 +1179,8 @@ export class ChatOrchestrator {
       knowledge,
       hoursSummary,
       extraTools: inventoryTool ? [inventoryTool] : [],
+      appointmentConfirmed:
+        st.appointment?.status === 'CONFIRMED' && !st.appointment.sandbox,
       onTextDelta: t.onTextDelta,
       signal: t.signal,
     });
@@ -1317,6 +1323,7 @@ export class ChatOrchestrator {
           ...(criteria.maxPrice ? { maxPrice: criteria.maxPrice } : {}),
           ...(criteria.condition ? { condition: criteria.condition } : {}),
         } as typeof t.st.criteria;
+        if (found.some((v) => v.simulated)) t.simulatedThisTurn = true;
         if (shown.length) {
           t.st.visibleVins = shown.map((v) => v.vin);
           this.rememberModels(t, shown);
@@ -1392,6 +1399,14 @@ export class ChatOrchestrator {
     started: number,
   ): Promise<ChatResponse> {
     const st = t.st;
+    // Simulated inventory is never presented unlabeled, whichever lane wrote the reply.
+    if (
+      t.simulatedThisTurn &&
+      !/\b(?:demo|demonstration|simulated|sample)\b|simulad|demostraci(?:o|ó)n/i.test(
+        reply,
+      )
+    )
+      reply = `${reply}\n\n${tr(t.lang, '(Simulated demo inventory, not live stock.)', '(Inventario simulado de demostración, no existencias reales.)')}`;
     st.turnCount += 1;
     st.lastReplySig = signature(reply);
     st.fallbacks = 0;
@@ -8739,6 +8754,9 @@ export class ChatOrchestrator {
     if (
       !opts.forcedReply &&
       !llmOff &&
+      // safety wording and locked replies are never rewritten, in any language
+      !t.lockReply &&
+      !t.urgent &&
       /\p{Script=Arabic}|\p{Script=Devanagari}|\p{Script=Cyrillic}|\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|\p{Script=Thai}|\p{Script=Hebrew}/u.test(
         t.message,
       )

@@ -27,8 +27,27 @@ const ACTION_CLAIMS: Array<{ re: RegExp; reason: string }> = [
   },
 ];
 
+ACTION_CLAIMS.push(
+  {
+    re: /\b(?:appointment|test[- ]drive|booking|reservation)\s+(?:is\s+|has been\s+)?(?:confirmed|booked)\b/i,
+    reason: 'claimed an appointment was confirmed or booked',
+  },
+  {
+    re: /\bwe(?:'ve| have|’ve)?\s+(?:just\s+|now\s+|already\s+)?(?:booked|scheduled|reserved|confirmed|submitted|sent|notified)\b/i,
+    reason: 'claimed to have performed an action',
+  },
+  {
+    re: /\b(?:the\s+)?(?:lender|bank|finance (?:team|company))\s+(?:has\s+)?approved\s+(?:you|your)\b/i,
+    reason: 'declared a financing approval',
+  },
+  {
+    re: /\b(?:su|tu)\s+cita\s+(?:ya\s+)?(?:está|ha sido|quedó)\s+(?:confirmada|reservada|agendada)\b|\b(?:le|te)\s+he\s+(?:reservado|agendado|confirmado)\b/i,
+    reason: 'claimed a confirmation or approval',
+  },
+);
+
 const SECRET =
-  /\bsk-ant-[A-Za-z0-9_-]{8,}|\bsk-[A-Za-z0-9]{20,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{6,}/;
+  /\bsk-ant-[A-Za-z0-9_-]{8,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}|\bAKIA[A-Z0-9]{12,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{6,}/;
 
 function sentences(text: string): string[] {
   return text

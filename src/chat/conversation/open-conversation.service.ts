@@ -49,6 +49,8 @@ export type OpenConversationInput = {
   hoursSummary: string | null;
   /** Per-turn read tools owned by the orchestrator (inventory search). */
   extraTools?: LlmLocalTool[];
+  /** True only when the tools hold a real (non-sandbox) CONFIRMED appointment. */
+  appointmentConfirmed?: boolean;
   onTextDelta?: (text: string, reset?: boolean) => void;
   signal?: AbortSignal;
 };
@@ -303,7 +305,13 @@ export class OpenConversationService {
     const nums = (t: string) =>
       (t.match(/\d[\d,.:/-]*\d|\d/g) ?? []).map((n) => n.replace(/[,.]$/, ''));
     const have = new Set(nums(out));
-    if (!out || nums(input.reply).some((n) => !have.has(n))) {
+    if (
+      !out ||
+      nums(input.reply).some((n) => !have.has(n)) ||
+      // a translation may not introduce a claim the original did not make
+      (checkConversationReply(input.reply).ok &&
+        !checkConversationReply(out).ok)
+    ) {
       this.metrics.increment('chat.translate_reply.rejected');
       return null;
     }
@@ -683,9 +691,8 @@ export class OpenConversationService {
     const lastUser =
       [...input.transcript].reverse().find((m) => m.role === 'USER')?.content ??
       '';
-    const confirmedInContext = input.memory.some((m) =>
-      /\bconfirmed appointment\b/i.test(m),
-    );
+    // From tool state, never from text: memory lines can carry customer-chosen words.
+    const confirmedInContext = input.appointmentConfirmed === true;
     // Streaming gate: text reaches the client one finished sentence at a time, and only after
     // that sentence passed the reply guard. A rejected sentence stops the stream and retracts
     // what was shown; the reply is then repaired (unstreamed) or handed to the tool lane.
@@ -766,6 +773,7 @@ export class OpenConversationService {
       attempt <= 3 &&
       !first?.ok &&
       !held &&
+      !released &&
       !blocked &&
       !input.signal?.aborted &&
       (!first ||

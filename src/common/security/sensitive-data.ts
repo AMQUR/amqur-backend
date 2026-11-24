@@ -22,14 +22,16 @@ const ROUTING_CTX =
   /\b(routing|aba)\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{9})\b/gi;
 const ACCOUNT_CTX =
   /\b(account|acct)\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{6,17})\b/gi;
+// Every quantifier below is bounded and no two adjacent parts can match the same text, so the
+// patterns are linear in input length (the first login pattern was quadratic: see the spec).
 const PASSWORD_CTX =
-  /\b(pass(?:word|code|phrase)?|passw0rd|pwd|pw|pin)\s*(?:is|was|:|=)\s*\S+/gi;
-/**
- * "my login is alex@example.com / Hunter2", "username: sam password: abc", "sign in with
- * sam:abc123": the secret half of an id/secret pair typed next to a login word.
- */
-const LOGIN_PAIR =
-  /(\b(?:log[- ]?in|sign[- ]?in|user(?:name)?|credentials?|account)\b[^\n]{0,80}?(?:[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\b[\w.-]{3,}))(\s*[/:|]\s*)(\S{4,})/gi;
+  /\b(pass(?:word|code|phrase)?|passw0rd|pwd|pw|pin|contrase(?:ñ|n)a|clave)(?:\s+(?:for|to|on|de|del|para)\s[^\n:="]{1,40}?)?(?:'s\s+|’s\s+|\s*(?:is|was|es|:|=)\s*:?\s*)("[^"\n]{1,80}"|\S{1,80})/gi;
+/** "my login is alex@example.com / Hunter2": the secret after a slash or pipe near a login word. */
+const LOGIN_SLASH =
+  /(\b(?:log[- ]?in|sign[- ]?in|username|credentials?)\b[^\n/|]{0,80}[/|]\s{0,3})(\S{4,80})/gi;
+/** "sign in with samdemo:Tr0ub4dor": id:secret right after a login verb. */
+const LOGIN_COLON =
+  /(\b(?:log[- ]?in|sign[- ]?in)\s{1,3}(?:with|as|using)\s{1,3}[\w.@-]{3,64}:)(\S{4,80})/gi;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
@@ -74,10 +76,9 @@ export function detectCreditSensitive(text: string): SensitiveKind[] {
 
 /** Replace credit-sensitive values (keeps the rest of the message usable). */
 export function redactCreditSensitive(text: string): string {
-  let out = text.replace(
-    LOGIN_PAIR,
-    (_m, id: string, sep: string) => `${id}${sep}[REDACTED]`,
-  );
+  let out = text
+    .replace(LOGIN_SLASH, (_m, head: string) => `${head}[REDACTED]`)
+    .replace(LOGIN_COLON, (_m, head: string) => `${head}[REDACTED]`);
   out = out.replace(PASSWORD_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(ROUTING_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(ACCOUNT_CTX, (_m, label: string) => `${label} [REDACTED]`);
