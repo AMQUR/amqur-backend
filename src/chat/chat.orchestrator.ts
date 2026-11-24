@@ -61,6 +61,7 @@ import {
 } from './understanding/model-interpretation';
 import { ClaudeConversationService } from './claude/claude-conversation.service';
 import { OpenConversationService } from './conversation/open-conversation.service';
+import type { LlmLocalTool } from '../ai/llm.provider';
 import {
   detectClaimTypes,
   GroundingGuardService,
@@ -1020,6 +1021,7 @@ export class ChatOrchestrator {
     const allConversational = intents.every((i) =>
       ChatOrchestrator.CONVERSATIONAL_INTENTS.has(i),
     );
+    const inventoryTool = await this.inventorySearchTool(t);
     let lane: 'conversation' | 'dealership';
     if (allConversational && !pending) {
       lane = 'conversation';
@@ -1030,6 +1032,7 @@ export class ChatOrchestrator {
         .recentMessages(t.s.conversationId, 7)
         .catch(() => [] as Array<{ role: string; content: string }>);
       const verdict = await this.openConversation.classifyLane({
+        inventoryTool: !!inventoryTool,
         message: t.message,
         recent: recent.slice(0, -1),
         pending,
@@ -1091,6 +1094,7 @@ export class ChatOrchestrator {
       memory: this.memorySummary(t),
       knowledge,
       hoursSummary,
+      extraTools: inventoryTool ? [inventoryTool] : [],
       onTextDelta: t.onTextDelta,
       signal: t.signal,
     });
@@ -1109,6 +1113,161 @@ export class ChatOrchestrator {
     t.sources.add('conversation_model');
     if (res.toolsUsed.length) t.sources.add('deterministic_calculation');
     return this.finishConversation(t, res.text, res.model, started);
+  }
+
+  /**
+   * Read-only inventory search for the conversation model. Tenant and location come from the
+   * authenticated conversation, never from the model. Results are recorded on the turn exactly
+   * like a tool-lane search (cards, evidence, on-screen vehicles, saved criteria), so "the
+   * second one" or "payments on that" work on the next turn. Not offered on the group site,
+   * where the store question is asked first by the tool lane.
+   */
+  private async inventorySearchTool(t: Turn): Promise<LlmLocalTool | null> {
+    if (groupConversationCapability(t.tenantId, 'inventory')) return null;
+    if (!(await this.cap(t, 'inventory')).allowed) return null;
+    const str = (v: unknown, max = 40) =>
+      typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined;
+    const num = (v: unknown, lo: number, hi: number) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= lo && n <= hi
+        ? Math.round(n)
+        : undefined;
+    };
+    return {
+      name: 'search_inventory',
+      description:
+        "Search this store's vehicle inventory. Every filter is optional; pass only what the customer asked for. Returns up to 6 vehicles shown to the customer as cards, the total match count, and whether the data is the demonstration dataset or the live feed.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          make: { type: 'string', description: 'e.g. Chevrolet' },
+          model: { type: 'string', description: 'e.g. Tahoe' },
+          bodyType: {
+            type: 'string',
+            description: 'SUV, Truck, Sedan, Van, Coupe, Hatchback, Wagon',
+          },
+          color: {
+            type: 'string',
+            description: 'Plain colour word, e.g. black',
+          },
+          maxPrice: {
+            type: 'number',
+            description: 'Budget ceiling in dollars',
+          },
+          maxMileage: { type: 'number' },
+          yearMin: { type: 'integer' },
+          condition: { type: 'string', enum: ['new', 'used', 'certified'] },
+          drivetrain: { type: 'string', description: 'AWD, 4WD, FWD or RWD' },
+          fuel: {
+            type: 'string',
+            enum: ['electric', 'hybrid', 'gas', 'diesel'],
+          },
+          sortBy: {
+            type: 'string',
+            enum: ['price_asc', 'price_desc', 'miles_asc', 'newest'],
+          },
+        },
+        additionalProperties: false,
+      },
+      run: async (input) => {
+        const cond = str(input.condition);
+        const fuel = str(input.fuel);
+        const sort = str(input.sortBy);
+        const criteria = {
+          make: str(input.make),
+          model: str(input.model),
+          bodyType: str(input.bodyType),
+          color: str(input.color),
+          maxPrice: num(input.maxPrice, 500, 2_000_000),
+          maxMileage: num(input.maxMileage, 0, 1_000_000),
+          yearMin: num(input.yearMin, 1980, 2100),
+          drivetrain: str(input.drivetrain, 10),
+          condition:
+            cond === 'new' || cond === 'used' || cond === 'certified'
+              ? (cond as 'new' | 'used' | 'certified')
+              : undefined,
+          fuel:
+            fuel === 'electric' ||
+            fuel === 'hybrid' ||
+            fuel === 'gas' ||
+            fuel === 'diesel'
+              ? (fuel as 'electric' | 'hybrid' | 'gas' | 'diesel')
+              : undefined,
+          sortBy:
+            sort === 'price_asc' ||
+            sort === 'price_desc' ||
+            sort === 'miles_asc' ||
+            sort === 'newest'
+              ? (sort as 'price_asc' | 'price_desc' | 'miles_asc' | 'newest')
+              : undefined,
+        };
+        const found = await this.inventory.searchVehicles({
+          tenantId: t.tenantId,
+          locationId: t.locationId,
+          ...criteria,
+          limit: 24,
+        });
+        t.toolCount += 1;
+        t.sources.add('inventory_db');
+        this.signal(t, 'inventory_search');
+        this.metrics.increment(
+          found.length ? 'inventory.hit' : 'inventory.miss',
+        );
+        void this.analytics.trackEvent(
+          t.tenantId,
+          t.locationId,
+          'inventory_search',
+          { hasModel: !!criteria.model, hasBudget: !!criteria.maxPrice },
+          t.s.externalKey,
+        );
+        const shown = found.slice(0, 6);
+        // What the customer is shopping for now — the tool lane reads this on later turns.
+        t.st.department = 'sales';
+        t.st.criteria = {
+          ...(criteria.make ? { make: criteria.make } : {}),
+          ...(criteria.model ? { model: criteria.model } : {}),
+          ...(criteria.bodyType ? { bodyType: criteria.bodyType } : {}),
+          ...(criteria.color ? { color: criteria.color } : {}),
+          ...(criteria.maxPrice ? { maxPrice: criteria.maxPrice } : {}),
+          ...(criteria.condition ? { condition: criteria.condition } : {}),
+        } as typeof t.st.criteria;
+        if (shown.length) {
+          t.st.visibleVins = shown.map((v) => v.vin);
+          this.rememberModels(t, shown);
+          t.vehicles = await this.withPaymentEstimates(t, shown);
+          t.type = 'vehicle_carousel';
+          await this.attachVehicleEvidence(t, shown);
+        } else {
+          t.vehicles = undefined;
+          t.type = undefined;
+        }
+        const simulated = found.some((v) => v.simulated);
+        return JSON.stringify({
+          dataset: simulated
+            ? 'DEMONSTRATION dataset (simulated vehicles, not live dealership stock)'
+            : 'dealership inventory feed',
+          totalMatches: found.length,
+          cardsShownToCustomer: shown.length,
+          vehicles: found.slice(0, 12).map((v, i) => ({
+            shownAsCard: i < shown.length,
+            year: v.year,
+            make: v.make,
+            model: v.model,
+            trim: v.trim,
+            color: v.color,
+            bodyType: v.bodyType,
+            drivetrain: v.drivetrain,
+            fuelType: v.fuelType,
+            condition: v.condition,
+            mileage: v.mileage,
+            price: v.price ?? null,
+            status: v.status,
+            stock: v.stock ?? null,
+          })),
+          note: 'Prices are listed prices before taxes and fees unless the store states otherwise. Availability must be confirmed by the store.',
+        });
+      },
+    };
   }
 
   /** Compact verified weekly hours for the conversation model ("sales: Mon 9:00–20:00, …"). */
@@ -1166,11 +1325,18 @@ export class ChatOrchestrator {
       await this.store.save(t.s);
       return this.staffHandlingResponse(t.s);
     }
+    if (t.vehicles?.length && (await this.salesDeskOn(t)))
+      t.vehicles = await this.enrichVehicles(t);
     await this.store.save(t.s);
     const evidence = publicEvidence(t.evidence);
+    const inventoryAsOf = t.evidence
+      .filter((e) => e.field === 'inventory_availability' && e.sourceUpdatedAt)
+      .map((e) => e.sourceUpdatedAt!)
+      .sort()
+      .pop();
     const provenance: ChatProvenance = {
       sources: [...t.sources],
-      inventoryAsOf: null,
+      inventoryAsOf: inventoryAsOf ?? null,
       verifiedFactsOnly: false,
       languageModel: 'conversation',
       model,
@@ -1180,6 +1346,7 @@ export class ChatOrchestrator {
       type: 'reply',
       lane: 'conversation',
       model,
+      vins: t.vehicles?.map((v) => v.vin),
       intents: t.u.intents.map((i) => i.intent),
       language: t.lang,
     });
@@ -1188,6 +1355,7 @@ export class ChatOrchestrator {
       reply,
       segments: [reply],
       type: t.type,
+      vehicles: t.vehicles,
       cards: [],
       quickReplies: [],
       journey: this.journeySummary(t),

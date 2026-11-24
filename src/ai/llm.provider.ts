@@ -28,12 +28,12 @@ export type LlmGenerateParams = {
   signal?: AbortSignal;
 };
 
-/** A pure, side-effect-free function the model can call (calculator, payment math). */
+/** A read-only server function the model can call (calculator, payment math, inventory read). */
 export type LlmLocalTool = {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  run: (input: Record<string, unknown>) => string;
+  run: (input: Record<string, unknown>) => string | Promise<string>;
 };
 
 export type LlmGenerateResult = {

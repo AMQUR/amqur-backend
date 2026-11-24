@@ -108,31 +108,35 @@ export class AnthropicLlmProvider implements LlmProvider {
         if (round === MAX_TOOL_ROUNDS) break;
         // Echo the assistant turn unchanged (thinking blocks included), then answer every call.
         messages.push({ role: 'assistant', content: msg.content });
-        const results: Anthropic.ToolResultBlockParam[] = calls.map((c) => {
-          const tool = params.localTools?.find((t) => t.name === c.name);
-          toolsUsed.push(c.name);
-          if (!tool)
-            return {
-              type: 'tool_result',
-              tool_use_id: c.id,
-              content: 'Unknown tool.',
-              is_error: true,
-            };
-          try {
-            return {
-              type: 'tool_result',
-              tool_use_id: c.id,
-              content: tool.run((c.input ?? {}) as Record<string, unknown>),
-            };
-          } catch (e: unknown) {
-            return {
-              type: 'tool_result',
-              tool_use_id: c.id,
-              content: `Error: ${e instanceof Error ? e.message.slice(0, 200) : 'invalid input'}`,
-              is_error: true,
-            };
-          }
-        });
+        const results: Anthropic.ToolResultBlockParam[] = await Promise.all(
+          calls.map(async (c): Promise<Anthropic.ToolResultBlockParam> => {
+            const tool = params.localTools?.find((t) => t.name === c.name);
+            toolsUsed.push(c.name);
+            if (!tool)
+              return {
+                type: 'tool_result',
+                tool_use_id: c.id,
+                content: 'Unknown tool.',
+                is_error: true,
+              };
+            try {
+              return {
+                type: 'tool_result',
+                tool_use_id: c.id,
+                content: await tool.run(
+                  (c.input ?? {}) as Record<string, unknown>,
+                ),
+              };
+            } catch (e: unknown) {
+              return {
+                type: 'tool_result',
+                tool_use_id: c.id,
+                content: `Error: ${e instanceof Error ? e.message.slice(0, 200) : 'invalid input'}`,
+                is_error: true,
+              };
+            }
+          }),
+        );
         messages.push({ role: 'user', content: results });
         // Text spoken before a tool call is followed by more text: keep a paragraph break.
         if (roundText.trim()) {
