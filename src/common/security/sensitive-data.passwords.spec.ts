@@ -28,6 +28,14 @@ describe('passwords and logins are redacted before a message is stored', () => {
       'zebra-tail',
     ],
     ['password is "never closed quote ends-here', 'ends-here'],
+    ['username: samdemo / password: Hunter2-demo', 'Hunter2-demo'],
+    ['login: samdemo | pw: Hunter2-demo', 'Hunter2-demo'],
+    ['my login is samdemo / password is Hunter2-demo', 'Hunter2-demo'],
+    [
+      'login at https://samdemo:Hunter2-demo@portal.example.com/owners',
+      'Hunter2-demo',
+    ],
+    ['ftp://samdemo:Hunter2-demo@files.example.com', 'Hunter2-demo'],
   ])('%s', (text, secret) => {
     const out = redactCreditSensitive(text);
     expect(out).not.toContain(secret);
@@ -62,6 +70,8 @@ describe('passwords and logins are redacted before a message is stored', () => {
       'login a',
       'user: abc ',
       'username x.y ',
+      'http://a:',
+      'https://u:p',
     ]) {
       const text = unit.repeat(Math.ceil(20_000 / unit.length));
       const started = Date.now();

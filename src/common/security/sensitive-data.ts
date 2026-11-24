@@ -38,6 +38,9 @@ const LOGIN_LABELLED =
 /** "my login is alex:Hunter2", "user alex@example.com:Hunter2": a tight id:secret near a login word. */
 const LOGIN_TIGHT =
   /(\b(?:user(?:name)?|credentials?|log[- ]?in|sign[- ]?in)\b[^\n:]{0,40}?\s[\w.@+-]{3,64}:)(?!\/\/)(\S{4,80})/gi;
+/** "https://sam:Hunter2@portal.example.com": credentials embedded in a URL. */
+const URL_USERINFO =
+  /(\b[a-z][a-z0-9+.-]{1,15}:\/\/)[^\s/@:]{1,64}:[^\s/@]{1,80}@/gi;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
@@ -82,12 +85,21 @@ export function detectCreditSensitive(text: string): SensitiveKind[] {
 
 /** Replace credit-sensitive values (keeps the rest of the message usable). */
 export function redactCreditSensitive(text: string): string {
+  // Order matters: URL userinfo, then labelled passwords, then login pairs. A login pattern
+  // that ran first could consume the word "password" as its secret and leave the value behind.
+  const pair = (m: string, head: string, secret: string) =>
+    /^(?:(?:pass(?:word|code|phrase)?|passw0rd|pwd|pw|pin|contrase(?:ñ|n)a|clave)[:=]?$|\[REDACTED)/i.test(
+      secret,
+    )
+      ? m
+      : `${head}[REDACTED]`;
   let out = text
-    .replace(LOGIN_SLASH, (_m, head: string) => `${head}[REDACTED]`)
-    .replace(LOGIN_COLON, (_m, head: string) => `${head}[REDACTED]`)
-    .replace(LOGIN_LABELLED, (_m, head: string) => `${head}[REDACTED]`)
-    .replace(LOGIN_TIGHT, (_m, head: string) => `${head}[REDACTED]`);
-  out = out.replace(PASSWORD_CTX, (_m, label: string) => `${label} [REDACTED]`);
+    .replace(URL_USERINFO, (_m, scheme: string) => `${scheme}[REDACTED]@`)
+    .replace(PASSWORD_CTX, (_m, label: string) => `${label} [REDACTED]`)
+    .replace(LOGIN_SLASH, pair)
+    .replace(LOGIN_COLON, pair)
+    .replace(LOGIN_LABELLED, pair)
+    .replace(LOGIN_TIGHT, pair);
   out = out.replace(ROUTING_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(ACCOUNT_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(CARD, (m) => {
