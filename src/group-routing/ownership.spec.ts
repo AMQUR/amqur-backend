@@ -101,6 +101,17 @@ describe('resolveShownReference (on the mixed-rooftop list)', () => {
     });
     expect(ref('the sixth one')).toEqual({ kind: 'none' });
     expect(ordinalIndex('no ordinal here', 3)).toBeNull();
+    // an ordinal on a non-vehicle noun is conversation, not a pick from the list
+    for (const m of [
+      'Wait, what was my first question again?',
+      'what was the first real question I asked you',
+      'the last time I came in was March',
+      'I want a second opinion',
+      '¿cuál fue mi primera pregunta?',
+    ])
+      expect(ordinalIndex(m, 3)).toBeNull();
+    expect(ordinalIndex('tell me about the first one', 3)).toBe(0);
+    expect(ordinalIndex('the last truck please', 3)).toBe(2);
   });
   it('resolves by side, colour, model or trim only when exactly one fits', () => {
     expect(ref('the north one')).toMatchObject({

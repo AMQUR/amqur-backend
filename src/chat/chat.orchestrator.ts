@@ -61,6 +61,7 @@ import {
 } from './understanding/model-interpretation';
 import { ClaudeConversationService } from './claude/claude-conversation.service';
 import { OpenConversationService } from './conversation/open-conversation.service';
+import { isRecallQuestion } from './conversation/recall';
 import type { LlmLocalTool } from '../ai/llm.provider';
 import {
   detectClaimTypes,
@@ -1082,8 +1083,12 @@ export class ChatOrchestrator {
         i === 'PROVIDE_CONTACT',
     );
     const inventoryTool = await this.inventorySearchTool(t);
+    // "What am I trading in?", "what's my budget now?": only the transcript can answer, so a
+    // keyword-matched tool (or a question a tool is waiting on) does not take the turn.
+    const recall = !toolOnly && isRecallQuestion(t.message);
+    if (recall) this.metrics.increment('chat.open_conversation.recall');
     let lane: 'conversation' | 'dealership';
-    if (opts.force || (allConversational && !pending && !toolOnly)) {
+    if (opts.force || recall || (allConversational && !pending && !toolOnly)) {
       lane = 'conversation';
     } else {
       // The rules matched a dealership tool (or a tool question is pending): ask the router
@@ -6784,15 +6789,14 @@ export class ChatOrchestrator {
         `selected vehicle: ${st.selectedLabel}${st.selectedStock ? ` (stock ${st.selectedStock})` : ''}${st.selectedStatus ? `, status ${st.selectedStatus}` : ''}`,
       );
     const c = st.criteria;
-    const crit = [
-      c.model,
-      c.bodyType,
-      c.color,
-      c.maxPrice ? `under $${c.maxPrice.toLocaleString('en-US')}` : null,
-    ]
-      .filter(Boolean)
-      .join(', ');
-    if (crit) m.push(`shopping for: ${crit}`);
+    const crit = [c.model, c.bodyType, c.color].filter(Boolean).join(', ');
+    if (crit) m.push(`filters from the last inventory search: ${crit}`);
+    // A search filter, not the customer's budget: "anything under $20,000?" does not replace
+    // "I can spend $64,000", and only the transcript holds later changes to either.
+    if (c.maxPrice)
+      m.push(
+        `price ceiling used in the last inventory search: $${c.maxPrice.toLocaleString('en-US')} (a search filter only; the customer's own stated budget, wants and any later changes are in the transcript and take precedence)`,
+      );
     if (st.payment.maxMonthly)
       m.push(`monthly budget: $${st.payment.maxMonthly}`);
     if (
@@ -6829,7 +6833,7 @@ export class ChatOrchestrator {
     if (st.parts?.need) m.push(`parts: ${st.parts.need}`);
     if (st.trade?.model)
       m.push(
-        `trade-in: ${[st.trade.year, st.trade.make, st.trade.model].filter(Boolean).join(' ')}`,
+        `trade-in: ${[st.trade.year, st.trade.make, st.trade.model].filter(Boolean).join(' ')}${st.trade.mileage ? `, ${st.trade.mileage.toLocaleString('en-US')} miles` : ''}`,
       );
     if (st.finance?.creditLinkOffered)
       m.push(

@@ -1,3 +1,4 @@
+import { isRecallQuestion } from '../chat/conversation/recall';
 import { CapabilityService } from '../capability/capability.service';
 import { OpenConversationService } from '../chat/conversation/open-conversation.service';
 import { Injectable, Logger } from '@nestjs/common';
@@ -265,15 +266,18 @@ export class GroupRoutingService {
         const recent = await this.store
           .recentMessages((owner ?? group).conversationId, 6)
           .catch(() => [] as Array<{ role: string; content: string }>);
-        const lane = await this.conversation.classifyLane({
-          message,
-          recent,
-          pending: null,
-          ruleIntents,
-          tenantId: input.tenantId,
-          inventoryTool: false,
-          groupSite: !bound,
-        });
+        // A question about what the customer said earlier needs no verdict and no store.
+        const lane = isRecallQuestion(message)
+          ? 'conversation'
+          : await this.conversation.classifyLane({
+              message,
+              recent,
+              pending: null,
+              ruleIntents,
+              tenantId: input.tenantId,
+              inventoryTool: false,
+              groupSite: !bound,
+            });
         if (lane === 'conversation') {
           this.metrics.increment('group_routing.conversation_lane');
           return bound ? this.delegate(c, bound) : this.runGroup(c);

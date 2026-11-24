@@ -45,8 +45,14 @@ export function resolveOwner(
   return { kind: 'owner', member: members[0] };
 }
 
-const ORDINAL_RE =
-  /\b(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th|last|primer[oa]?|segund[oa]|tercer[oa]?|cuart[oa]|quint[oa]|sext[oa]|[uú]ltim[oa])\b|(?:#|\bnumber |\boption |\bn[uú]mero |\bopci[oó]n )([1-6])\b/i;
+// An ordinal followed by a noun that is not a vehicle ("my first question", "last time",
+// "second opinion") is not a pick from the list.
+const NOT_A_LIST_PICK =
+  '(?!\\s+(?:real\\s+|actual\\s+|ever\\s+)?(?:questions?|things?|messages?|times?|names?|steps?|words?|topics?|points?|parts?|opinions?|thoughts?|payments?|visits?|appointments?|owners?|weeks?|months?|years?|nights?|days?|of all|and foremost|pregunta|cosa|mensaje|vez|nombre|paso|semana|mes|año))';
+const ORDINAL_RE = new RegExp(
+  `\\b(first|1st|second|2nd|third|3rd|fourth|4th|fifth|5th|sixth|6th|last|primer[oa]?|segund[oa]|tercer[oa]?|cuart[oa]|quint[oa]|sext[oa]|[uú]ltim[oa])\\b${NOT_A_LIST_PICK}|(?:#|\\bnumber |\\boption |\\bn[uú]mero |\\bopci[oó]n )([1-6])\\b`,
+  'i',
+);
 
 export function ordinalIndex(message: string, length: number): number | null {
   const m = ORDINAL_RE.exec(message);
