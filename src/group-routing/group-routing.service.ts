@@ -222,7 +222,8 @@ export class GroupRoutingService {
       !gr.pending &&
       !(owner && (owner.state.pending ?? 'none') !== 'none') &&
       !u.entities.vin &&
-      !u.entities.stock &&
+      // "in stock today" is not a stock number; a real one carries a digit
+      !(u.entities.stock && /\d/.test(u.entities.stock)) &&
       !u.entities.contact?.phone &&
       !u.entities.contact?.email &&
       this.conversation.isEnabled() &&
