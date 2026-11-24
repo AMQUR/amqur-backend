@@ -21,10 +21,115 @@ describe('OpenAiLlmProvider', () => {
   afterEach(() => {
     global.fetch = prev;
   });
-  const make = () =>
+  const make = (extra: Record<string, string> = { OPENAI_TOOLS_API: 'chat' }) =>
     new OpenAiLlmProvider(
-      cfg({ OPENAI_API_KEY: 'k', OPENAI_MODEL: 'default-model' }) as never,
+      cfg({
+        OPENAI_API_KEY: 'k',
+        OPENAI_MODEL: 'default-model',
+        ...extra,
+      }) as never,
     );
+
+  it('uses the Responses endpoint for tool calls on api.openai.com: stream, call, result, answer', async () => {
+    const seen: Array<{ url: string; body: Record<string, unknown> }> = [];
+    let n = 0;
+    global.fetch = (async (url: string, init: RequestInit) => {
+      seen.push({ url, body: JSON.parse(String(init.body)) });
+      n += 1;
+      const call = {
+        type: 'function_call',
+        id: 'fc_1',
+        call_id: 'call_9',
+        name: 'calculate',
+        arguments: '{"expression":"17% of 42500"}',
+      };
+      return n === 1
+        ? sse([
+            { type: 'response.output_text.delta', delta: 'Working on it. ' },
+            {
+              type: 'response.completed',
+              response: {
+                status: 'completed',
+                output: [call],
+                usage: { input_tokens: 50, output_tokens: 9 },
+              },
+            },
+          ])
+        : sse([
+            { type: 'response.output_text.delta', delta: '17% of $42,500 ' },
+            { type: 'response.output_text.delta', delta: 'is $7,225.' },
+            {
+              type: 'response.completed',
+              response: {
+                status: 'completed',
+                output: [
+                  {
+                    type: 'message',
+                    content: [
+                      {
+                        type: 'output_text',
+                        text: '17% of $42,500 is $7,225.',
+                      },
+                    ],
+                  },
+                ],
+                usage: { input_tokens: 80, output_tokens: 12 },
+              },
+            },
+          ]);
+    }) as never;
+    const events: Array<[string, boolean | undefined]> = [];
+    const run = jest.fn(async () => '{"result":"7225"}');
+    const out = await make({}).generate({
+      system: 'sys',
+      messages: [
+        { role: 'user', content: 'hi' },
+        { role: 'assistant', content: 'hello' },
+        { role: 'user', content: '17% of $42,500?' },
+      ],
+      localTools: [
+        {
+          name: 'calculate',
+          description: 'd',
+          inputSchema: { type: 'object' },
+          run,
+        },
+      ],
+      onTextDelta: (d, reset) => events.push([d, reset]),
+    });
+    expect(seen[0].url).toBe('https://api.openai.com/v1/responses');
+    expect(seen[0].body).toMatchObject({
+      instructions: 'sys',
+      stream: true,
+      store: false,
+      tools: [{ type: 'function', name: 'calculate' }],
+    });
+    expect(run).toHaveBeenCalledWith({ expression: '17% of 42500' });
+    const second = seen[1].body.input as Array<Record<string, unknown>>;
+    expect(second.at(-2)).toMatchObject({
+      type: 'function_call',
+      call_id: 'call_9',
+    });
+    expect(second.at(-1)).toEqual({
+      type: 'function_call_output',
+      call_id: 'call_9',
+      output: '{"result":"7225"}',
+    });
+    expect(out).toMatchObject({
+      text: '17% of $42,500 is $7,225.',
+      toolsUsed: ['calculate'],
+      inputTokens: 130,
+      outputTokens: 21,
+    });
+    // narration before the tool call was retracted, then the real answer streamed
+    expect(events).toContainEqual(['', true]);
+    expect(
+      events
+        .filter((e) => !e[1])
+        .map((e) => e[0])
+        .join(''),
+    ).toBe('Working on it. 17% of $42,500 is $7,225.');
+  });
 
   it('streams text deltas and reports usage', async () => {
     const bodies: Array<Record<string, unknown>> = [];

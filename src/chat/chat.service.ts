@@ -66,6 +66,8 @@ export class ChatService {
               linkedConversationIds: (
                 turn as { linkedConversationIds?: string[] }
               ).linkedConversationIds,
+              linkedTenantIds: (turn as { linkedTenantIds?: string[] })
+                .linkedTenantIds,
               tenantId: turn.tenantId,
               locationId: turn.locationId ?? null,
               userId: turn.userId,

@@ -417,16 +417,25 @@ export class JourneyStore {
   }
 
   /**
-   * One visitor's transcript across the conversations the group router bound together (the
-   * group-site conversation and the rooftop conversation it handed off to), oldest first.
-   * The ids come from server-side routing state, never from the request. A turn the router
-   * recorded in both conversations appears once.
+   * One visitor's transcript across the conversations the group router linked (this rooftop
+   * turn's own conversation plus the group-site conversation that handed off to it), oldest
+   * first. Ids and the tenant allow-list come from server-side routing state, never from the
+   * request. A turn the router recorded in both conversations appears once.
    */
-  async recentMessagesAcross(conversationIds: string[], take = 12) {
+  async recentMessagesAcross(
+    conversationIds: string[],
+    allowedTenantIds: string[],
+    take = 12,
+  ) {
     const ids = [...new Set(conversationIds.filter(Boolean))];
-    if (!ids.length) return [];
+    const tenants = [...new Set(allowedTenantIds.filter(Boolean))];
+    if (!ids.length || !tenants.length) return [];
     const rows = await this.prisma.message.findMany({
-      where: { conversationId: { in: ids } },
+      // Fail closed: a conversation outside the allowed tenants contributes nothing.
+      where: {
+        conversationId: { in: ids },
+        conversation: { tenantId: { in: tenants } },
+      },
       orderBy: { createdAt: 'desc' },
       take,
       select: { role: true, content: true, createdAt: true },

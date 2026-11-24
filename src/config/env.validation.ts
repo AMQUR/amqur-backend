@@ -42,6 +42,8 @@ export const envValidationSchema = Joi.object({
   /** OpenAI model per task tier (default: OPENAI_MODEL for both). */
   OPENAI_CONVERSATION_MODEL: Joi.string().optional().allow(''),
   OPENAI_ROUTER_MODEL: Joi.string().optional().allow(''),
+  /** Which OpenAI endpoint carries tool calls: 'responses' (api.openai.com default) or 'chat'. */
+  OPENAI_TOOLS_API: Joi.string().valid('responses', 'chat').optional(),
   /** Kill switch for the conversation lane ('false' restores tool-lane-only behaviour). */
   OPEN_CONVERSATION_ENABLED: Joi.string().valid('true', 'false').optional(),
 

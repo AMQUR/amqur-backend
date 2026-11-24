@@ -473,6 +473,7 @@ type Turn = {
   onStatus?: (e: ChatStatusEvent) => void;
   /** group-routing: the visitor's linked conversations, read together as one transcript. */
   linkedConversationIds?: string[];
+  linkedTenantIds?: string[];
   /** Live reply text for the streaming endpoint (conversation lane only). */
   onTextDelta?: (text: string, reset?: boolean) => void;
   signal?: AbortSignal;
@@ -663,6 +664,7 @@ export class ChatOrchestrator {
     signal?: AbortSignal;
     /** Set only by the group-site router (never from the request body). */
     linkedConversationIds?: string[];
+    linkedTenantIds?: string[];
     pinnedVin?: string;
     resumeSearch?: boolean;
   }): Promise<ChatResponse> {
@@ -837,6 +839,7 @@ export class ChatOrchestrator {
       onTextDelta: input.onTextDelta,
       signal: input.signal,
       linkedConversationIds: input.linkedConversationIds,
+      linkedTenantIds: input.linkedTenantIds,
       pinnedVin: input.pinnedVin,
       resumeSearch: input.resumeSearch,
     };
@@ -1110,6 +1113,7 @@ export class ChatOrchestrator {
       (t.linkedConversationIds?.length
         ? this.store.recentMessagesAcross(
             [t.s.conversationId, ...t.linkedConversationIds],
+            [t.tenantId, ...(t.linkedTenantIds ?? [])],
             240,
           )
         : this.store.recentMessages(t.s.conversationId, 240)

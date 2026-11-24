@@ -76,8 +76,15 @@ export type GroupChatInput = {
 type EngineInput = Omit<GroupChatInput, 'rooftopRef'> & {
   pinnedVin?: string;
   resumeSearch?: boolean;
-  /** The visitor's group-site and bound-rooftop conversations: one transcript for memory. */
+  /**
+   * The visitor's group-site conversation, readable by the rooftop turn it handed off to, so
+   * what was said before a store was chosen is not lost. One direction only: a rooftop's
+   * conversation is never linked into another tenant's turn (not the group site's, and not
+   * another rooftop's after a switch).
+   */
   linkedConversationIds?: string[];
+  /** Tenants those linked conversations may belong to (checked again at read time). */
+  linkedTenantIds?: string[];
 };
 type Engine = (input: EngineInput) => Promise<ChatResponse>;
 
@@ -768,10 +775,6 @@ export class GroupRoutingService {
     const res = await this.inventory.runScoped(scope, () =>
       c.engine({
         ...plain,
-        linkedConversationIds: [
-          c.group.conversationId,
-          ...(c.owner ? [c.owner.conversationId] : []),
-        ],
         language: plain.language ?? c.lang,
         ...(opts.resume ? { resumeSearch: true } : {}),
       }),
@@ -969,10 +972,8 @@ export class GroupRoutingService {
     void _r;
     const res = await c.engine({
       ...plain,
-      linkedConversationIds: [
-        c.group.conversationId,
-        ...(c.owner ? [c.owner.conversationId] : []),
-      ],
+      linkedConversationIds: [c.group.conversationId],
+      linkedTenantIds: [c.grant.groupSiteTenantId],
       message: opts.message ?? plain.message,
       action: opts.action ?? plain.action,
       vin: opts.vin ?? plain.vin,
