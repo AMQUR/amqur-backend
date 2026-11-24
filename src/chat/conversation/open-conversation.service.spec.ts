@@ -60,6 +60,11 @@ function make(opts: {
         timezone: 'America/Chicago',
       })),
     },
+    knowledgeChunk: {
+      findMany: jest.fn(async () => [
+        { content: 'Service: 555-0111. Parts: 555-0122.' },
+      ]),
+    },
     dealerGroup: {
       findUnique: jest.fn(async () => ({
         id: 'g1',

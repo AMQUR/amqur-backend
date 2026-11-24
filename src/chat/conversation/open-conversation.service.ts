@@ -27,6 +27,11 @@ export type StoreIdentity = {
   timezone: string;
   /** Sibling rooftops in the same dealer group (public identity only). */
   siblings: Array<{ name: string; address: string | null }>;
+  /**
+   * Phone numbers and emails the store itself publishes (its location record and its published,
+   * customer-visible documents). These survive redaction in the assistant's own earlier replies.
+   */
+  contacts: string[];
 };
 
 export type OpenConversationInput = {
@@ -354,7 +359,25 @@ export class OpenConversationService {
           address: r.locations[0]?.address ?? null,
         }));
     }
+    // Every published, customer-visible document of this tenant, not only the ones retrieved
+    // for the current question: a number the assistant gave three turns ago must still read
+    // as that number now.
+    const published = await this.prisma.knowledgeChunk
+      .findMany({
+        where: {
+          tenantId,
+          document: { status: 'PUBLISHED', visibility: 'CUSTOMER' },
+          OR: [{ locationId: null }, ...(locationId ? [{ locationId }] : [])],
+        },
+        select: { content: true },
+        take: 60,
+      })
+      .catch(() => [] as Array<{ content: string }>);
+    const contacts = storeContactsFrom(
+      [loc?.phone ?? '', ...published.map((c) => c.content)].join('\n'),
+    );
     const value = {
+      contacts,
       storeName: loc?.name ?? tenant?.name ?? null,
       groupName,
       address: loc?.address ?? null,
@@ -628,9 +651,12 @@ export class OpenConversationService {
     // the system channel: the router redacts phone numbers and emails from MESSAGES before
     // egress, which is right for what customers type and wrong for the store's own directory.
     const system = `${OpenConversationService.systemPrompt(id, hasInventoryTool)}\n\n${this.contextBlock(id, input)}`;
-    const storeContacts = storeContactsFrom(
-      [id.phone ?? '', ...input.knowledge.map((k) => k.content)].join('\n'),
-    );
+    const storeContacts = [
+      ...new Set([
+        ...id.contacts,
+        ...storeContactsFrom(input.knowledge.map((k) => k.content).join('\n')),
+      ]),
+    ];
     const messages = OpenConversationService.buildMessages(
       input.transcript,
       '',
