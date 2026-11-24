@@ -1650,6 +1650,9 @@ export class ChatOrchestrator {
       type: 'reply',
       lane: 'conversation',
       model,
+      cards: t.cards
+        .filter((c) => c.kind === 'dealership')
+        .map((c) => ({ kind: c.kind, id: c.storeId, focus: c.focus })),
       vins: t.vehicles?.map((v) => v.vin),
       intents: t.u.intents.map((i) => i.intent),
       language: t.lang,
@@ -1660,7 +1663,9 @@ export class ChatOrchestrator {
       segments: [reply],
       type: t.type,
       vehicles: t.vehicles,
-      cards: [],
+      // The conversation lane performs no actions, so the only cards it can carry are the
+      // verified store-link cards its own tool produced this turn.
+      cards: t.cards.filter((c) => c.kind === 'dealership'),
       quickReplies: [],
       journey: this.journeySummary(t),
       provenance,
