@@ -7172,7 +7172,7 @@ export class ChatOrchestrator {
         .filter(Boolean)
         .join(', ');
       m.push(
-        `VEHICLE PAGE THE CUSTOMER HAS OPEN on this store's website right now: ${name || 'a vehicle listing'} (${facts}). These details are the published listing as reported by that page. "This vehicle", "this one", "it" refer to this listing. It is a listing, not a live availability check: do not say it is in stock, on the lot, available or sold, and do not state its price, payment or incentives (the page shows the store's current price; you do not have it). You may answer about the model and trim from general knowledge, clearly as general information, and use the listing details above as given.`,
+        `VEHICLE PAGE THE CUSTOMER HAS OPEN on this store's website right now: ${name || 'a vehicle listing'} (${facts}). These details are the published listing as reported by that page. "This vehicle", "this one", "it" refer to this listing. It is a listing, not a live availability check: do not say it is in stock, on the lot, available or sold, and do not state its price, payment or incentives (the page shows the store's current price; you do not have it). You may answer about the model and trim from general knowledge, clearly as general information, and use the listing details above as given. Describe the listing; do not question, second-guess or speculate about how the store labelled it (for example why a low-mileage vehicle is listed as used).`,
       );
     }
     if (st.selectedLabel)
