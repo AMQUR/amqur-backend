@@ -1323,10 +1323,9 @@ export class ChatOrchestrator {
           t.vehicles = await this.withPaymentEstimates(t, shown);
           t.type = 'vehicle_carousel';
           await this.attachVehicleEvidence(t, shown);
-        } else {
-          t.vehicles = undefined;
-          t.type = undefined;
         }
+        // An empty follow-up search does not take away cards from an earlier search in the
+        // same reply: the model may try a narrower filter after finding matches.
         const simulated = found.some((v) => v.simulated);
         return JSON.stringify({
           dataset: simulated

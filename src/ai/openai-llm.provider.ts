@@ -279,6 +279,7 @@ export class OpenAiLlmProvider implements LlmProvider {
         tools,
         max_output_tokens: Math.max((params.maxTokens ?? 1024) * 4, 2000),
         store: false,
+        ...(params.effort ? { reasoning: { effort: params.effort } } : {}),
         // The last allowed round must produce the answer, not another tool call.
         tool_choice: round === MAX_TOOL_ROUNDS ? 'none' : 'auto',
       };
