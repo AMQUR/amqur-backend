@@ -1085,13 +1085,25 @@ export class ChatOrchestrator {
       hours && hours.verified && !hours.synthetic
         ? this.hoursLine(hours)
         : null;
+    const memory = this.memorySummary(t);
+    const onScreen = await this.loadVisible(t).catch(() => []);
+    if (onScreen.length)
+      memory.push(
+        `vehicles on screen from the last search, in order: ${onScreen
+          .slice(0, 6)
+          .map(
+            (v, i) =>
+              `${i + 1}) ${vehicleLabel(v, true)}${v.price ? `, $${v.price.toLocaleString('en-US')}` : ''}${v.stock ? `, stock ${v.stock}` : ''}${v.simulated ? ' (demonstration data)' : ''}`,
+          )
+          .join('; ')}`,
+      );
     const res = await this.openConversation.answer({
       tenantId: t.tenantId,
       locationId: t.locationId,
       conversationId: t.s.conversationId,
       transcript,
       assistantName,
-      memory: this.memorySummary(t),
+      memory,
       knowledge,
       hoursSummary,
       extraTools: inventoryTool ? [inventoryTool] : [],
@@ -1201,6 +1213,12 @@ export class ChatOrchestrator {
               ? (sort as 'price_asc' | 'price_desc' | 'miles_asc' | 'newest')
               : undefined,
         };
+        this.emitStatus(
+          t,
+          'checking',
+          'Checking inventory',
+          'Revisando inventario',
+        );
         const found = await this.inventory.searchVehicles({
           tenantId: t.tenantId,
           locationId: t.locationId,
