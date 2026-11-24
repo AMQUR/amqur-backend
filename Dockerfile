@@ -26,6 +26,8 @@ COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/config/rooftops ./config/rooftops
 # Isolated staging synthetic seed (fail-closed; never used in production tier).
 COPY --from=build /app/scripts/seed-isolated-staging-five-rooftops.ts ./scripts/
+# Identity-only bootstrap of the five real Dial rooftops (fail-closed; see scripts/lib/dial-bootstrap-gate.ts).
+COPY --from=build /app/scripts/bootstrap-dial-rooftops.ts ./scripts/
 COPY --from=build /app/scripts/diagnose-vauto-sftp-readonly.mjs ./scripts/
 COPY --from=build /app/scripts/lib ./scripts/lib
 COPY --from=build /app/src/config ./src/config
