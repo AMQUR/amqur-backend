@@ -132,6 +132,7 @@ describe('OpenConversationService', () => {
     expect(last).not.toContain('Group site');
     expect(last).toContain('Hours: not verified');
     expect(last).toContain('shopping for: SUV, black, under $45,000');
+    expect(p.redactRoles).toBe('user');
     expect(p.localTools?.map((t) => t.name)).toEqual([
       'calculate',
       'loan_payment',

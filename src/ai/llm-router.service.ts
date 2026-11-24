@@ -336,7 +336,10 @@ export class LlmRouterService {
       system: params.system,
       messages: params.messages.map((m) => ({
         ...m,
-        content: redactForLlm(m.content),
+        content:
+          params.redactRoles === 'user' && m.role !== 'user'
+            ? m.content
+            : redactForLlm(m.content),
       })),
     };
     // Streaming conversation replies may legitimately run long; everything else stays ≤ 30 s.

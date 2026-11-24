@@ -24,6 +24,12 @@ export type LlmGenerateParams = {
   onTextDelta?: (text: string, reset?: boolean) => void;
   /** Deterministic server-side tools the model may call during this one reply. */
   localTools?: LlmLocalTool[];
+  /**
+   * Which message roles get contact-PII redaction before egress. Default 'all'. 'user' keeps
+   * the assistant's own earlier replies intact (they carry the store's published numbers);
+   * what customers typed is still always redacted.
+   */
+  redactRoles?: 'all' | 'user';
   /** Aborts the provider request (client pressed Stop / turn cancelled). */
   signal?: AbortSignal;
 };
