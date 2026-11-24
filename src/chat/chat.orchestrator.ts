@@ -8722,7 +8722,7 @@ export class ChatOrchestrator {
     if (
       !opts.forcedReply &&
       !llmOff &&
-      /[\u0600-\u06FF\u0750-\u077F\u0900-\u097F\u0400-\u04FF\u4E00-\u9FFF\u3040-\u30FF\uAC00-\uD7AF\u0E00-\u0E7F\u0590-\u05FF]/.test(
+      /\p{Script=Arabic}|\p{Script=Devanagari}|\p{Script=Cyrillic}|\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|\p{Script=Thai}|\p{Script=Hebrew}/u.test(
         t.message,
       )
     ) {
