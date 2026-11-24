@@ -196,18 +196,28 @@ export class OpenConversationService {
       `KEYWORD RULES MATCHED: ${input.ruleIntents.join(', ') || 'none'}`,
       `USER MESSAGE:\n${redactCreditSensitive(input.message).slice(0, 800)}`,
     ].join('\n\n');
-    const r = await this.router
-      .route({
-        system,
-        messages: [{ role: 'user', content: user }],
-        model: this.routerModel(),
-        effort: 'low',
-        maxTokens: 400,
-        timeoutMs: 6000,
-        promptVersion: LANE_ROUTER_PROMPT_VERSION,
-        tenantId: input.tenantId,
-      })
-      .catch(() => null);
+    const ask = () =>
+      this.router
+        .route({
+          system,
+          messages: [{ role: 'user', content: user }],
+          model: this.routerModel(),
+          effort: 'low',
+          maxTokens: 400,
+          timeoutMs: 6000,
+          promptVersion: LANE_ROUTER_PROMPT_VERSION,
+          tenantId: input.tenantId,
+        })
+        .catch(() => null);
+    let r = await ask();
+    if (
+      r &&
+      !r.ok &&
+      (r.reason === 'rate_limited' || r.reason === 'provider_error')
+    ) {
+      await new Promise((res) => setTimeout(res, 400));
+      r = await ask();
+    }
     if (!r?.ok) {
       this.metrics.increment('chat.lane_router.unavailable');
       return null;
@@ -636,7 +646,26 @@ export class OpenConversationService {
         signal: input.signal,
       });
 
-    const first = await call([], true).catch(() => null);
+    // Load shedding or a transient provider fault must not turn an intelligent answer into
+    // a canned one: wait briefly and try again, as long as nothing has been shown yet.
+    let first = await call([], true).catch(() => null);
+    for (
+      let attempt = 1;
+      attempt <= 3 &&
+      !first?.ok &&
+      !held &&
+      !blocked &&
+      !input.signal?.aborted &&
+      (!first ||
+        first.reason === 'rate_limited' ||
+        first.reason === 'provider_error' ||
+        first.reason === 'empty_completion');
+      attempt += 1
+    ) {
+      this.metrics.increment('chat.open_conversation.retry');
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+      first = await call([], true).catch(() => null);
+    }
     if (!first?.ok) {
       const reason = first ? first.reason : 'exception';
       this.metrics.increment(`chat.open_conversation.failed.${reason}`);

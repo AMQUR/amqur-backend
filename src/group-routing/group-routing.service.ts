@@ -1,3 +1,4 @@
+import { OpenConversationService } from '../chat/conversation/open-conversation.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
@@ -131,6 +132,7 @@ export class GroupRoutingService {
     private readonly inventory: GroupInventoryService,
     private readonly config: ConfigService,
     private readonly metrics: MetricsService,
+    private readonly conversation: OpenConversationService,
   ) {}
 
   private routingKey(): Buffer {
@@ -204,6 +206,56 @@ export class GroupRoutingService {
 
     if (input.lead || input.appointment)
       return bound ? this.delegate(c, bound) : this.runGroup(c);
+
+    // General conversation on the group site (a question, math, advice, writing) needs no
+    // rooftop. When the keyword rules read it as rooftop work, the lane router gets the last
+    // word before anyone is asked "which store?". Never applies to a button action, a VIN, a
+    // pending store question, an answer a rooftop is waiting on, or a message with contact
+    // details — those keep the rules below.
+    if (
+      message &&
+      !input.action &&
+      !input.vin &&
+      !input.rooftopRef &&
+      !gr.pending &&
+      !(owner && (owner.state.pending ?? 'none') !== 'none') &&
+      !u.entities.vin &&
+      !u.entities.stock &&
+      !u.entities.incident &&
+      !u.entities.contact?.phone &&
+      !u.entities.contact?.email &&
+      this.conversation.isEnabled()
+    ) {
+      const ruleIntents = effectiveIntents(u.intents, undefined);
+      const conversational = new Set([
+        'UNKNOWN',
+        'KNOWLEDGE_QUESTION',
+        'SMALL_TALK',
+        'GREETING',
+        'LANGUAGE_SWITCH',
+      ]);
+      const urgent = new Set(['SAFETY_URGENT', 'COMPLAINT', 'HUMAN_HANDOFF']);
+      if (
+        !ruleIntents.every((i) => conversational.has(i)) &&
+        !ruleIntents.some((i) => urgent.has(i))
+      ) {
+        const recent = await this.store
+          .recentMessages((owner ?? group).conversationId, 6)
+          .catch(() => [] as Array<{ role: string; content: string }>);
+        const lane = await this.conversation.classifyLane({
+          message,
+          recent,
+          pending: null,
+          ruleIntents,
+          tenantId: input.tenantId,
+          inventoryTool: false,
+        });
+        if (lane === 'conversation') {
+          this.metrics.increment('group_routing.conversation_lane');
+          return bound ? this.delegate(c, bound) : this.runGroup(c);
+        }
+      }
+    }
 
     // 1. A rooftop reference the client echoed must verify — otherwise nothing happens.
     let claimed: string | null = null;

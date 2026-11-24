@@ -1007,8 +1007,29 @@ export class ChatOrchestrator {
     const intents = u.intents
       .filter((i) => i.confidence >= 0.6)
       .map((i) => i.intent as string);
-    if (u.entities.incident || u.entities.contact) return null;
-    if (intents.some((i) => ChatOrchestrator.TOOL_ONLY_INTENTS.has(i)))
+    if (u.entities.incident) return null;
+    // A phone number or email belongs to the tool lane (consent, lead rules). A bare
+    // introduction ("Hi, I'm Alex") is conversation: remember the name, ask for nothing.
+    const contact = u.entities.contact;
+    const awaitingContact =
+      st.pending === 'contact_name' || st.pending === 'contact_method';
+    if (contact && (contact.phone || contact.email || awaitingContact))
+      return null;
+    if (contact?.firstName && !st.contact.firstName)
+      st.contact = { ...st.contact, firstName: contact.firstName };
+    if (
+      intents.some(
+        (i) =>
+          ChatOrchestrator.TOOL_ONLY_INTENTS.has(i) &&
+          // a name-only introduction is not a contact submission
+          !(
+            i === 'PROVIDE_CONTACT' &&
+            contact &&
+            !contact.phone &&
+            !contact.email
+          ),
+      )
+    )
       return null;
     const pending = st.pending && st.pending !== 'none' ? st.pending : null;
     const affirmOrDecline =
@@ -1019,8 +1040,10 @@ export class ChatOrchestrator {
       intents.length === 1 && intents[0] === 'GREETING' && st.turnCount === 0;
     if (bareGreeting) return null;
 
-    const allConversational = intents.every((i) =>
-      ChatOrchestrator.CONVERSATIONAL_INTENTS.has(i),
+    const allConversational = intents.every(
+      (i) =>
+        ChatOrchestrator.CONVERSATIONAL_INTENTS.has(i) ||
+        i === 'PROVIDE_CONTACT',
     );
     const inventoryTool = await this.inventorySearchTool(t);
     let lane: 'conversation' | 'dealership';
