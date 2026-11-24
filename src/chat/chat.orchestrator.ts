@@ -8710,7 +8710,7 @@ export class ChatOrchestrator {
     // Simulated inventory is never presented unlabeled, whatever the model did with the draft.
     if (
       t.simulatedThisTurn &&
-      !/\b(?:demo|demonstration|simulated|sample data)\b|simulad|demostraci[oó]n/i.test(
+      !/\b(?:demo|demonstration|simulated|sample data)\b|simulad|demostraci(?:o|ó)n/i.test(
         reply,
       )
     ) {
