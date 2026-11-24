@@ -40,7 +40,7 @@ const LOGIN_TIGHT =
   /(\b(?:user(?:name)?|credentials?|log[- ]?in|sign[- ]?in)\b[^\n:]{0,40}?\s[\w.@+-]{3,64}:)(?!\/\/)(\S{4,80})/gi;
 /** "https://sam:Hunter2@portal.example.com": credentials embedded in a URL. */
 const URL_USERINFO =
-  /(\b[a-z][a-z0-9+.-]{1,15}:\/\/)[^\s/@:]{1,64}:[^\s/@]{1,80}@/gi;
+  /(\b[a-z][a-z0-9+.-]{1,15}:\/\/)[^\s/?#]{1,160}@(?=[^\s@/?#]{1,255}(?:[/?#\s]|$))/gi;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;

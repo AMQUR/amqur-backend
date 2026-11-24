@@ -36,6 +36,8 @@ describe('passwords and logins are redacted before a message is stored', () => {
       'Hunter2-demo',
     ],
     ['ftp://samdemo:Hunter2-demo@files.example.com', 'Hunter2-demo'],
+    ['https://samdemo:Hunt@er2-demo@portal.example.com/x', 'er2-demo'],
+    ['https://Hunter2-token@portal.example.com', 'Hunter2-token'],
   ])('%s', (text, secret) => {
     const out = redactCreditSensitive(text);
     expect(out).not.toContain(secret);
@@ -72,6 +74,8 @@ describe('passwords and logins are redacted before a message is stored', () => {
       'username x.y ',
       'http://a:',
       'https://u:p',
+      'http://a@',
+      'x://' + 'a'.repeat(150) + ' ',
     ]) {
       const text = unit.repeat(Math.ceil(20_000 / unit.length));
       const started = Date.now();
