@@ -586,6 +586,18 @@ function dateLabel(iso: string | null | undefined, lang: Lang): string {
  * Every business-changing write (appointment, finance, parts, trade, lead, escalation) is
  * awaited BEFORE the assistant acknowledges it. If it throws, the turn fails honestly.
  */
+/** True when every phone number in the message is one of the directory's own store numbers. */
+function quotesOnlyStoreNumbers(message: string): boolean {
+  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(message)) return false;
+  const numbers = message.match(/\d[\d\s().-]{8,}\d/g) ?? [];
+  return (
+    numbers.length > 0 &&
+    numbers.every((n) =>
+      DEALER_DIRECTORY_PHONE_DIGITS.has(n.replace(/\D/g, '').slice(-10)),
+    )
+  );
+}
+
 @Injectable()
 export class ChatOrchestrator {
   private readonly logger = new Logger(ChatOrchestrator.name);
@@ -711,12 +723,7 @@ export class ChatOrchestrator {
     // A store's own published number quoted back ("is 773-423-3000 your sales line?") is not
     // the customer's contact detail.
     const quotesStoreNumber =
-      typedContact &&
-      DEALER_DIRECTORY_PHONE_DIGITS.size > 0 &&
-      (rawMessage.match(/\d[\d\s().-]{8,}\d/g) ?? []).every((n) =>
-        DEALER_DIRECTORY_PHONE_DIGITS.has(n.replace(/\D/g, '').slice(-10)),
-      ) &&
-      !/[\w.+-]+@[\w-]+\.[\w.-]+/.test(rawMessage);
+      typedContact && quotesOnlyStoreNumbers(rawMessage);
     const customerContact = typedContact && !quotesStoreNumber;
     if (customerContact && noDelivery) redacted = redactForLlm(redacted);
 
@@ -1086,10 +1093,14 @@ export class ChatOrchestrator {
       st.pending === 'contact_name' || st.pending === 'contact_method';
     const sharesLogin =
       /\b(?:pass(?:word|code|w0rd)|pwd|log[- ]?in|username)\b/i.test(t.message);
+    // A store's own published number quoted back is a question about the store, not a
+    // contact submission.
+    const storeNumber = quotesOnlyStoreNumbers(t.message);
     if (
       contact &&
       (contact.phone || contact.email || awaitingContact) &&
-      !sharesLogin
+      !sharesLogin &&
+      !storeNumber
     )
       return null;
     if (contact?.firstName && !st.contact.firstName)
@@ -1106,9 +1117,7 @@ export class ChatOrchestrator {
           // a name-only introduction is not a contact submission
           !(
             i === 'PROVIDE_CONTACT' &&
-            contact &&
-            !contact.phone &&
-            !contact.email
+            ((contact && !contact.phone && !contact.email) || storeNumber)
           ),
       );
     const pending = st.pending && st.pending !== 'none' ? st.pending : null;
