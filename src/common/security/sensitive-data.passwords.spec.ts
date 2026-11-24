@@ -16,6 +16,18 @@ describe('passwords and logins are redacted before a message is stored', () => {
     ["my password's Hunter2now", 'Hunter2now'],
     ['mi contraseña es Hunter2', 'Hunter2'],
     ['password is "my dog Rex 2019"', 'Rex 2019'],
+    ['username: samdemo : Hunter2-demo', 'Hunter2-demo'],
+    ['login = alex.sample | Hunter2-demo', 'Hunter2-demo'],
+    ['my login is alexsample:Hunter2-demo', 'Hunter2-demo'],
+    ['user alex.sample@example.com:Hunter2-demo thanks', 'Hunter2-demo'],
+    ['credentials: samdemo/Hunter2-demo', 'Hunter2-demo'],
+    [
+      'password is "' +
+        'correct horse battery staple '.repeat(4) +
+        'zebra-tail"',
+      'zebra-tail',
+    ],
+    ['password is "never closed quote ends-here', 'ends-here'],
   ])('%s', (text, secret) => {
     const out = redactCreditSensitive(text);
     expect(out).not.toContain(secret);
@@ -32,6 +44,10 @@ describe('passwords and logins are redacted before a message is stored', () => {
     'The ratio is 3:1 on that axle.',
     'my account was charged twice: please check',
     'user alex signed in fine yesterday',
+    'my login time was around 10:30 today',
+    'login help: please call me back',
+    'the login page is https://example.com/owners',
+    'sign in here: it keeps failing',
   ])('leaves ordinary sentences alone: %s', (text) => {
     expect(redactCreditSensitive(text)).toBe(text);
   });
@@ -43,6 +59,9 @@ describe('passwords and logins are redacted before a message is stored', () => {
       'login /',
       'password ',
       'sign in with a',
+      'login a',
+      'user: abc ',
+      'username x.y ',
     ]) {
       const text = unit.repeat(Math.ceil(20_000 / unit.length));
       const started = Date.now();
