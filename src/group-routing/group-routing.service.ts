@@ -220,6 +220,35 @@ export class GroupRoutingService {
     if (input.lead || input.appointment)
       return bound ? this.delegate(c, bound) : this.runGroup(c);
 
+    // No rooftop has a connected lead or booking tool: a request for a person, a callback or
+    // typed contact details cannot be delivered anywhere, so there is no point asking "which
+    // store?" first. The engine answers with the stores' own contact routes and stores no
+    // contact detail. Safety reports and complaints keep the rules below.
+    if (
+      message &&
+      !input.action &&
+      !input.vin &&
+      !gr.pending &&
+      !u.entities.incident &&
+      this.conversation.directoryMode() !== 'off' &&
+      (this.conversation.directoryMode() === 'force' ||
+        grant.members.every((m) => m.locationIds.length === 0)) &&
+      dealerDirectoryFor(grant.groupSlug)
+    ) {
+      const early = effectiveIntents(u.intents, undefined);
+      if (
+        !early.includes('SAFETY_URGENT') &&
+        !early.includes('COMPLAINT') &&
+        (early.includes('HUMAN_HANDOFF') ||
+          early.includes('PROVIDE_CONTACT') ||
+          PHONE_RE.test(message) ||
+          EMAIL_RE.test(message))
+      ) {
+        this.metrics.increment('group_routing.direct_contact');
+        return bound ? this.delegate(c, bound) : this.runGroup(c);
+      }
+    }
+
     // General conversation on the group site (a question, math, advice, writing) needs no
     // rooftop. When the keyword rules read it as rooftop work, the lane router gets the last
     // word before anyone is asked "which store?". Never applies to a button action, a VIN, a
