@@ -178,6 +178,79 @@ describe('OpenConversationService', () => {
     expect(calls[1].messages.at(-1)?.content).toContain('system_check');
   });
 
+  it('never streams a sentence that fails the guard, and retracts what was shown', async () => {
+    const { svc, router } = make({});
+    router.route.mockImplementationOnce((async (p: LlmGenerateParams) => {
+      for (const d of [
+        'Sure thing. ',
+        "I've booked your ",
+        'test drive for Saturday. ',
+        'See you then!',
+      ])
+        p.onTextDelta?.(d);
+      return {
+        ok: true,
+        attempts: 1,
+        result: {
+          text: "Sure thing. I've booked your test drive for Saturday. See you then!",
+          provider: 'anthropic',
+          model: 'm',
+          latencyMs: 1,
+        },
+      };
+    }) as never);
+    router.route.mockImplementationOnce((async () => ({
+      ok: true,
+      attempts: 1,
+      result: {
+        text: 'I can’t book from here.',
+        provider: 'anthropic',
+        model: 'm',
+        latencyMs: 1,
+      },
+    })) as never);
+    const events: Array<[string, boolean | undefined]> = [];
+    const res = await svc.answer({
+      ...base,
+      transcript: [{ role: 'USER', content: 'book it' }],
+      onTextDelta: (d, reset) => events.push([d, reset]),
+    });
+    expect(res).toMatchObject({
+      ok: true,
+      repaired: true,
+      text: 'I can’t book from here.',
+    });
+    expect(events).toEqual([
+      ['Sure thing. ', undefined],
+      ['', true],
+    ]);
+    expect(events.map((e) => e[0]).join('')).not.toMatch(/booked/);
+  });
+
+  it('holds text inside an open code fence and flushes the tail at the end', async () => {
+    const { svc, router } = make({});
+    const full = 'Here:\n```js\nconst a = 1. \nconst b = 2.\n```\nDone';
+    router.route.mockImplementationOnce((async (p: LlmGenerateParams) => {
+      for (const ch of full.match(/[\s\S]{1,7}/g) ?? []) p.onTextDelta?.(ch);
+      return {
+        ok: true,
+        attempts: 1,
+        result: { text: full, provider: 'a', model: 'm', latencyMs: 1 },
+      };
+    }) as never);
+    const out: string[] = [];
+    const res = await svc.answer({
+      ...base,
+      transcript: [{ role: 'USER', content: 'code' }],
+      onTextDelta: (d) => out.push(d),
+    });
+    expect(res.ok).toBe(true);
+    expect(out.join('')).toBe(full);
+    // no chunk ends in the middle of the fenced block
+    for (const c of out.slice(0, -1))
+      expect((c.match(/```/g) ?? []).length % 2).toBe(0);
+  });
+
   it('fails closed when the repair also claims an action, on refusal, and on provider failure', async () => {
     const bad = { text: 'You are approved for financing.' };
     expect(

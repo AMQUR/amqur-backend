@@ -66,22 +66,32 @@ export class OpenAiLlmProvider implements LlmProvider {
         body: JSON.stringify({
           model: this.model,
           messages,
-          max_tokens: params.maxTokens ?? 1024,
-          temperature: 0.3,
+          // Current OpenAI models reject `max_tokens` and fixed sampling; the completion
+          // budget also covers hidden reasoning tokens, so leave headroom above the visible cap.
+          max_completion_tokens: Math.max((params.maxTokens ?? 1024) * 4, 2000),
         }),
         signal: controller.signal,
       });
       if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        this.logger.warn(`OpenAI HTTP ${res.status}: ${body.slice(0, 200)}`);
+        // Status only: an error body can echo request content.
+        this.logger.warn(`OpenAI HTTP ${res.status}`);
         throw new Error(`OpenAI HTTP ${res.status}`);
       }
       const json = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
       const text = json.choices?.[0]?.message?.content?.trim() ?? '';
       if (!text) throw new Error('OpenAI empty completion');
+      // Delivered whole: this fallback does not stream.
+      try {
+        params.onTextDelta?.(text);
+      } catch {
+        // ignore
+      }
       return {
+        inputTokens: json.usage?.prompt_tokens,
+        outputTokens: json.usage?.completion_tokens,
         text,
         provider: this.providerId,
         model: this.model,

@@ -493,6 +493,55 @@ export class OpenConversationService {
     const confirmedInContext = input.memory.some((m) =>
       /\bconfirmed appointment\b/i.test(m),
     );
+    // Streaming gate: text reaches the client one finished sentence at a time, and only after
+    // that sentence passed the reply guard. A rejected sentence stops the stream and retracts
+    // what was shown; the reply is then repaired (unstreamed) or handed to the tool lane.
+    let held = '';
+    let blocked = false;
+    const release = (final: boolean) => {
+      if (blocked || !input.onTextDelta) return;
+      // Never split inside an open code fence; otherwise cut at the last sentence/line end.
+      const fences = (held.match(/```/g) ?? []).length;
+      let cut = held.length;
+      if (!final) {
+        if (fences % 2 === 1) return;
+        const m = /^[\s\S]*(?:[.!?。؟۔]["”')\]]*\s|\n)/.exec(held);
+        if (!m) return;
+        cut = m[0].length;
+      }
+      const chunk = held.slice(0, cut);
+      if (!chunk) return;
+      if (!final && (chunk.match(/```/g) ?? []).length % 2 === 1) return;
+      if (!checkConversationReply(chunk, { confirmedInContext }).ok) {
+        blocked = true;
+        held = '';
+        this.metrics.increment('chat.open_conversation.stream_blocked');
+        try {
+          input.onTextDelta('', true);
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      held = held.slice(cut);
+      try {
+        input.onTextDelta(chunk);
+      } catch {
+        // a listener must never break generation
+      }
+    };
+    const gated = input.onTextDelta
+      ? (delta: string, reset?: boolean) => {
+          if (reset) {
+            held = '';
+            if (!blocked) input.onTextDelta?.('', true);
+            return;
+          }
+          if (blocked || !delta) return;
+          held += delta;
+          release(false);
+        }
+      : undefined;
     const call = (extra: LlmMessage[], stream: boolean) =>
       this.router.route({
         system,
@@ -504,7 +553,7 @@ export class OpenConversationService {
         promptVersion: OPEN_CONVERSATION_PROMPT_VERSION,
         tenantId: input.tenantId,
         localTools: this.tools(),
-        onTextDelta: stream ? input.onTextDelta : undefined,
+        onTextDelta: stream ? gated : undefined,
         signal: input.signal,
       });
 
@@ -519,6 +568,7 @@ export class OpenConversationService {
       this.metrics.increment('chat.open_conversation.refusal');
       return { ok: false, reason: 'refusal' };
     }
+    release(true);
     let text = first.result.text.trim();
     let repaired = false;
     const toolsUsed = [...(first.result.toolsUsed ?? [])];
