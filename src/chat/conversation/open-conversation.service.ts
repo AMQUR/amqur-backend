@@ -61,6 +61,47 @@ export type OpenConversationResult =
 
 const MAX_HISTORY_CHARS = 160_000;
 
+const PHONE_LIKE = /\+?1?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g;
+const EMAIL_LIKE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const digits = (v: string) => v.replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+
+/** Phone numbers and email addresses that appear in server-built, verified store text. */
+export function storeContactsFrom(text: string): string[] {
+  const out = new Set<string>();
+  for (const m of text.match(PHONE_LIKE) ?? []) {
+    const d = digits(m);
+    if (d.length === 10) out.add(d);
+  }
+  for (const m of text.match(EMAIL_LIKE) ?? []) out.add(m.toLowerCase());
+  return [...out];
+}
+
+/**
+ * Full contact redaction for an assistant-written row, except values on the store's own
+ * verified list. Anything else phone- or email-shaped (for example a customer's number that a
+ * tool reply echoed) is masked exactly as it would be in a customer message.
+ */
+export function redactKeepingStoreContacts(
+  text: string,
+  allow: string[],
+): string {
+  if (!allow.length) return redactForLlm(text);
+  const kept: string[] = [];
+  const hold = (v: string) => {
+    kept.push(v);
+    return `⟦KEEP${kept.length - 1}⟧`;
+  };
+  const guarded = text
+    .replace(PHONE_LIKE, (m) => (allow.includes(digits(m)) ? hold(m) : m))
+    .replace(EMAIL_LIKE, (m) =>
+      allow.includes(m.toLowerCase()) ? hold(m) : m,
+    );
+  return redactForLlm(guarded).replace(
+    /⟦KEEP(\d+)⟧/g,
+    (_, i: string) => kept[Number(i)] ?? '',
+  );
+}
+
 /**
  * The general-purpose conversation lane.
  *
@@ -453,6 +494,7 @@ export class OpenConversationService {
   static buildMessages(
     transcript: Array<{ role: string; content: string }>,
     context = '',
+    storeContacts: string[] = [],
   ): LlmMessage[] {
     const rows = transcript
       .filter(
@@ -461,7 +503,13 @@ export class OpenConversationService {
       )
       .map((m) => ({
         role: m.role === 'USER' ? ('user' as const) : ('assistant' as const),
-        content: redactCreditSensitive(m.content),
+        // Customer rows: the router applies full contact redaction at egress. Assistant rows
+        // (model- or tool-written) are redacted here, keeping only the store's own verified
+        // numbers and addresses so the model does not see its earlier answer as "[phone]".
+        content:
+          m.role === 'USER'
+            ? redactCreditSensitive(m.content)
+            : redactKeepingStoreContacts(m.content, storeContacts),
       }));
     let total = 0;
     let start = rows.length;
@@ -507,7 +555,14 @@ export class OpenConversationService {
     // the system channel: the router redacts phone numbers and emails from MESSAGES before
     // egress, which is right for what customers type and wrong for the store's own directory.
     const system = `${OpenConversationService.systemPrompt(id, hasInventoryTool)}\n\n${this.contextBlock(id, input)}`;
-    const messages = OpenConversationService.buildMessages(input.transcript);
+    const storeContacts = storeContactsFrom(
+      [id.phone ?? '', ...input.knowledge.map((k) => k.content)].join('\n'),
+    );
+    const messages = OpenConversationService.buildMessages(
+      input.transcript,
+      '',
+      storeContacts,
+    );
     const lastUser =
       [...input.transcript].reverse().find((m) => m.role === 'USER')?.content ??
       '';
@@ -574,6 +629,8 @@ export class OpenConversationService {
         promptVersion: OPEN_CONVERSATION_PROMPT_VERSION,
         tenantId: input.tenantId,
         localTools: [...this.tools(), ...(input.extraTools ?? [])],
+        // Assistant rows were already redacted above (store allow-list); the router still
+        // redacts every customer row.
         redactRoles: 'user',
         onTextDelta: stream ? gated : undefined,
         signal: input.signal,

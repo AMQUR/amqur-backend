@@ -1,4 +1,7 @@
-import { OpenConversationService } from './open-conversation.service';
+import {
+  OpenConversationService,
+  storeContactsFrom,
+} from './open-conversation.service';
 import type { LlmGenerateParams } from '../../ai/llm.provider';
 
 function make(opts: {
@@ -291,6 +294,45 @@ describe('OpenConversationService', () => {
     expect(out[0].content).not.toContain('123-45-6789');
     expect(out[0].content).toContain('second');
     expect(out[2].content).toBe('last\n\n<context/>');
+  });
+
+  it('assistant history keeps only the store-verified numbers; any other contact is masked', () => {
+    const allow = storeContactsFrom(
+      'Service: 773-828-1050. Sales (773) 334-3400. parts@store.example',
+    );
+    expect(allow).toEqual(
+      expect.arrayContaining([
+        '7738281050',
+        '7733343400',
+        'parts@store.example',
+      ]),
+    );
+    const out = OpenConversationService.buildMessages(
+      [
+        { role: 'USER', content: 'call me at 312-555-0142' },
+        {
+          role: 'ASSISTANT',
+          content:
+            'Service is 773-828-1050 or (773) 334-3400. I have your number 312-555-0142 and jane@example.com. Parts: parts@store.example',
+        },
+        { role: 'USER', content: 'thanks' },
+      ],
+      '',
+      allow,
+    );
+    const a = out[1].content;
+    expect(a).toContain('773-828-1050');
+    expect(a).toContain('(773) 334-3400');
+    expect(a).toContain('parts@store.example');
+    expect(a).not.toContain('312-555-0142');
+    expect(a).not.toContain('jane@example.com');
+    // With no allow-list every contact in an assistant row is masked.
+    const none = OpenConversationService.buildMessages([
+      { role: 'USER', content: 'hi' },
+      { role: 'ASSISTANT', content: 'Call 773-828-1050' },
+      { role: 'USER', content: 'ok' },
+    ]);
+    expect(none[1].content).not.toContain('773-828-1050');
   });
 
   it('classifyLane parses one word and returns null on anything else', async () => {
