@@ -672,6 +672,18 @@ export class ChatOrchestrator {
       pageType?: string;
       vin?: string;
       stockNumber?: string;
+      path?: string;
+      vehicle?: {
+        year?: number;
+        make?: string;
+        model?: string;
+        trim?: string;
+        condition?: string;
+        mileage?: number;
+        color?: string;
+        bodyType?: string;
+        fuelType?: string;
+      };
       utmSource?: string;
       utmMedium?: string;
       utmCampaign?: string;
@@ -750,6 +762,37 @@ export class ChatOrchestrator {
     );
 
     if (input.pageContext) {
+      // Page awareness: a vehicle detail page reports its published listing; any other page
+      // clears it, so "this vehicle" never refers to a page the customer has left.
+      const pc = input.pageContext;
+      const pageVin = pc.vin?.toUpperCase();
+      if (
+        pc.pageType === 'vdp' &&
+        pageVin &&
+        /^[A-HJ-NPR-Z0-9]{17}$/.test(pageVin)
+      ) {
+        const v = pc.vehicle ?? {};
+        st.pageVehicle = {
+          vin: pageVin,
+          ...(pc.stockNumber && /^[A-Za-z0-9-]{1,20}$/.test(pc.stockNumber)
+            ? { stock: pc.stockNumber }
+            : {}),
+          ...(v.year ? { year: v.year } : {}),
+          ...(v.make ? { make: v.make } : {}),
+          ...(v.model ? { model: v.model } : {}),
+          ...(v.trim ? { trim: v.trim } : {}),
+          ...(v.condition ? { condition: v.condition } : {}),
+          ...(typeof v.mileage === 'number' ? { mileage: v.mileage } : {}),
+          ...(v.color ? { color: v.color } : {}),
+          ...(v.bodyType ? { bodyType: v.bodyType } : {}),
+          ...(v.fuelType ? { fuelType: v.fuelType } : {}),
+          ...(pc.path ? { path: pc.path } : {}),
+          asOf: new Date().toISOString(),
+        };
+        this.metrics.increment('chat.page_vehicle.received');
+      } else if (pc.pageType) {
+        st.pageVehicle = undefined;
+      }
       st.attribution = {
         ...st.attribution,
         ...(input.pageContext.utmSource
@@ -7111,6 +7154,27 @@ export class ChatOrchestrator {
     const st = t.st;
     const m: string[] = [];
     if (st.department) m.push(`department: ${st.department}`);
+    const pv = st.pageVehicle;
+    if (pv) {
+      const name = [pv.condition, pv.year, pv.make, pv.model, pv.trim]
+        .filter(Boolean)
+        .join(' ');
+      const facts = [
+        `VIN ${pv.vin}`,
+        pv.stock ? `stock number ${pv.stock}` : null,
+        typeof pv.mileage === 'number'
+          ? `${pv.mileage.toLocaleString('en-US')} miles`
+          : null,
+        pv.color ? `colour ${pv.color}` : null,
+        pv.bodyType ? `body ${pv.bodyType}` : null,
+        pv.fuelType ? `fuel ${pv.fuelType}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      m.push(
+        `VEHICLE PAGE THE CUSTOMER HAS OPEN on this store's website right now: ${name || 'a vehicle listing'} (${facts}). These details are the published listing as reported by that page. "This vehicle", "this one", "it" refer to this listing. It is a listing, not a live availability check: do not say it is in stock, on the lot, available or sold, and do not state its price, payment or incentives (the page shows the store's current price; you do not have it). You may answer about the model and trim from general knowledge, clearly as general information, and use the listing details above as given.`,
+      );
+    }
     if (st.selectedLabel)
       m.push(
         `selected vehicle: ${st.selectedLabel}${st.selectedStock ? ` (stock ${st.selectedStock})` : ''}${st.selectedStatus ? `, status ${st.selectedStatus}` : ''}`,

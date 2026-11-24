@@ -1,6 +1,11 @@
 import { Transform, Type } from 'class-transformer';
 import { commentTokenOrUndefined } from '../../common/security/comment-token';
 import {
+  sanitizePagePath,
+  sanitizePageVehicle,
+  type PageVehicle,
+} from './page-vehicle';
+import {
   ArrayMaxSize,
   ArrayUnique,
   IsArray,
@@ -106,6 +111,16 @@ export class PageContextDto {
   pageType?: string;
   @IsOptional() @IsString() @Length(11, 17) vin?: string;
   @IsOptional() @IsString() @MaxLength(20) stockNumber?: string;
+  /** Path of the page (no host, query or fragment). Invalid values are dropped. */
+  @Transform(({ value }) => sanitizePagePath(value))
+  @IsOptional()
+  @IsString()
+  path?: string;
+  /** Published listing on a vehicle page: sanitised field by field, never rejected. */
+  @Transform(({ value }) => sanitizePageVehicle(value))
+  @IsOptional()
+  @IsObject()
+  vehicle?: PageVehicle;
   // Attribution values reach a delimiter-structured CRM comment line: only [A-Za-z0-9._~-]{1,80}
   // is kept; anything else is dropped (not rejected) so the chat itself still works.
   @Transform(({ value }) => commentTokenOrUndefined(value))

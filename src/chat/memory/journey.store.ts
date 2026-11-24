@@ -99,6 +99,25 @@ export type JourneyState = {
       policyVersion: string;
     };
   };
+  /**
+   * The listing on the dealer-site page the customer has open, as published on that page
+   * (reported by the browser, validated; not a system-of-record fact and not availability).
+   */
+  pageVehicle?: {
+    vin: string;
+    stock?: string;
+    year?: number;
+    make?: string;
+    model?: string;
+    trim?: string;
+    condition?: string;
+    mileage?: number;
+    color?: string;
+    bodyType?: string;
+    fuelType?: string;
+    path?: string;
+    asOf: string;
+  };
   trade?: {
     requestId?: string;
     year?: number;
