@@ -149,7 +149,12 @@ export class OpenAiLlmProvider implements LlmProvider {
           // Current OpenAI models reject `max_tokens` and fixed sampling; the completion
           // budget also covers hidden reasoning tokens, so leave headroom above the visible cap.
           max_completion_tokens: Math.max((params.maxTokens ?? 1024) * 4, 2000),
-          ...(tools ? { tools } : {}),
+          ...(tools
+            ? {
+                tools,
+                tool_choice: round === MAX_TOOL_ROUNDS ? 'none' : 'auto',
+              }
+            : {}),
         };
         const r = params.onTextDelta
           ? await this.streamRound(body, controller.signal, params.onTextDelta)
@@ -218,7 +223,12 @@ export class OpenAiLlmProvider implements LlmProvider {
       clearTimeout(timer);
       params.signal?.removeEventListener('abort', onAbort);
     }
-    if (!text.trim()) throw new Error('OpenAI empty completion');
+    if (!text.trim()) {
+      this.logger.warn(
+        `OpenAI empty completion stop=${stopReason ?? 'unknown'} tools=${toolsUsed.length}`,
+      );
+      throw new Error('OpenAI empty completion');
+    }
     return {
       text: text.trim(),
       provider: this.providerId,
@@ -269,6 +279,8 @@ export class OpenAiLlmProvider implements LlmProvider {
         tools,
         max_output_tokens: Math.max((params.maxTokens ?? 1024) * 4, 2000),
         store: false,
+        // The last allowed round must produce the answer, not another tool call.
+        tool_choice: round === MAX_TOOL_ROUNDS ? 'none' : 'auto',
       };
       const r = await this.responsesRound(body, signal, params.onTextDelta);
       inputTokens += r.inputTokens;
@@ -316,7 +328,12 @@ export class OpenAiLlmProvider implements LlmProvider {
         }
       }
     }
-    if (!text.trim()) throw new Error('OpenAI empty completion');
+    if (!text.trim()) {
+      this.logger.warn(
+        `OpenAI empty completion stop=${stopReason ?? 'unknown'} tools=${toolsUsed.length}`,
+      );
+      throw new Error('OpenAI empty completion');
+    }
     return {
       text: text.trim(),
       provider: this.providerId,
@@ -413,7 +430,10 @@ export class OpenAiLlmProvider implements LlmProvider {
       }
     }
     if (buffer.trim()) handle(buffer.trim());
-    if (failed) throw new Error('OpenAI response failed');
+    if (failed) {
+      this.logger.warn('OpenAI responses stream reported failure');
+      throw new Error('OpenAI response failed');
+    }
     const done = final as ResponseBody | null;
     const output = done?.output ?? [];
     return {
