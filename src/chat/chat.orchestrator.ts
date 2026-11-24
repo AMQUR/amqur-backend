@@ -17,6 +17,7 @@ import {
 import { InventoryEngine, vehicleHasFeature } from './engines/inventory.engine';
 import {
   groupConversationCapability,
+  groupScopeFor,
   groupSearchGate,
 } from '../group-routing/group-read-scope';
 import { leadSourceFor } from '../group-routing/group-origin';
@@ -62,6 +63,14 @@ import {
 import { ClaudeConversationService } from './claude/claude-conversation.service';
 import { OpenConversationService } from './conversation/open-conversation.service';
 import { isRecallQuestion } from './conversation/recall';
+import {
+  DEALER_FOCUSES,
+  buildDealershipCard,
+  dealerDirectoryFor,
+  type DealerFocus,
+  type DealerStore,
+  type DealershipCard,
+} from '../dealer-directory/dealer-directory';
 import type { LlmLocalTool } from '../ai/llm.provider';
 import {
   detectClaimTypes,
@@ -267,6 +276,7 @@ export type ChatCard =
       state: 'requested' | 'queued' | 'notified' | 'recorded';
       escalationId: string;
     }
+  | DealershipCard
   | {
       kind: 'hours';
       summary: string;
@@ -1087,8 +1097,36 @@ export class ChatOrchestrator {
     // keyword-matched tool (or a question a tool is waiting on) does not take the turn.
     const recall = !toolOnly && isRecallQuestion(t.message);
     if (recall) this.metrics.increment('chat.open_conversation.recall');
+    // Verified store links (inventory search, scheduling, finance, trade pages). When no
+    // inventory, booking or lead tool is connected for this conversation, those links ARE the
+    // useful answer to a shopping or service request, so the conversation model takes the turn
+    // instead of a tool that can only say it is not connected.
+    const mode = this.openConversation.directoryMode();
+    const directory = mode === 'off' ? null : await this.dealerDirectory(t);
+    const linksTool = directory ? this.dealershipLinksTool(t, directory) : null;
+    // On the group site "no inventory" means no member rooftop has a listed, ready feed.
+    const groupScope = groupScopeFor(t.tenantId);
+    const inventoryReady = groupScope
+      ? groupScope.grant.members.some((m) => m.locationIds.length > 0)
+      : !!inventoryTool;
+    const directoryOnly =
+      !!directory &&
+      (mode === 'force' ||
+        (!inventoryReady && !(await this.toolsConnected(t))));
+    const handoffTurn =
+      directoryOnly &&
+      !toolOnly &&
+      !pending &&
+      !affirmOrDecline &&
+      intents.every((i) => !ChatOrchestrator.TOOL_ONLY_INTENTS.has(i));
+    if (handoffTurn) this.metrics.increment('chat.open_conversation.directory');
     let lane: 'conversation' | 'dealership';
-    if (opts.force || recall || (allConversational && !pending && !toolOnly)) {
+    if (
+      opts.force ||
+      recall ||
+      handoffTurn ||
+      (allConversational && !pending && !toolOnly)
+    ) {
       lane = 'conversation';
     } else {
       // The rules matched a dealership tool (or a tool question is pending): ask the router
@@ -1097,7 +1135,7 @@ export class ChatOrchestrator {
         .recentMessages(t.s.conversationId, 7)
         .catch(() => [] as Array<{ role: string; content: string }>);
       const verdict = await this.openConversation.classifyLane({
-        inventoryTool: !!inventoryTool,
+        inventoryTool: !!inventoryTool || directoryOnly,
         message: t.message,
         recent: recent.slice(0, -1),
         pending,
@@ -1183,7 +1221,12 @@ export class ChatOrchestrator {
       memory,
       knowledge,
       hoursSummary,
-      extraTools: inventoryTool ? [inventoryTool] : [],
+      extraTools: [
+        ...(inventoryTool && !directoryOnly ? [inventoryTool] : []),
+        ...(linksTool ? [linksTool] : []),
+      ],
+      directoryOnly,
+      directoryStores: directory?.stores.map((d) => d.name) ?? [],
       appointmentConfirmed:
         st.appointment?.status === 'CONFIRMED' && !st.appointment.sandbox,
       onTextDelta: t.onTextDelta,
@@ -1198,12 +1241,168 @@ export class ChatOrchestrator {
       }
       t.fallbackReason = `open_conversation_${res.reason}`;
       this.metrics.increment('chat.open_conversation.fell_back');
+      // The model could not answer (daily allowance reached, provider down). Where no tool
+      // is connected either, a scripted line would only pretend to be an answer: say plainly
+      // that the assistant is temporarily unavailable and put the verified store links up.
+      if (
+        directory &&
+        directoryOnly &&
+        res.reason !== 'guard_rejected' &&
+        res.reason !== 'refusal'
+      ) {
+        this.metrics.increment('chat.open_conversation.unavailable_notice');
+        const lang = t.lang === 'es' ? 'es' : 'en';
+        t.cards = t.cards.filter((c) => c.kind !== 'dealership');
+        for (const d of directory.stores)
+          t.cards.push(buildDealershipCard(d, 'visit', lang));
+        t.sources.add('dealer_directory');
+        t.lockReply = true;
+        return this.finish(t, {
+          forcedReply: tr(
+            t.lang,
+            'The AI assistant is temporarily unavailable, so I can’t answer that right now. Please try again in a little while. In the meantime, each store’s website and phone number are below.',
+            'El asistente de IA no está disponible por el momento, así que no puedo responder ahora. Intente de nuevo en un rato. Mientras tanto, abajo están el sitio web y el teléfono de cada agencia.',
+          ),
+          started,
+        });
+      }
       return null;
     }
     t.toolCount += res.toolsUsed.length;
     t.sources.add('conversation_model');
     if (res.toolsUsed.length) t.sources.add('deterministic_calculation');
     return this.finishConversation(t, res.text, res.model, started);
+  }
+
+  private readonly tenantSlugs = new Map<string, string | null>();
+
+  /**
+   * The verified store directory for this conversation, or null when the tenant has none.
+   * A rooftop's own conversation offers only its own store. The group site, and a rooftop turn
+   * that the group site handed off (the shopper is still on the group's website), offer every
+   * store of the group: the cards are public website links, each labelled with its own store.
+   */
+  private async dealerDirectory(
+    t: Turn,
+  ): Promise<{ stores: DealerStore[] } | null> {
+    let slug = this.tenantSlugs.get(t.tenantId);
+    if (slug === undefined) {
+      slug =
+        (
+          await this.prisma.tenant
+            .findUnique({ where: { id: t.tenantId }, select: { slug: true } })
+            .catch(() => null)
+        )?.slug ?? null;
+      if (this.tenantSlugs.size > 500) this.tenantSlugs.clear();
+      this.tenantSlugs.set(t.tenantId, slug);
+    }
+    const view = slug ? dealerDirectoryFor(slug) : null;
+    if (!view) return null;
+    const viaGroupSite = !view.self || !!t.linkedConversationIds?.length;
+    const stores = viaGroupSite ? view.group : view.self ? [view.self] : [];
+    return stores.length ? { stores } : null;
+  }
+
+  /** True when this conversation has at least one working action tool (booking or leads). */
+  private async toolsConnected(t: Turn): Promise<boolean> {
+    const [appointments, leads] = await Promise.all([
+      this.cap(t, 'appointments'),
+      this.cap(t, 'leadCapture'),
+    ]);
+    return appointments.allowed || leads.allowed;
+  }
+
+  /**
+   * Lets the conversation model put verified store cards in the reply. The model chooses
+   * stores and a focus from fixed lists; every URL and phone number comes from the directory.
+   * Nothing is fetched and no tenant data is read.
+   */
+  private dealershipLinksTool(
+    t: Turn,
+    directory: { stores: DealerStore[] },
+  ): LlmLocalTool {
+    const norm = (v: string) =>
+      v
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    return {
+      name: 'show_dealership_links',
+      description:
+        "Show a card for each named store with buttons to that store's own website: current new, used or certified inventory search, service scheduling, parts, finance application, trade-in tool, directions, and its phone number. These are handoffs to the store's site, not vehicles and not proof of stock.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          stores: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 5,
+            items: {
+              type: 'string',
+              enum: directory.stores.map((d) => d.name),
+            },
+            description: 'Stores to show, most relevant first.',
+          },
+          focus: {
+            type: 'string',
+            enum: [...DEALER_FOCUSES],
+            description:
+              'What the person wants there: new, used or certified vehicles, service, parts, finance, trade, or visit (directions and contact).',
+          },
+        },
+        required: ['stores', 'focus'],
+        additionalProperties: false,
+      },
+      run: (input) => {
+        const focus = (DEALER_FOCUSES as readonly string[]).includes(
+          String(input.focus),
+        )
+          ? (input.focus as DealerFocus)
+          : 'visit';
+        const wanted = Array.isArray(input.stores)
+          ? input.stores.filter((x): x is string => typeof x === 'string')
+          : [];
+        const picked: DealerStore[] = [];
+        for (const w of wanted.slice(0, 5)) {
+          const hit = directory.stores.find((d) => norm(d.name) === norm(w));
+          if (hit && !picked.includes(hit)) picked.push(hit);
+        }
+        if (!picked.length)
+          return Promise.resolve(
+            JSON.stringify({
+              shown: [],
+              error: `Unknown store. Use one of: ${directory.stores.map((d) => d.name).join('; ')}`,
+            }),
+          );
+        const lang = t.lang === 'es' ? 'es' : 'en';
+        // One card per store per reply: a later call in the same turn replaces the earlier one.
+        t.cards = t.cards.filter(
+          (c) =>
+            c.kind !== 'dealership' ||
+            !picked.some((p) => p.sourceRecordId === c.storeId),
+        );
+        for (const p of picked)
+          t.cards.push(buildDealershipCard(p, focus, lang));
+        t.sources.add('dealer_directory');
+        this.metrics.increment('chat.dealer_directory.cards', picked.length);
+        return Promise.resolve(
+          JSON.stringify({
+            shown: picked.map((p) => ({
+              store: p.name,
+              sideOfTown: p.sideOfTown,
+              brands: p.brands,
+              buttons: t.cards
+                .filter(
+                  (c): c is DealershipCard =>
+                    c.kind === 'dealership' && c.storeId === p.sourceRecordId,
+                )
+                .flatMap((c) => c.links.map((l) => l.key)),
+            })),
+            note: "Cards are displayed with your reply. They open each store's own website pages; they are not vehicles and do not confirm stock or price.",
+          }),
+        );
+      },
+    };
   }
 
   /**

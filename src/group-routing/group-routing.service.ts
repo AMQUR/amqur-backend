@@ -1,3 +1,4 @@
+import { dealerDirectoryFor } from '../dealer-directory/dealer-directory';
 import { isRecallQuestion } from '../chat/conversation/recall';
 import { CapabilityService } from '../capability/capability.service';
 import { OpenConversationService } from '../chat/conversation/open-conversation.service';
@@ -249,6 +250,31 @@ export class GroupRoutingService {
       )
     ) {
       const ruleIntents = effectiveIntents(u.intents, undefined);
+      // No member rooftop has a listed inventory feed: there is nothing to search and no
+      // store to ask about first. A shopping, service, finance or trade request is answered
+      // in conversation with the verified store links instead. Requests for a person,
+      // complaints, safety reports and contact details keep the rules below.
+      const keepsRules = new Set([
+        'HUMAN_HANDOFF',
+        'COMPLAINT',
+        'SAFETY_URGENT',
+        'PROVIDE_CONTACT',
+        'APPOINTMENT_CANCEL',
+        'APPOINTMENT_RESCHEDULE',
+        'AFFIRM',
+        'DECLINE',
+      ]);
+      if (
+        this.conversation.directoryMode() !== 'off' &&
+        (this.conversation.directoryMode() === 'force' ||
+          grant.members.every((m) => m.locationIds.length === 0)) &&
+        dealerDirectoryFor(grant.groupSlug) &&
+        !u.entities.incident &&
+        !ruleIntents.some((i) => keepsRules.has(i))
+      ) {
+        this.metrics.increment('group_routing.directory_lane');
+        return bound ? this.delegate(c, bound) : this.runGroup(c);
+      }
       const conversational = new Set([
         'UNKNOWN',
         'KNOWLEDGE_QUESTION',

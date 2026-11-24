@@ -51,6 +51,10 @@ export type OpenConversationInput = {
   extraTools?: LlmLocalTool[];
   /** True only when the tools hold a real (non-sandbox) CONFIRMED appointment. */
   appointmentConfirmed?: boolean;
+  /** No inventory, booking or lead tools are connected: verified store links are the handoff. */
+  directoryOnly?: boolean;
+  /** Names the links tool accepts, for the prompt. */
+  directoryStores?: string[];
   onTextDelta?: (text: string, reset?: boolean) => void;
   signal?: AbortSignal;
 };
@@ -132,6 +136,19 @@ export class OpenConversationService {
     private readonly metrics: MetricsService,
     private readonly config: ConfigService,
   ) {}
+
+  /**
+   * DEALER_DIRECTORY_MODE: `auto` (default) uses verified store links as the handoff only
+   * where no inventory, booking or lead tool is connected; `force` treats every conversation
+   * that way (rehearsing production behaviour on a seeded environment); `off` removes the
+   * links tool and the directory lane entirely.
+   */
+  directoryMode(): 'auto' | 'force' | 'off' {
+    const v = (this.config.get<string>('DEALER_DIRECTORY_MODE') ?? 'auto')
+      .trim()
+      .toLowerCase();
+    return v === 'force' || v === 'off' ? v : 'auto';
+  }
 
   isEnabled(): boolean {
     if (
@@ -418,7 +435,15 @@ export class OpenConversationService {
   // ───────────────────────────────────────── prompt
 
   /** Stable per store (cacheable): identity, behaviour and truth rules. No volatile data. */
-  static systemPrompt(id: StoreIdentity, inventoryTool = false): string {
+  static systemPrompt(
+    id: StoreIdentity,
+    inventoryTool = false,
+    links: { tool: boolean; directoryOnly: boolean; stores: string[] } = {
+      tool: false,
+      directoryOnly: false,
+      stores: [],
+    },
+  ): string {
     const store = id.storeName ?? 'this dealership';
     const group = id.groupName ? `, part of ${id.groupName}` : '';
     return [
@@ -449,10 +474,24 @@ export class OpenConversationService {
       '',
       '# Actions',
       'In this part of the chat you can talk, reason and calculate; you cannot look up inventory, hold a vehicle, book or confirm appointments, submit leads, send messages, or approve financing. Never say or imply that any of those happened. The only action statuses that exist are the ones in CONTEXT, and you repeat them with their exact status words (a "request" is not "confirmed"; a "sandbox demo" is not a real booking).',
-      inventoryTool
-        ? 'Inventory: you have a search_inventory tool. Use it whenever someone wants to see, find or shop for vehicles at this store, and again whenever they change what they want (budget, colour, body style, model, new or used) — keep every preference they have already given unless they changed it, and work out the new numbers yourself (a budget "raised by $5,000" from $45,000 is $50,000). The tool result is the only inventory you know: never mention a vehicle, price or availability that is not in it. The chat displays a card with this reply for each vehicle the tool marks as shown (do not say where on the screen), so do not re-list every detail; say what you found in a sentence or two and point out what matters (best match, what is over budget, what is missing). If the result is from the demonstration dataset, say so once, plainly. If nothing matches, say that, and offer the nearest real alternative from the result or a different search — never invent one. The search cannot filter by seating rows or features you were not given; when someone asks for three rows, use what you know about which models have a third row to search those models, and say that seating should be confirmed on the specific vehicle.'
-        : 'Inventory search runs in this same chat when someone asks for it plainly ("show me SUVs under $45,000"); tell them they can simply ask. You cannot see inventory from here.',
-      'This same chat also has dealership tools that run when someone asks for them plainly — a payment estimate on a vehicle that is on screen, an out-the-door quote request, a trade-in appraisal request, requesting a test drive or service visit, a parts request, and bringing in a person. When someone wants one of those, tell them in a line that they can simply say it. Do not act as if you performed it.',
+      ...(links.directoryOnly
+        ? [
+            'Live inventory, appointment booking and lead delivery are NOT connected to this chat. You cannot see what is in stock, and nothing can be booked, held, quoted or sent from here. Say so in a few words when it matters, never as an apology, and then be useful: every store publishes its current inventory, service scheduling, finance application and trade-in tool on its own website, and you can put those in front of the person with one tool call.',
+          ]
+        : [
+            inventoryTool
+              ? 'Inventory: you have a search_inventory tool. Use it whenever someone wants to see, find or shop for vehicles at this store, and again whenever they change what they want (budget, colour, body style, model, new or used) — keep every preference they have already given unless they changed it, and work out the new numbers yourself (a budget "raised by $5,000" from $45,000 is $50,000). The tool result is the only inventory you know: never mention a vehicle, price or availability that is not in it. The chat displays a card with this reply for each vehicle the tool marks as shown (do not say where on the screen), so do not re-list every detail; say what you found in a sentence or two and point out what matters (best match, what is over budget, what is missing). If the result is from the demonstration dataset, say so once, plainly. If nothing matches, say that, and offer the nearest real alternative from the result or a different search — never invent one. The search cannot filter by seating rows or features you were not given; when someone asks for three rows, use what you know about which models have a third row to search those models, and say that seating should be confirmed on the specific vehicle.'
+              : 'Inventory search runs in this same chat when someone asks for it plainly ("show me SUVs under $45,000"); tell them they can simply ask. You cannot see inventory from here.',
+            'This same chat also has dealership tools that run when someone asks for them plainly — a payment estimate on a vehicle that is on screen, an out-the-door quote request, a trade-in appraisal request, requesting a test drive or service visit, a parts request, and bringing in a person. When someone wants one of those, tell them in a line that they can simply say it. Do not act as if you performed it.',
+          ]),
+      ...(links.tool
+        ? [
+            `Store links: you have a show_dealership_links tool. It displays a card for each store you name, with buttons that open that store's own website (current new, used or certified inventory, service scheduling, parts, finance application, trade-in tool, directions) and its phone number. Stores you can name: ${links.stores.join('; ')}.`,
+            'Call it whenever someone is shopping for a vehicle, asks what is in stock or where to see vehicles, wants service, parts, financing or a trade-in value, or asks which store to visit. Shopping: first give your recommendation in a few lines (which models fit what they told you and why, using everything they have said: budget, seating, body style, new or used, fuel, trade-in), then call the tool for the one to three stores that sell those models, with focus "new", "used" or "certified". Service, parts, finance, trade: call it for the store they named, or ask which store when it is unclear and matters. Call it once per reply, after you know which stores; do not call it for general questions, comparisons with no shopping intent, or small talk.',
+            "The cards are search and contact handoffs, not vehicles. Never say or imply that a particular vehicle, trim, colour or price is in stock, and never describe a card as a result or a match. Say in one short line that the buttons open each store's current inventory (or scheduling page) on its own site. Do not repeat the URLs or phone numbers in your text; the cards carry them.",
+            'A recommendation is general knowledge, and you say so by how you phrase it ("the Traverse usually fits that"), never as a statement about what a store has today. Do not quote a price for a model as this dealership\'s price; a typical market range, clearly labelled as general and possibly out of date, is fine when asked.',
+          ]
+        : []),
       'Do not produce a specific lease or loan payment for a vehicle from assumptions of your own (money factor, residual, rate, price): a made-up example reads like an offer. Say which inputs set the payment, and calculate only with numbers the person gives you or that appear in CONTEXT.',
       "Financing: explain concepts and run the arithmetic on the person's own numbers, clearly as an illustration. Nobody is approved, pre-approved or guaranteed anything in chat; approval and real terms come only from a lender after an application. Do not ask for or accept Social Security numbers, full card numbers, bank details or income documents.",
       '',
@@ -676,7 +715,17 @@ export class OpenConversationService {
     // The server-built context (verified store facts, published documents, journey) rides in
     // the system channel: the router redacts phone numbers and emails from MESSAGES before
     // egress, which is right for what customers type and wrong for the store's own directory.
-    const system = `${OpenConversationService.systemPrompt(id, hasInventoryTool)}\n\n${this.contextBlock(id, input)}`;
+    const system = `${OpenConversationService.systemPrompt(
+      id,
+      hasInventoryTool,
+      {
+        tool: !!input.extraTools?.some(
+          (t) => t.name === 'show_dealership_links',
+        ),
+        directoryOnly: input.directoryOnly === true,
+        stores: input.directoryStores ?? [],
+      },
+    )}\n\n${this.contextBlock(id, input)}`;
     const storeContacts = [
       ...new Set([
         ...id.contacts,

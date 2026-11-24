@@ -46,6 +46,11 @@ export const envValidationSchema = Joi.object({
   OPENAI_TOOLS_API: Joi.string().valid('responses', 'chat').optional(),
   /** Kill switch for the conversation lane ('false' restores tool-lane-only behaviour). */
   OPEN_CONVERSATION_ENABLED: Joi.string().valid('true', 'false').optional(),
+  /** Widget chat turns allowed per client address (defaults 120 per hour, 400 per day). */
+  CHAT_TURNS_PER_IP_HOUR: Joi.number().integer().min(1).optional(),
+  CHAT_TURNS_PER_IP_DAY: Joi.number().integer().min(1).optional(),
+  /** Verified store-link handoffs: auto (default), force, or off. See OpenConversationService.directoryMode. */
+  DEALER_DIRECTORY_MODE: Joi.string().valid('auto', 'force', 'off').optional(),
 
   /** Optional OpenAI-compatible fallbacks: active only when BOTH key and model are set. */
   GEMINI_API_KEY: Joi.string().optional().allow(''),

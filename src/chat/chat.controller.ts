@@ -35,6 +35,25 @@ import {
   tokenKey,
 } from './stream/stream-concurrency';
 import { rateLimit } from '../common/rate-limits';
+import { createHash } from 'crypto';
+import { ConfigCacheService } from '../cache/config-cache.service';
+
+/** Widget turns allowed per client address. Env-tunable; the test profile is effectively open. */
+export function visitorTurnCaps(env: NodeJS.ProcessEnv = process.env): {
+  perHour: number;
+  perDay: number;
+} {
+  const n = (k: string, d: number) => {
+    const v = Number(env[k]);
+    return Number.isInteger(v) && v > 0 ? v : d;
+  };
+  const test =
+    env.NODE_ENV === 'test' && env.RATE_LIMIT_PROFILE !== 'production';
+  return {
+    perHour: n('CHAT_TURNS_PER_IP_HOUR', test ? 100_000 : 120),
+    perDay: n('CHAT_TURNS_PER_IP_DAY', test ? 1_000_000 : 400),
+  };
+}
 import { clientIp } from '../common/guards/throttle-tracker';
 
 type ChatRequest = {
@@ -64,7 +83,45 @@ export class ChatController {
     private readonly chatService: ChatService,
     private readonly conversationIds: ConversationIdService,
     private readonly metrics: MetricsService,
+    private readonly cache: ConfigCacheService,
   ) {}
+
+  /**
+   * One anonymous visitor must not be able to spend the whole day's model allowance. Every
+   * widget turn counts against an hourly and a daily ceiling per client address (hashed; the
+   * address itself is not stored). Over the ceiling the caller gets a plain 429 with
+   * Retry-After before any model call. The per-minute throttle and the stream concurrency
+   * caps still apply; this bounds the long tail they do not.
+   */
+  private async visitorQuota(req: ChatRequest): Promise<void> {
+    if (req.user?.role !== 'widget') return;
+    const caps = visitorTurnCaps();
+    const who = createHash('sha256')
+      .update(`chat-turns:${clientIp(req)}`)
+      .digest('hex')
+      .slice(0, 24);
+    const now = new Date().toISOString();
+    const [hour, day] = await Promise.all([
+      this.cache
+        .incrBy(`chat:turns:${who}:${now.slice(0, 13)}`, 1, 3900)
+        .catch(() => 0),
+      this.cache
+        .incrBy(`chat:turns:${who}:${now.slice(0, 10)}`, 1, 2 * 86_400)
+        .catch(() => 0),
+    ]);
+    if (hour <= caps.perHour && day <= caps.perDay) return;
+    this.metrics.increment('chat.visitor_quota.rejected');
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        error: 'Too Many Requests',
+        message:
+          'This chat has reached its usage limit for now. Please try again later, or call the dealership directly.',
+        retryAfterSeconds: day > caps.perDay ? 3600 : 900,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
+  }
 
   /**
    * Identity rules (shared by POST /chat and POST /chat/stream):
@@ -125,6 +182,7 @@ export class ChatController {
   @Throttle(CHAT_THROTTLE)
   @Post()
   async chat(@Req() req: ChatRequest, @Body() body: ChatDto) {
+    await this.visitorQuota(req);
     return this.resolveTurn(req, body).run();
   }
 
@@ -149,6 +207,7 @@ export class ChatController {
     @Body() body: ChatDto,
     @Res() res: Response,
   ): Promise<void> {
+    await this.visitorQuota(req);
     const turn = this.resolveTurn(req, body);
 
     const caps = streamCaps();
