@@ -1,3 +1,4 @@
+import { CapabilityService } from '../capability/capability.service';
 import { OpenConversationService } from '../chat/conversation/open-conversation.service';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -133,6 +134,7 @@ export class GroupRoutingService {
     private readonly config: ConfigService,
     private readonly metrics: MetricsService,
     private readonly conversation: OpenConversationService,
+    private readonly capabilities: CapabilityService,
   ) {}
 
   private routingKey(): Buffer {
@@ -224,7 +226,17 @@ export class GroupRoutingService {
       !u.entities.incident &&
       !u.entities.contact?.phone &&
       !u.entities.contact?.email &&
-      this.conversation.isEnabled()
+      this.conversation.isEnabled() &&
+      // The per-tenant model kill switch covers the router call too: nothing is sent to a
+      // model for the group site, or for the bound rooftop, when either has it off.
+      !(await this.capabilities.flags(input.tenantId, input.locationId))
+        .llmDisabled &&
+      !(
+        bound &&
+        owner &&
+        (await this.capabilities.flags(bound.tenantId, owner.locationId))
+          .llmDisabled
+      )
     ) {
       const ruleIntents = effectiveIntents(u.intents, undefined);
       const conversational = new Set([
