@@ -60,6 +60,7 @@ import {
   mergeInterpretation,
 } from './understanding/model-interpretation';
 import { ClaudeConversationService } from './claude/claude-conversation.service';
+import { OpenConversationService } from './conversation/open-conversation.service';
 import {
   detectClaimTypes,
   GroundingGuardService,
@@ -171,8 +172,11 @@ export type ChatProvenance = {
     | 'repaired'
     | 'polished'
     | 'answered'
+    | 'conversation'
     | 'discarded'
     | 'none';
+  /** Model that wrote a conversation-lane reply. */
+  model?: string;
   /** Why the model's reply was not used (validator reasons), when it wasn't. */
   fallbackReason?: string;
   /** True when a language model helped understand this turn (proposal validated + merged). */
@@ -464,6 +468,9 @@ type Turn = {
   serviceVehicleAck?: string;
   // ── sales desk / stream (all optional; unset on a plain text turn) ──
   onStatus?: (e: ChatStatusEvent) => void;
+  /** Live reply text for the streaming endpoint (conversation lane only). */
+  onTextDelta?: (text: string, reset?: boolean) => void;
+  signal?: AbortSignal;
   statusSent?: Set<string>;
   salesDeskFlag?: Promise<boolean>;
   rooftopInfo?: { name: string; timezone: string };
@@ -593,6 +600,7 @@ export class ChatOrchestrator {
     private readonly appraisals: AppraisalService,
     private readonly experiments: ExperimentsService,
     private readonly playbooks: PlaybookService,
+    private readonly openConversation: OpenConversationService,
   ) {}
 
   /** First greeting copy, optionally from a RUNNING greeting experiment (tone only). */
@@ -646,6 +654,8 @@ export class ChatOrchestrator {
       requestedWindow?: string;
     };
     onStatus?: (e: ChatStatusEvent) => void;
+    onTextDelta?: (text: string, reset?: boolean) => void;
+    signal?: AbortSignal;
     /** Set only by the group-site router (never from the request body). */
     pinnedVin?: string;
     resumeSearch?: boolean;
@@ -818,6 +828,8 @@ export class ChatOrchestrator {
       handled: new Set(),
       conversationExtra: {},
       onStatus: input.onStatus,
+      onTextDelta: input.onTextDelta,
+      signal: input.signal,
       pinnedVin: input.pinnedVin,
       resumeSearch: input.resumeSearch,
     };
@@ -868,6 +880,12 @@ export class ChatOrchestrator {
       this.handlePressure(t, pressureKind);
       return this.finish(t, { started });
     }
+
+    // ── open-conversation lane: general questions, reasoning, writing, automotive expertise
+    // and anything else no dealership tool answers go to the conversation model with the
+    // whole transcript. Returns null to continue on the tool lane below.
+    const open = await this.tryOpenConversation(t, input, started);
+    if (open) return open;
 
     this.absorbEntities(t, input);
     if (t.u.entities.incident) {
@@ -941,6 +959,253 @@ export class ChatOrchestrator {
     await this.syncTradeTarget(t);
     await this.syncLead(t);
     return this.finish(t, { started });
+  }
+
+  // ───────────────────────────────────────── open conversation
+
+  /** Intents the conversation model answers better than a canned line. */
+  private static readonly CONVERSATIONAL_INTENTS = new Set<string>([
+    'UNKNOWN',
+    'KNOWLEDGE_QUESTION',
+    'SMALL_TALK',
+    'GREETING',
+    'LANGUAGE_SWITCH',
+    'AFFIRM',
+    'DECLINE',
+  ]);
+
+  /** Turns that always stay on the deterministic lane, whatever a model thinks. */
+  private static readonly TOOL_ONLY_INTENTS = new Set<string>([
+    'SAFETY_URGENT',
+    'COMPLAINT',
+    'HUMAN_HANDOFF',
+    'PROVIDE_CONTACT',
+    'APPOINTMENT_CANCEL',
+    'APPOINTMENT_RESCHEDULE',
+  ]);
+
+  private async tryOpenConversation(
+    t: Turn,
+    input: { action?: string; vin?: string },
+    started: number,
+  ): Promise<ChatResponse | null> {
+    const { st, u } = t;
+    if (
+      !t.message ||
+      input.action ||
+      input.vin ||
+      t.pinnedVin ||
+      t.resumeSearch
+    )
+      return null;
+    if (!this.openConversation.isEnabled()) return null;
+    if ((await this.capabilities.flags(t.tenantId, t.locationId)).llmDisabled)
+      return null;
+    if (t.s.channel === 'SMS') return null;
+    const intents = u.intents
+      .filter((i) => i.confidence >= 0.6)
+      .map((i) => i.intent as string);
+    if (u.entities.incident || u.entities.contact) return null;
+    if (intents.some((i) => ChatOrchestrator.TOOL_ONLY_INTENTS.has(i)))
+      return null;
+    const pending = st.pending && st.pending !== 'none' ? st.pending : null;
+    const affirmOrDecline =
+      intents.includes('AFFIRM') || intents.includes('DECLINE');
+    // A yes/no (or a short answer) to a question the tools are waiting on belongs to them.
+    if (affirmOrDecline && (pending || this.freshOffer(t))) return null;
+    const bareGreeting =
+      intents.length === 1 && intents[0] === 'GREETING' && st.turnCount === 0;
+    if (bareGreeting) return null;
+
+    const allConversational = intents.every((i) =>
+      ChatOrchestrator.CONVERSATIONAL_INTENTS.has(i),
+    );
+    let lane: 'conversation' | 'dealership';
+    if (allConversational && !pending) {
+      lane = 'conversation';
+    } else {
+      // The rules matched a dealership tool (or a tool question is pending): ask the router
+      // model whether this turn really is one. No verdict → keep the rule result.
+      const recent = await this.store
+        .recentMessages(t.s.conversationId, 7)
+        .catch(() => [] as Array<{ role: string; content: string }>);
+      const verdict = await this.openConversation.classifyLane({
+        message: t.message,
+        recent: recent.slice(0, -1),
+        pending,
+        ruleIntents: intents,
+        tenantId: t.tenantId,
+      });
+      if (verdict !== 'conversation') return null;
+      lane = 'conversation';
+      t.modelInterpreted = true;
+    }
+    if (lane !== 'conversation') return null;
+
+    this.emitStatus(t, 'thinking');
+    const [transcript, assistantName, hours, kc] = await Promise.all([
+      this.store
+        .recentMessages(t.s.conversationId, 240)
+        .catch(() => [] as Array<{ role: string; content: string }>),
+      this.assistantName(t),
+      this.getHours(t).catch(() => null),
+      this.cap(t, 'knowledge'),
+    ]);
+    const knowledge: Array<{ title: string; content: string }> = [];
+    if (kc.allowed) {
+      const hits = await this.knowledge
+        .search({
+          tenantId: t.tenantId,
+          locationId: t.locationId,
+          query: t.message,
+          forWidget: true,
+          limit: 5,
+        })
+        .catch(() => []);
+      for (const h of hits)
+        knowledge.push({ title: h.title, content: h.content });
+      if (hits.length) {
+        t.sources.add('knowledge_base');
+        t.evidence.push(
+          this.evidenceSvc.verifiedConfig(
+            t.tenantId,
+            t.locationId,
+            'dealership_policy',
+            hits.length,
+            'knowledge_base',
+            new Date().toISOString(),
+          ),
+        );
+      }
+    }
+    const hoursSummary =
+      hours && hours.verified && !hours.synthetic
+        ? this.hoursLine(hours)
+        : null;
+    const res = await this.openConversation.answer({
+      tenantId: t.tenantId,
+      locationId: t.locationId,
+      conversationId: t.s.conversationId,
+      transcript,
+      assistantName,
+      memory: this.memorySummary(t),
+      knowledge,
+      hoursSummary,
+      onTextDelta: t.onTextDelta,
+      signal: t.signal,
+    });
+    if (!res.ok) {
+      // Streamed text (if any) is discarded; the tool lane answers this turn instead.
+      try {
+        t.onTextDelta?.('', true);
+      } catch {
+        // ignore
+      }
+      t.fallbackReason = `open_conversation_${res.reason}`;
+      this.metrics.increment('chat.open_conversation.fell_back');
+      return null;
+    }
+    t.toolCount += res.toolsUsed.length;
+    t.sources.add('conversation_model');
+    if (res.toolsUsed.length) t.sources.add('deterministic_calculation');
+    return this.finishConversation(t, res.text, res.model, started);
+  }
+
+  /** Compact verified weekly hours for the conversation model ("sales: Mon 9:00–20:00, …"). */
+  private hoursLine(h: HoursProfile): string {
+    const fmt = (min: number) =>
+      `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+    const parts: string[] = [];
+    for (const [dept, weekly] of Object.entries(h.weekly ?? {})) {
+      if (!weekly) continue;
+      const days = Object.entries(weekly as Record<string, unknown>)
+        .map(([day, v]) => {
+          const d = v as {
+            open?: number | string;
+            close?: number | string;
+            closed?: boolean;
+          } | null;
+          if (!d || d.closed) return `${day} closed`;
+          const o = typeof d.open === 'number' ? fmt(d.open) : d.open;
+          const c = typeof d.close === 'number' ? fmt(d.close) : d.close;
+          return o && c ? `${day} ${o}–${c}` : null;
+        })
+        .filter(Boolean);
+      if (days.length) parts.push(`${dept}: ${days.join(', ')}`);
+    }
+    return parts.length ? `${parts.join(' | ')} (${h.timezone})` : '';
+  }
+
+  /**
+   * Persist and return a conversation-lane reply. The text is the model's own (already
+   * guarded); nothing is trimmed, re-composed or given a sales follow-up. Journey state the
+   * tools own — pending question, offers, criteria — is left exactly as it was.
+   */
+  private async finishConversation(
+    t: Turn,
+    reply: string,
+    model: string,
+    started: number,
+  ): Promise<ChatResponse> {
+    const st = t.st;
+    st.turnCount += 1;
+    st.lastReplySig = signature(reply);
+    st.fallbacks = 0;
+    const owned = await this.prisma.conversation
+      .findFirst({
+        where: { id: t.s.conversationId, tenantId: t.tenantId },
+        select: { aiPaused: true, handoffState: true },
+      })
+      .catch(() => null);
+    if (
+      owned?.aiPaused ||
+      owned?.handoffState === 'ASSIGNED' ||
+      owned?.handoffState === 'JOINED'
+    ) {
+      this.metrics.increment('chat.ai_cancelled_human_owns');
+      await this.store.save(t.s);
+      return this.staffHandlingResponse(t.s);
+    }
+    await this.store.save(t.s);
+    const evidence = publicEvidence(t.evidence);
+    const provenance: ChatProvenance = {
+      sources: [...t.sources],
+      inventoryAsOf: null,
+      verifiedFactsOnly: false,
+      languageModel: 'conversation',
+      model,
+      modelInterpreted: t.modelInterpreted,
+    };
+    await this.store.appendMessage(t.s, 'ASSISTANT', reply, {
+      type: 'reply',
+      lane: 'conversation',
+      model,
+      intents: t.u.intents.map((i) => i.intent),
+      language: t.lang,
+    });
+    this.metrics.increment('chat.latency_ms_total', Date.now() - started);
+    return {
+      reply,
+      segments: [reply],
+      type: t.type,
+      cards: [],
+      quickReplies: [],
+      journey: this.journeySummary(t),
+      provenance,
+      evidence,
+      conversation: {
+        language: t.lang,
+        handoffState: t.s.handoffState,
+        aiPaused: false,
+        pending: st.pending ?? 'none',
+      },
+      delivery: {
+        urgent: false,
+        toolCount: t.toolCount,
+        minTypingMs: 0,
+        maxTypingMs: 0,
+      },
+    };
   }
 
   // ───────────────────────────────────────── planning

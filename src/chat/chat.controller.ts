@@ -91,6 +91,7 @@ export class ChatController {
     const isWidget = user.role === 'widget';
     const run = async (
       onStatus?: Parameters<ChatService['chat']>[0]['onStatus'],
+      onTextDelta?: Parameters<ChatService['chat']>[0]['onTextDelta'],
     ) => {
       const res = await this.chatService.chat({
         message: body.message ?? '',
@@ -102,6 +103,7 @@ export class ChatController {
         appointment: body.appointment,
         rooftopRef: body.rooftopRef,
         onStatus,
+        onTextDelta,
         tenantId: user.tenantId!,
         locationId: user.locationId,
         userId: conversationKey,
@@ -208,11 +210,35 @@ export class ChatController {
     heartbeat.unref?.();
 
     try {
-      const response = await turn.run((status) =>
-        send({ type: 'status', ...status }),
+      // Conversation-lane replies arrive as the model writes them. `live` counts what the
+      // client has for segment 0; a reset (model restarted or the tool lane took over) is
+      // corrected by the final envelope, which always replaces streamed text.
+      let live = 0;
+      let liveValid = true;
+      const response = await turn.run(
+        (status) => send({ type: 'status', ...status }),
+        (text, reset) => {
+          if (reset) {
+            if (live > 0) liveValid = false;
+            return;
+          }
+          if (!text || !liveValid) return;
+          live += text.length;
+          send({ type: 'text.delta', index: 0, text });
+        },
       );
       clearInterval(heartbeat);
-      for (const event of replyEvents(response)) send(event);
+      const events = replyEvents(response);
+      const streamedAll =
+        live > 0 &&
+        liveValid &&
+        Array.isArray(response.segments) &&
+        response.segments.length === 1;
+      for (const event of events) {
+        // Already delivered live: do not send the same text a second time.
+        if (streamedAll && event.type === 'text.delta') continue;
+        send(event);
+      }
       this.metrics.increment(
         open ? 'chat.stream.completed' : 'chat.stream.client_gone',
       );

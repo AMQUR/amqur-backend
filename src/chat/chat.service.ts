@@ -27,6 +27,9 @@ export class ChatService {
     appointment?: AppointmentSelectionDto;
     /** Real engine progress, surfaced by the streaming endpoint only. */
     onStatus?: (e: ChatStatusEvent) => void;
+    /** Live reply text, surfaced by the streaming endpoint only. */
+    onTextDelta?: (text: string, reset?: boolean) => void;
+    signal?: AbortSignal;
     /** Opaque rooftop reference echoed by a group-site widget; ignored everywhere else. */
     rooftopRef?: string;
     tenantId: string;
@@ -56,6 +59,10 @@ export class ChatService {
               onStatus: turn.onStatus as
                 | ((e: ChatStatusEvent) => void)
                 | undefined,
+              onTextDelta: turn.onTextDelta as
+                | ((text: string, reset?: boolean) => void)
+                | undefined,
+              signal: turn.signal as AbortSignal | undefined,
               tenantId: turn.tenantId,
               locationId: turn.locationId ?? null,
               userId: turn.userId,

@@ -379,4 +379,34 @@ describe('LlmRouterService', () => {
       else process.env.REDIS_URL = prev.redis;
     }
   });
+  it('calls the Redis health check on the cache object (a method reading `this`) in production', async () => {
+    const prev = { env: process.env.NODE_ENV, redis: process.env.REDIS_URL };
+    process.env.NODE_ENV = 'production';
+    process.env.REDIS_URL = 'redis://example:6379';
+    try {
+      const a = withUsage('anthropic', 10, 10);
+      class Cache {
+        private readonly redis = { status: 'ready' };
+        isRedisHealthy() {
+          return this.redis.status === 'ready';
+        }
+      }
+      const cache = Object.assign(new Cache(), memCache());
+      const r = new LlmRouterService(
+        a as never,
+        provider('openai', async () => ({ text: 'x' }), false) as never,
+        metrics as never,
+        cache as never,
+        cfgWith({}) as never,
+      );
+      const res = await r.route({
+        messages: [{ role: 'user', content: 'hi' }],
+      });
+      expect(res.ok).toBe(true);
+    } finally {
+      process.env.NODE_ENV = prev.env;
+      if (prev.redis === undefined) delete process.env.REDIS_URL;
+      else process.env.REDIS_URL = prev.redis;
+    }
+  });
 });

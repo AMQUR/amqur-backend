@@ -60,6 +60,8 @@ export type GroupChatInput = {
   lead?: unknown;
   appointment?: unknown;
   onStatus?: unknown;
+  onTextDelta?: unknown;
+  signal?: unknown;
   /** Opaque rooftop reference echoed by the widget (group site only). */
   rooftopRef?: string;
   tenantId: string;

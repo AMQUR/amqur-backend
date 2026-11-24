@@ -9,6 +9,7 @@ import { AuthModule } from '../auth/auth.module';
 import { VinDecoderService } from './vin/vin-decoder.service';
 import { ClaudeConversationService } from './claude/claude-conversation.service';
 import { ConversationComposerService } from './compose/conversation-composer.service';
+import { OpenConversationService } from './conversation/open-conversation.service';
 import { LiveInfoService } from '../live-info/live-info.service';
 import { EscalationsModule } from '../escalations/escalations.module';
 import { LeadsModule } from '../leads/leads.module';
@@ -46,6 +47,7 @@ import { TurnLockService } from './turn-lock.service';
     JourneyStore,
     ClaudeConversationService,
     ConversationComposerService,
+    OpenConversationService,
     LiveInfoService,
     VinDecoderService,
     ConversationIdService,

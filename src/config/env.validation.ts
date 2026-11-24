@@ -32,6 +32,32 @@ export const envValidationSchema = Joi.object({
     .min(1000)
     .max(120000),
 
+  /** Model for the general conversation lane (strongest suitable; default claude-opus-5-5). */
+  LLM_CONVERSATION_MODEL: Joi.string().optional().allow(''),
+  LLM_CONVERSATION_EFFORT: Joi.string()
+    .valid('low', 'medium', 'high')
+    .optional(),
+  /** Small fast model that decides conversation vs dealership-tool lane. */
+  LLM_ROUTER_MODEL: Joi.string().optional().allow(''),
+  /** Kill switch for the conversation lane ('false' restores tool-lane-only behaviour). */
+  OPEN_CONVERSATION_ENABLED: Joi.string().valid('true', 'false').optional(),
+
+  /** Optional OpenAI-compatible fallbacks: active only when BOTH key and model are set. */
+  GEMINI_API_KEY: Joi.string().optional().allow(''),
+  GEMINI_MODEL: Joi.string().optional().allow(''),
+  GEMINI_BASE_URL: Joi.string().uri().optional().allow(''),
+  XAI_API_KEY: Joi.string().optional().allow(''),
+  XAI_MODEL: Joi.string().optional().allow(''),
+  XAI_BASE_URL: Joi.string().uri().optional().allow(''),
+  DEEPSEEK_API_KEY: Joi.string().optional().allow(''),
+  DEEPSEEK_MODEL: Joi.string().optional().allow(''),
+  DEEPSEEK_BASE_URL: Joi.string().uri().optional().allow(''),
+  OPENROUTER_API_KEY: Joi.string().optional().allow(''),
+  OPENROUTER_MODEL: Joi.string().optional().allow(''),
+  OPENROUTER_BASE_URL: Joi.string().uri().optional().allow(''),
+  /** Fallback order after LLM_PRIMARY_PROVIDER, e.g. "openai,gemini,openrouter". */
+  LLM_FALLBACK_ORDER: Joi.string().optional().allow(''),
+
   OPENAI_API_KEY: Joi.string().optional().allow(''),
   OPENAI_MODEL: Joi.string().optional().default('gpt-4o-mini'),
   OPENAI_BASE_URL: Joi.string().uri().optional().allow(''),
