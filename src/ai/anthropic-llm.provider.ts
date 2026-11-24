@@ -138,11 +138,12 @@ export class AnthropicLlmProvider implements LlmProvider {
           }),
         );
         messages.push({ role: 'user', content: results });
-        // Text spoken before a tool call is followed by more text: keep a paragraph break.
-        if (roundText.trim()) {
-          text += '\n\n';
+        // Whatever the model wrote before calling a tool is working narration ("search those
+        // models"), not the answer: drop it and tell the listener to discard what it has.
+        if (roundText) {
+          text = text.slice(0, text.length - roundText.length);
           try {
-            params.onTextDelta?.('\n\n');
+            params.onTextDelta?.('', true);
           } catch {
             // ignore
           }

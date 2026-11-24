@@ -1,4 +1,8 @@
+import { isProductionTier } from '../config/deployment-tier';
 import type { GroupMember, Lang, ShownVehicle } from './group-routing.types';
+
+/** Outside the production tier every listed vehicle is a simulated demo record. */
+const DEMO = !isProductionTier();
 
 const tr = (lang: Lang, en: string, es: string) => (lang === 'es' ? es : en);
 
@@ -44,8 +48,18 @@ export function searchStoreAsk(
 ): { text: string; quickReplies: string[] } {
   const names = options.map((m) => rooftopLabel(m, lang));
   const thing = what
-    ? tr(lang, `${what} in stock`, `${what} en existencia`)
-    : tr(lang, 'matches in stock', 'opciones en existencia');
+    ? tr(
+        lang,
+        `${what} in ${DEMO ? 'the demonstration inventory' : 'stock'}`,
+        `${what} en ${DEMO ? 'el inventario de demostración' : 'existencia'}`,
+      )
+    : tr(
+        lang,
+        DEMO ? 'matches in the demonstration inventory' : 'matches in stock',
+        DEMO
+          ? 'opciones en el inventario de demostración'
+          : 'opciones en existencia',
+      );
   const choices =
     style === 'side'
       ? tr(

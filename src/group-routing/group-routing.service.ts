@@ -248,7 +248,7 @@ export class GroupRoutingService {
       ]);
       // A complaint or a request for a person keeps the rules; a safety keyword does not,
       // because the first thing a driver needs is advice, not "which store?".
-      const urgent = new Set(['COMPLAINT', 'HUMAN_HANDOFF']);
+      const urgent = new Set(['HUMAN_HANDOFF']);
       if (
         !ruleIntents.every((i) => conversational.has(i)) &&
         !ruleIntents.some((i) => urgent.has(i))

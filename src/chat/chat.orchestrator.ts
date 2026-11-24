@@ -1029,7 +1029,13 @@ export class ChatOrchestrator {
     const contact = u.entities.contact;
     const awaitingContact =
       st.pending === 'contact_name' || st.pending === 'contact_method';
-    if (contact && (contact.phone || contact.email || awaitingContact))
+    const sharesLogin =
+      /\b(?:pass(?:word|code|w0rd)|pwd|log[- ]?in|username)\b/i.test(t.message);
+    if (
+      contact &&
+      (contact.phone || contact.email || awaitingContact) &&
+      !sharesLogin
+    )
       return null;
     if (contact?.firstName && !st.contact.firstName)
       st.contact = { ...st.contact, firstName: contact.firstName };
