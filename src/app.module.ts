@@ -7,6 +7,7 @@ import {
   ExecutionContext,
 } from '@nestjs/common';
 
+import { isCredentialController } from './common/guards/credential-routes';
 import { ConfigModule } from '@nestjs/config';
 import { envValidationSchema } from './config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -63,17 +64,8 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
-/** True for routes that accept credentials or one-time codes. */
-export function isCredentialPath(path: string): boolean {
-  return /^\/api\/(?:auth(?:\/|$)|public\/canary-redeem(?:\/|$)|canary\/)/.test(
-    path.split('?')[0],
-  );
-}
 function isCredentialRoute(context: ExecutionContext): boolean {
-  const req = context
-    .switchToHttp()
-    .getRequest<{ originalUrl?: string; url?: string }>();
-  return isCredentialPath(req.originalUrl ?? req.url ?? '');
+  return isCredentialController(context.getClass()?.name);
 }
 
 @Module({
