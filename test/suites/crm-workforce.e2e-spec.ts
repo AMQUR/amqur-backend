@@ -2917,4 +2917,497 @@ describe('CRM Workforce (e2e)', () => {
       expect(await actionsOf('nissan')).toHaveLength(0);
     });
   });
+
+  describe('administration: staff, dealership switching, cost limits, group stop', () => {
+    const login = async (email: string, password: string, slug: string) => {
+      const r = await http()
+        .post('/api/auth/login')
+        .send({ email, password, tenantSlug: slug });
+      const b = unwrap<{ access_token?: string }>(r.body);
+      return { status: r.status, token: b?.access_token };
+    };
+    const tokenFrom = (link: string) =>
+      new URL('http://x' + link.replace('#/', '')).searchParams.get('token')!;
+    let groupId = '';
+    beforeAll(async () => {
+      const g = await ctx.prisma.dealerGroup.upsert({
+        where: { slug: 'crmwf-test-group' },
+        create: { slug: 'crmwf-test-group', name: 'CRMWF Test Group' },
+        update: {},
+      });
+      groupId = g.id;
+      // Chevy, Nissan and CDJR South are in the group; INFINITI is not.
+      for (const k of ['chevy', 'nissan', 'cdjr-south'] as const)
+        await ctx.prisma.tenant.update({
+          where: { id: ids[k].tenantId },
+          data: { dealerGroupId: g.id },
+        });
+    });
+    afterEach(async () => {
+      await ctx.prisma.dealerGroupMembership.deleteMany({
+        where: { dealerGroupId: groupId },
+      });
+      await ctx.prisma.crmWfStaffToken.deleteMany({});
+      await ctx.prisma.user.deleteMany({
+        where: { email: { startsWith: 'invited-' } },
+      });
+    });
+    const nissanAdminId = async () =>
+      (
+        await ctx.prisma.user.findFirstOrThrow({
+          where: { tenantId: ids.nissan.tenantId, role: 'ADMIN' },
+        })
+      ).id;
+
+    it('invites a person who then sets their own password; nobody else chooses it', async () => {
+      await api('nissan', 'manager')
+        .post('admin/staff/invite', {
+          email: 'invited-a@example.invalid',
+          firstName: 'Ann',
+          lastName: 'Test',
+          role: 'STAFF',
+          locationId: ids.nissan.locationId,
+        })
+        .expect(403);
+      await api('nissan')
+        .post('admin/staff/invite', {
+          email: 'invited-a@example.invalid',
+          firstName: 'Ann',
+          lastName: 'Test',
+          role: 'STAFF',
+        })
+        .expect(400);
+      const inv = unwrap<{ userId: string; link: string }>(
+        (
+          await api('nissan')
+            .post('admin/staff/invite', {
+              email: 'Invited-A@example.invalid',
+              firstName: 'Ann',
+              lastName: 'Test',
+              role: 'STAFF',
+              locationId: ids.nissan.locationId,
+            })
+            .expect(201)
+        ).body,
+      );
+      expect(inv.link).toMatch(
+        /^\/cc\/#\/set-password\?token=[A-Za-z0-9_-]{40,}$/,
+      );
+      const row = await ctx.prisma.crmWfStaffToken.findFirstOrThrow({
+        where: { userId: inv.userId },
+      });
+      expect(inv.link).not.toContain(row.tokenHash); // only the hash is stored
+      // Before the link is used the account cannot sign in at all.
+      expect(
+        (
+          await login(
+            'invited-a@example.invalid',
+            'whatever-password-1',
+            'crmwf-nissan',
+          )
+        ).status,
+      ).toBe(401);
+      const token = tokenFrom(inv.link);
+      const d = unwrap<{ valid: boolean; email: string; dealership: string }>(
+        (
+          await http()
+            .post('/api/public/crm-workforce/staff-link/describe')
+            .send({ token })
+            .expect(201)
+        ).body,
+      );
+      expect(d).toMatchObject({
+        valid: true,
+        email: 'i…@example.invalid',
+        dealership: 'CRMWF nissan',
+      });
+      await http()
+        .post('/api/public/crm-workforce/staff-link/accept')
+        .send({ token, password: 'short' })
+        .expect(400);
+      await http()
+        .post('/api/public/crm-workforce/staff-link/accept')
+        .send({ token, password: 'a-long-enough-password' })
+        .expect(201);
+      await http()
+        .post('/api/public/crm-workforce/staff-link/accept')
+        .send({ token, password: 'another-long-password' })
+        .expect(400);
+      expect(
+        (
+          await login(
+            'invited-a@example.invalid',
+            'a-long-enough-password',
+            'crmwf-nissan',
+          )
+        ).status,
+      ).toBe(201);
+      // The new person is STAFF at Nissan: no staff list, no other dealership.
+      const me = (
+        await login(
+          'invited-a@example.invalid',
+          'a-long-enough-password',
+          'crmwf-nissan',
+        )
+      ).token!;
+      await http()
+        .get('/api/ops/crm-workforce/admin/staff')
+        .set('Authorization', `Bearer ${me}`)
+        .expect(403);
+      const list = unwrap<
+        Array<{ email: string; isActive: boolean; mfaEnabled: boolean }>
+      >((await api('nissan', 'manager').get('admin/staff').expect(200)).body);
+      expect(
+        list.find((x) => x.email === 'invited-a@example.invalid'),
+      ).toMatchObject({ isActive: true });
+      expect(JSON.stringify(list)).not.toMatch(/password|mfaSecret/);
+      const chevyList = unwrap<Array<{ email: string }>>(
+        (await api('chevy').get('admin/staff').expect(200)).body,
+      );
+      expect(chevyList.map((x) => x.email)).not.toContain(
+        'invited-a@example.invalid',
+      );
+      const audit = await ctx.prisma.auditLog.findMany({
+        where: {
+          tenantId: ids.nissan.tenantId,
+          resourceId: inv.userId,
+          action: {
+            in: ['crmwf.staff.invited', 'crmwf.staff.invite_accepted'],
+          },
+        },
+      });
+      expect(audit.map((a) => a.action).sort()).toEqual([
+        'crmwf.staff.invite_accepted',
+        'crmwf.staff.invited',
+      ]);
+    });
+
+    it('reset signs the person out and only the new link works; deactivation locks them out', async () => {
+      const inv = unwrap<{ userId: string; link: string }>(
+        (
+          await api('nissan')
+            .post('admin/staff/invite', {
+              email: 'invited-b@example.invalid',
+              firstName: 'Bo',
+              lastName: 'Test',
+              role: 'STAFF',
+              locationId: ids.nissan.locationId,
+            })
+            .expect(201)
+        ).body,
+      );
+      await http()
+        .post('/api/public/crm-workforce/staff-link/accept')
+        .send({ token: tokenFrom(inv.link), password: 'first-password-123' })
+        .expect(201);
+      const before = await login(
+        'invited-b@example.invalid',
+        'first-password-123',
+        'crmwf-nissan',
+      );
+      expect(before.status).toBe(201);
+      const reset = unwrap<{ link: string }>(
+        (
+          await api('nissan')
+            .post(`admin/staff/${inv.userId}/reset`)
+            .expect(201)
+        ).body,
+      );
+      expect(
+        (
+          await login(
+            'invited-b@example.invalid',
+            'first-password-123',
+            'crmwf-nissan',
+          )
+        ).status,
+      ).toBe(401);
+      expect(
+        await ctx.prisma.refreshToken.count({
+          where: { userId: inv.userId, revokedAt: null },
+        }),
+      ).toBe(0);
+      await http()
+        .post('/api/public/crm-workforce/staff-link/accept')
+        .send({ token: tokenFrom(inv.link), password: 'stale-link-password' })
+        .expect(400);
+      await http()
+        .post('/api/public/crm-workforce/staff-link/accept')
+        .send({ token: tokenFrom(reset.link), password: 'second-password-123' })
+        .expect(201);
+      expect(
+        (
+          await login(
+            'invited-b@example.invalid',
+            'second-password-123',
+            'crmwf-nissan',
+          )
+        ).status,
+      ).toBe(201);
+      await api('nissan')
+        .post(`admin/staff/${inv.userId}/deactivate`)
+        .expect(201);
+      expect(
+        (
+          await login(
+            'invited-b@example.invalid',
+            'second-password-123',
+            'crmwf-nissan',
+          )
+        ).status,
+      ).toBe(401);
+      await api('nissan')
+        .post(`admin/staff/${inv.userId}/reactivate`)
+        .expect(201);
+      expect(
+        (
+          await login(
+            'invited-b@example.invalid',
+            'second-password-123',
+            'crmwf-nissan',
+          )
+        ).status,
+      ).toBe(201);
+      // Another dealership's administrator cannot touch this person.
+      await api('chevy')
+        .post(`admin/staff/${inv.userId}/deactivate`)
+        .expect(404);
+    });
+
+    it('privilege rules: no self-changes, no granting above your own role, ADMIN needs a reason', async () => {
+      const me = await nissanAdminId();
+      await api('nissan').post(`admin/staff/${me}/deactivate`).expect(403);
+      await api('nissan')
+        .post(`admin/staff/${me}/role`, {
+          role: 'STAFF',
+          locationId: ids.nissan.locationId,
+        })
+        .expect(403);
+      await api('nissan')
+        .post('admin/staff/invite', {
+          email: 'invited-c@example.invalid',
+          firstName: 'Cy',
+          lastName: 'Test',
+          role: 'ADMIN',
+        })
+        .expect(400);
+      const a = unwrap<{ userId: string }>(
+        (
+          await api('nissan')
+            .post('admin/staff/invite', {
+              email: 'invited-c@example.invalid',
+              firstName: 'Cy',
+              lastName: 'Test',
+              role: 'ADMIN',
+              reason: 'General manager of the store',
+            })
+            .expect(201)
+        ).body,
+      );
+      const mgr = await ctx.prisma.user.findFirstOrThrow({
+        where: { tenantId: ids.nissan.tenantId, role: 'MANAGER' },
+      });
+      await api('nissan')
+        .post(`admin/staff/${mgr.id}/role`, { role: 'ADMIN' })
+        .expect(400);
+      await api('nissan', 'manager')
+        .post(`admin/staff/${a.userId}/deactivate`)
+        .expect(403);
+      const log = await ctx.prisma.auditLog.findFirstOrThrow({
+        where: { action: 'crmwf.staff.invited', resourceId: a.userId },
+      });
+      expect(log.metadata).toMatchObject({
+        role: 'ADMIN',
+        reason: 'General manager of the store',
+      });
+    });
+
+    it('switching dealerships needs an explicit group membership; viewers only read; outside the group is refused', async () => {
+      const ch = `tenantId=${ids.chevy.tenantId}`;
+      await api('nissan').get(`status?${ch}`).expect(403);
+      const mine = unwrap<{ groupRole: string | null; dealerships: unknown[] }>(
+        (await api('nissan').get('admin/my-dealerships').expect(200)).body,
+      );
+      expect(mine).toMatchObject({ groupRole: null });
+      expect(mine.dealerships).toHaveLength(1);
+
+      await ctx.prisma.dealerGroupMembership.create({
+        data: {
+          dealerGroupId: groupId,
+          userId: await nissanAdminId(),
+          role: 'GROUP_VIEWER',
+        },
+      });
+      expect(
+        unwrap<{ featureFlag: boolean }>(
+          (await api('nissan').get(`status?${ch}`).expect(200)).body,
+        ),
+      ).toBeTruthy();
+      await api('nissan')
+        .post(`controls?${ch}`, {
+          scope: 'LOCATION',
+          locationId: ids.chevy.locationId,
+          halted: true,
+          reason: 'viewer tries',
+        })
+        .expect(403);
+      await api('nissan')
+        .get(`status?tenantId=${ids.infiniti.tenantId}`)
+        .expect(403);
+      const listed = unwrap<{
+        groupRole: string;
+        dealerships: Array<{ slug: string; locations: unknown[] }>;
+      }>((await api('nissan').get('admin/my-dealerships').expect(200)).body);
+      expect(listed.groupRole).toBe('GROUP_VIEWER');
+      expect(listed.dealerships.map((d) => d.slug).sort()).toEqual([
+        'crmwf-cdjr-south',
+        'crmwf-chevy',
+        'crmwf-nissan',
+      ]);
+
+      await ctx.prisma.dealerGroupMembership.updateMany({
+        where: { dealerGroupId: groupId },
+        data: { role: 'GROUP_ADMIN' },
+      });
+      await api('nissan')
+        .post(`controls?${ch}`, {
+          scope: 'LOCATION',
+          locationId: ids.chevy.locationId,
+          halted: true,
+          reason: 'group admin stop',
+        })
+        .expect(201);
+      const row = await ctx.prisma.crmWfControl.findFirstOrThrow({
+        where: { tenantId: ids.chevy.tenantId, scope: 'LOCATION' },
+      });
+      expect(row).toMatchObject({
+        halted: true,
+        updatedByUserId: await nissanAdminId(),
+      });
+      // Membership in a group does not reach a dealership outside it.
+      await api('nissan')
+        .post(`controls?tenantId=${ids.infiniti.tenantId}`, {
+          scope: 'LOCATION',
+          locationId: ids.infiniti.locationId,
+          halted: true,
+          reason: 'x',
+        })
+        .expect(403);
+      // A STAFF user with no membership gets nothing across dealerships.
+      await api('nissan', 'staff').get(`status?${ch}`).expect(403);
+    });
+
+    it('group stop halts every dealership in the group and needs a group administrator', async () => {
+      await api('nissan')
+        .post('admin/group-stop', { halted: true, reason: 'test' })
+        .expect(403);
+      await ctx.prisma.dealerGroupMembership.create({
+        data: {
+          dealerGroupId: groupId,
+          userId: await nissanAdminId(),
+          role: 'GROUP_ADMIN',
+        },
+      });
+      const r = unwrap<{ dealerships: string[]; halted: boolean }>(
+        (
+          await api('nissan')
+            .post('admin/group-stop', {
+              halted: true,
+              reason: 'incident drill',
+            })
+            .expect(201)
+        ).body,
+      );
+      expect(r.dealerships.sort()).toEqual([
+        'CRMWF cdjr-south',
+        'CRMWF chevy',
+        'CRMWF nissan',
+      ]);
+      for (const k of ['chevy', 'nissan', 'cdjr-south'] as const) {
+        const c = await ctx.prisma.crmWfControl.findUniqueOrThrow({
+          where: { scopeKey: `T:${ids[k].tenantId}` },
+        });
+        expect(c.halted).toBe(true);
+      }
+      expect(
+        await ctx.prisma.crmWfControl.count({
+          where: { tenantId: ids.infiniti.tenantId, halted: true },
+        }),
+      ).toBe(0);
+      await openGates('chevy', 'ASSIST');
+      await intake.ingest(scope('chevy'), 'fixture', [
+        rec({ inbound: 'hello?', outboundHoursAgo: 5 }),
+      ]);
+      expect((await tick()).outcomes.deferred_halted).toBe(1);
+      await api('nissan')
+        .post('admin/group-stop', { halted: false, reason: 'drill over' })
+        .expect(201);
+      expect(
+        (
+          await ctx.prisma.crmWfControl.findUniqueOrThrow({
+            where: { scopeKey: `T:${ids.chevy.tenantId}` },
+          })
+        ).halted,
+      ).toBe(false);
+    });
+
+    it('a dealership can tighten its model limits but never raise them above the platform', async () => {
+      await api('nissan', 'manager')
+        .post('admin/cost-limits', { dailyDraftLimit: 5 })
+        .expect(403);
+      const raised = unwrap<{ dailyDraftLimit: number }>(
+        (
+          await api('nissan')
+            .post('admin/cost-limits', { dailyDraftLimit: 99999 })
+            .expect(201)
+        ).body,
+      );
+      expect(raised.dailyDraftLimit).toBe(500);
+      await api('nissan')
+        .post('admin/cost-limits', { dailyDraftLimit: 1 })
+        .expect(201);
+      await api('nissan')
+        .post('controls', {
+          scope: 'TENANT',
+          authorization: { costLimits: { dailyDraftLimit: 100000 } },
+          reason: 'sneak',
+        })
+        .expect(400);
+      await api('nissan')
+        .post('controls', {
+          scope: 'LOCATION',
+          locationId: ids.nissan.locationId,
+          mode: 'ASSIST',
+          reason: 'assist',
+        })
+        .expect(201);
+      await api('nissan')
+        .post('connectors', {
+          locationId: ids.nissan.locationId,
+          adapterKey: 'manual_assist',
+          enabled: true,
+        })
+        .expect(201);
+      const lead = unwrap<{ id: string }>(
+        (
+          await api('nissan', 'staff')
+            .post('assist/leads', {
+              locationId: ids.nissan.locationId,
+              department: 'SALES',
+              customerMessage: 'Is the Rogue still available?',
+            })
+            .expect(201)
+        ).body,
+      ).id;
+      await api('nissan', 'staff').post(`leads/${lead}/draft`, {}).expect(201);
+      const res = await api('nissan', 'staff')
+        .post(`leads/${lead}/draft`, {})
+        .expect(409);
+      expect(JSON.stringify(res.body)).toContain('daily_draft_limit');
+      expect(route).toHaveBeenCalledTimes(1);
+      await ctx.prisma.crmWfControl.deleteMany({
+        where: { scopeKey: `T:${ids.nissan.tenantId}` },
+      });
+    });
+  });
 });

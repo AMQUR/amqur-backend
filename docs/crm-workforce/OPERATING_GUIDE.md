@@ -20,10 +20,10 @@ The platform creates its first administrator once, using a one-time secret:
    curl -X POST https://backend-production-production-2415eedf.up.railway.app/api/auth/bootstrap -H 'Content-Type: application/json' -d '{"secret":"<BOOTSTRAP_SECRET>","tenantName":"AMQUR Platform","tenantSlug":"amqur-platform","email":"<you>","password":"<your password>","firstName":"<first>","lastName":"<last>"}'
    ```
 3. Delete `BOOTSTRAP_SECRET` in Railway. Bootstrap also locks itself once a platform administrator exists.
-4. With that account's token, create an account for each person at each dealership with `POST /api/users`, passing `tenantId`, `email`, `password`, `firstName`, `lastName`, `role` (`ADMIN`, `MANAGER` or `STAFF`) and, for `MANAGER` and `STAFF`, the rooftop's `locationId`. There is no user-management screen yet.
+4. Add everyone else from the screen (release 2): **CRM Workforce → Team, limits and policy → Invite a person**. You get a one-time link; give it to the person yourself. They open it, choose their own password, and the account switches on. Nobody else ever sees their password.
 5. Each person signs in at the Command Center. Under **Multiple dealerships?**, enter the dealership slug: `dial-chevy-of-chicago`, `dial-nissan-of-chicago`, `infiniti-of-chicago`, `dial-cdjr-of-chicago` or `jeep-of-chicago`. Administrators must set up an authenticator app at first sign-in.
 
-**Working across several dealerships:** create your own `ADMIN` account in each dealership tenant with the same email. Choose the dealership at sign-in, and sign out to switch. The platform administrator account sees only its own tenant in the screens.
+**Working across several dealerships (release 2):** with a group membership on your account, CRM Workforce shows a **Dealership** picker at the top. Pick a dealership to work in it without signing out. A group administrator acts as an administrator in every group dealership; a group viewer can only look outside their own dealership. The membership is granted by the platform operator and recorded in the audit ledger.
 
 ## Where things are
 
@@ -54,6 +54,11 @@ Command Center → **CRM Workforce**. The tabs:
 | Reports and costs | **Performance and costs**: Morning / Midday / End of day / Weekly, plus model cost |
 | See what needs attention | **Overview** → Needs attention (managers) |
 | Audit trail | **Audit ledger** (managers) |
+| Switch dealership | **Dealership** picker at the top of CRM Workforce (group members) |
+| Invite a person, reset a password, deactivate, change a role | **Team, limits and policy** (administrators; managers see the list) |
+| Stop every dealership at once | **Team, limits and policy** → Group emergency stop (group administrators) |
+| Lower the daily model limits | **Team, limits and policy** → Model cost limits (administrators) |
+| Read the communication policy | **Team, limits and policy** → Communication policy |
 
 ## Daily routines
 
@@ -73,16 +78,15 @@ Command Center → **CRM Workforce**. The tabs:
 
 | Control | Status |
 |---|---|
-| Platform-wide emergency stop from the screen | Needs a platform administrator. Use the environment switch instead: set `CRM_WORKFORCE_EMERGENCY_STOP=true` on `backend-production` and `worker-production` in Railway |
-| Editing the communication policy | API only (`POST /api/ops/crm-workforce/policy`, platform administrator, counsel approval recorded). No screen |
+| Editing the communication policy | Read-only on screen. A change needs counsel-approved wording and is recorded by the platform operator |
 | Pausing one named agent | Not a separate switch. Pause its department or workflow instead |
-| User management | API only |
+| Platform-wide stop outside the group | Environment switch `CRM_WORKFORCE_EMERGENCY_STOP=true` (platform operator) |
 | Scheduled report delivery | Not built. Reports are on request |
 | Sending from the system, reading Tekion, booking | Blocked until Tekion access and the communication approvals are in place |
 
 ## Costs
 
 - Each **Write a reply** is one model call through the existing gateway, with a few hundred tokens in and fewer than 100 out.
-- Limits: `CRM_WORKFORCE_DAILY_DRAFT_LIMIT` (default 500 per rooftop per day) and `CRM_WORKFORCE_DAILY_BUDGET_MICRO_USD` (off by default; set it before wider use).
+- Limits: platform `CRM_WORKFORCE_DAILY_DRAFT_LIMIT` (default 500 per rooftop per day) and `CRM_WORKFORCE_DAILY_BUDGET_MICRO_USD` (off by default). Each dealership can set lower limits on screen (**Model cost limits**); it can never raise them above the platform.
 - The cost screen shows $0 until model prices are configured on the gateway (`LLM_COST_INPUT_PER_MTOK`, `LLM_COST_OUTPUT_PER_MTOK`).
 - No new Railway services were added; the module runs inside the existing API and worker.

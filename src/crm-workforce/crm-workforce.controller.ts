@@ -46,6 +46,8 @@ import { CRM_WORKFORCE_FLAG, DEPARTMENTS } from './crm-workforce.types';
 import { CrmWfAssistService } from './assist.service';
 import { CrmWfDirectorService } from './director.service';
 import { CrmWfFactsService } from './facts.service';
+import { CrmWfGroupScopeGuard } from './admin/group-scope.guard';
+import { CrmWfStaffService } from './admin/staff.service';
 import { CrmWfImportService } from './import.service';
 import { CrmWfMiningService } from './mining.service';
 import { CrmWfWorkItemService } from './work-item.service';
@@ -194,6 +196,37 @@ class ResolveDto {
   @IsOptional() @IsString() @MaxLength(120) crmReference?: string;
   @IsOptional() @IsString() @MaxLength(500) note?: string;
 }
+class InviteDto {
+  @IsString() @MaxLength(200) email!: string;
+  @IsString() @MinLength(1) @MaxLength(60) firstName!: string;
+  @IsString() @MinLength(1) @MaxLength(60) lastName!: string;
+  @IsIn(['STAFF', 'MANAGER', 'ADMIN']) role!: 'STAFF' | 'MANAGER' | 'ADMIN';
+  @IsOptional() @IsString() @MaxLength(64) locationId?: string;
+  @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+class RoleDto {
+  @IsIn(['STAFF', 'MANAGER', 'ADMIN']) role!: 'STAFF' | 'MANAGER' | 'ADMIN';
+  @IsOptional() @IsString() @MaxLength(64) locationId?: string;
+  @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+class CostLimitsDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100000)
+  dailyDraftLimit?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10000000000)
+  dailyBudgetMicroUsd?: number;
+}
+class GroupStopDto {
+  @IsBoolean() halted!: boolean;
+  @IsString() @MinLength(3) @MaxLength(300) reason!: string;
+}
 class ReasonDto {
   @IsString() @MinLength(3) @MaxLength(300) reason!: string;
 }
@@ -248,7 +281,8 @@ const maskContacts = (s: string) =>
  * mutation requires the `crmWorkforce` flag for that rooftop.
  */
 @Controller('ops/crm-workforce')
-@UseGuards(RolesGuard)
+// Group switching first (may re-scope the request to another dealership), then roles.
+@UseGuards(CrmWfGroupScopeGuard, RolesGuard)
 export class CrmWorkforceController {
   constructor(
     private readonly read: CrmWfReadService,
@@ -267,6 +301,7 @@ export class CrmWorkforceController {
     private readonly mining: CrmWfMiningService,
     private readonly director: CrmWfDirectorService,
     private readonly factsSvc: CrmWfFactsService,
+    private readonly staff: CrmWfStaffService,
   ) {}
 
   private scope(u: AuthUser, tenantId?: string, locationId?: string) {
@@ -962,6 +997,163 @@ export class CrmWorkforceController {
     const s = this.scope(u, t, l);
     if (!s.locationId) throw new BadRequestException('locationId_required');
     return this.factsSvc.directory(s.tenantId, s.locationId);
+  }
+
+  // ── administration: staff, dealerships, cost limits, group stop ──────────
+  /** Dealerships this person can open in CRM Workforce: their own, plus their group's when a
+   *  group membership exists. Used by the dealership switcher. */
+  @Roles(...STAFF)
+  @Get('admin/my-dealerships')
+  async myDealerships(@CurrentUser() u: AuthUser) {
+    assertStaffRole(u);
+    const home =
+      (u as AuthUser & { groupActing?: { homeTenantId: string } }).groupActing
+        ?.homeTenantId ?? u.tenantId;
+    const own = await this.prisma.tenant.findUnique({
+      where: { id: home },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        dealerGroupId: true,
+        locations: { select: { id: true, name: true } },
+      },
+    });
+    const m = own?.dealerGroupId
+      ? await this.prisma.dealerGroupMembership.findUnique({
+          where: {
+            dealerGroupId_userId: {
+              dealerGroupId: own.dealerGroupId,
+              userId: u.sub,
+            },
+          },
+          select: { role: true },
+        })
+      : null;
+    const tenants = m
+      ? await this.prisma.tenant.findMany({
+          where: { dealerGroupId: own!.dealerGroupId },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            locations: { select: { id: true, name: true } },
+          },
+          orderBy: { name: 'asc' },
+        })
+      : own
+        ? [own]
+        : [];
+    return {
+      homeTenantId: home,
+      groupRole: m?.role ?? null,
+      dealerships: tenants.map((t) => ({
+        tenantId: t.id,
+        name: t.name,
+        slug: t.slug,
+        locations: t.locations,
+      })),
+    };
+  }
+  @Roles(...MANAGERS)
+  @Get('admin/staff')
+  staffList(@CurrentUser() u: AuthUser, @Query('tenantId') t?: string) {
+    return this.staff.list(this.actor(u), this.scope(u, t).tenantId);
+  }
+  /** Creates the account switched off and returns a one-time link for the person to set their
+   *  own password. The link is shown once. */
+  @Roles(...ADMINS)
+  @Post('admin/staff/invite')
+  invite(
+    @CurrentUser() u: AuthUser,
+    @Body() dto: InviteDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.staff.invite(this.actor(u), this.scope(u, t).tenantId, dto);
+  }
+  @Roles(...ADMINS)
+  @Post('admin/staff/:id/reset')
+  resetStaff(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.staff.reset(this.actor(u), this.scope(u, t).tenantId, id);
+  }
+  @Roles(...ADMINS)
+  @Post('admin/staff/:id/deactivate')
+  deactivate(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.staff.setActive(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      id,
+      false,
+    );
+  }
+  @Roles(...ADMINS)
+  @Post('admin/staff/:id/reactivate')
+  reactivate(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.staff.setActive(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      id,
+      true,
+    );
+  }
+  @Roles(...ADMINS)
+  @Post('admin/staff/:id/role')
+  role(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: RoleDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.staff.changeRole(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      id,
+      dto,
+    );
+  }
+  @Roles(...MANAGERS)
+  @Get('admin/cost-limits')
+  getCostLimits(@CurrentUser() u: AuthUser, @Query('tenantId') t?: string) {
+    return this.controls.costLimits(this.scope(u, t).tenantId);
+  }
+  @Roles(...ADMINS)
+  @Post('admin/cost-limits')
+  setCostLimits(
+    @CurrentUser() u: AuthUser,
+    @Body() dto: CostLimitsDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.controls.setCostLimits(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      dto,
+    );
+  }
+  /** Stop or resume every dealership in the group. Needs a GROUP_ADMIN membership. */
+  @Roles(...ADMINS)
+  @Post('admin/group-stop')
+  groupStop(@CurrentUser() u: AuthUser, @Body() dto: GroupStopDto) {
+    assertStaffRole(u);
+    const home =
+      (u as AuthUser & { groupActing?: { homeTenantId: string } }).groupActing
+        ?.homeTenantId ?? u.tenantId;
+    return this.controls.setGroupHalt(
+      { ...this.actor(u), homeTenantId: home },
+      dto.halted,
+      dto.reason,
+    );
   }
 
   // ── customer data rights ─────────────────────────────────────────────────

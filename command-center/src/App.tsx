@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { api, logout, session, tryRestore } from './api';
 import { useAsync, useHashRoute } from './hooks';
 import { Login } from './pages/Login';
+import { SetPassword } from './pages/SetPassword';
 import { Home } from './pages/Home';
 import { Inbox } from './pages/Inbox';
 import { Appointments } from './pages/Appointments';
@@ -76,6 +77,10 @@ export function App() {
   useEffect(() => {
     void tryRestore().finally(() => setBooting(false));
   }, []);
+  if (route.startsWith('set-password')) {
+    const token = new URLSearchParams(route.split('?')[1] ?? '').get('token') ?? '';
+    return <SetPassword token={token} onDone={() => { void logout(); go('home'); }} />;
+  }
   if (booting) return <div className="boot" aria-busy="true" />;
   if (!user) return <Login onDone={(req) => { setEnrollRequired(req); if (req) go('security'); }} />;
   return <Shell route={enrollRequired ? 'security' : route} go={go} role={user.role} name={`${user.firstName} ${user.lastName}`} boundLocation={user.locationId} enrollRequired={enrollRequired} onEnrolled={() => setEnrollRequired(false)} />;

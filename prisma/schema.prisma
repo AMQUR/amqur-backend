@@ -2945,3 +2945,25 @@ model CrmWfWorkItem {
   @@index([tenantId, locationId, status, kind])
   @@index([crmLeadId])
 }
+
+/// One-time link for a staff member to set their own password: an invitation or an
+/// administrator-issued reset. Only a SHA-256 of the token is stored; the token itself is
+/// shown once to the administrator who created it. Single use, short-lived.
+model CrmWfStaffToken {
+  id String @id @default(cuid())
+
+  tenantId String
+  userId   String
+  /// INVITE | RESET
+  purpose   String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  revokedAt DateTime?
+
+  createdByUserId String
+
+  createdAt DateTime @default(now())
+
+  @@index([tenantId, userId])
+}

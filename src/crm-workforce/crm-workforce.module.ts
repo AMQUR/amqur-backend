@@ -20,6 +20,9 @@ import { CrmWfReadService } from './read.service';
 import { CrmWfSupervisorService } from './supervisor.service';
 import { CrmWfSuppressionService } from './suppression.service';
 import { CrmWfVaultService } from './vault.service';
+import { CrmWfGroupScopeGuard } from './admin/group-scope.guard';
+import { CrmWfStaffService } from './admin/staff.service';
+import { CrmWfStaffLinkController } from './admin/staff-link.controller';
 import { CrmWfWorkItemService } from './work-item.service';
 import { CrmWfAssistService } from './assist.service';
 import { CrmWfMiningService } from './mining.service';
@@ -33,9 +36,11 @@ import { CrmWfDirectorService } from './director.service';
  */
 @Module({
   imports: [PrismaModule, IntegrationsModule, ChatModule, SpotlightsModule],
-  controllers: [CrmWorkforceController],
+  controllers: [CrmWorkforceController, CrmWfStaffLinkController],
   providers: [
     CrmWfVaultService,
+    CrmWfStaffService,
+    CrmWfGroupScopeGuard,
     CrmWfPrivacyService,
     CrmWfImportService,
     CrmWfWorkItemService,

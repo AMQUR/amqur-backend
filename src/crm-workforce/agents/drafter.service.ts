@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { LlmRouterService } from '../../ai/llm-router.service';
 import { neutralizePromptInjection } from '../../knowledge/prompt-injection.util';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CrmWfControlService } from '../control.service';
 import {
   AgentKey,
   Channel,
@@ -149,6 +150,7 @@ export class CrmWfDrafterService {
   constructor(
     private readonly router: LlmRouterService,
     private readonly prisma: PrismaService,
+    private readonly controls: CrmWfControlService,
   ) {}
 
   /**
@@ -166,13 +168,13 @@ export class CrmWfDrafterService {
       _count: { _all: true },
       _sum: { costMicroUsd: true },
     });
-    const callLimit = Math.max(
-      0,
-      Number(process.env.CRM_WORKFORCE_DAILY_DRAFT_LIMIT ?? 500),
-    );
-    if (agg._count._all >= callLimit) return 'daily_draft_limit';
-    const usd = Number(process.env.CRM_WORKFORCE_DAILY_BUDGET_MICRO_USD ?? 0);
-    if (usd > 0 && (agg._sum.costMicroUsd ?? 0) >= usd)
+    // Dealership limits can only tighten the platform limits.
+    const limits = await this.controls.costLimits(tenantId);
+    if (agg._count._all >= limits.dailyDraftLimit) return 'daily_draft_limit';
+    if (
+      limits.dailyBudgetMicroUsd > 0 &&
+      (agg._sum.costMicroUsd ?? 0) >= limits.dailyBudgetMicroUsd
+    )
       return 'daily_model_budget';
     return null;
   }

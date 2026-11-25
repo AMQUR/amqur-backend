@@ -99,6 +99,13 @@ Proposed identities (changeable by an admin; must be disclosed as virtual; may n
 
 P0 customer waiting on a reply · P1 new lead, no response · P2 appointment change · P3 ready to buy · P4 missed appointment / visited, not sold · P5 engaged, needs follow-up · P6 overdue follow-up · P7 older-lead reactivation. Inputs are CRM operational facts only; each decision stores its rule and the facts it read.
 
+## Administration (release 2)
+
+- **Dealership switching.** `CrmWfGroupScopeGuard` runs before the role guard on every CRM Workforce route. A `tenantId` other than the caller's own is accepted only with a `DealerGroupMembership` in a group that contains both dealerships; `GROUP_ADMIN` acts as ADMIN, `GROUP_VIEWER` as MANAGER and only reads. Other routes of the platform are unchanged.
+- **People.** Invite (account created switched off, unusable password), reset (signs the person out everywhere), deactivate, reactivate and role change. Links are single-use, expire (72 h invite, 24 h reset), and only their SHA-256 is stored (`CrmWfStaffToken`, migration `20261126090000`). Nobody can change their own account, grant a role above their own, or grant ADMIN without a written reason. Every change is audited.
+- **Model cost limits** per dealership, only ever tighter than the platform environment limits; the drafter enforces the effective limit.
+- **Group emergency stop** sets the TENANT kill switch on every dealership in the group (group administrators only); resuming restores each previous mode.
+
 ## API and screens
 
 Staff API: `/api/ops/crm-workforce/*` (staff JWT; tenant from the token; staff and managers bound to their rooftop). Command Center: `/cc/#/crm-workforce` — overview, queues, draft approvals, AI workforce, modes and kill switches, compliance, CRM connections and workers, agent training, performance and costs, audit ledger. Numbers are counts of recorded events; synthetic records are labelled DEMO; a missing number is shown as missing.

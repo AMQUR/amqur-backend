@@ -138,6 +138,156 @@ export class CrmWfControlService {
     });
   }
 
+  /**
+   * Per-dealership cost limits, set by its administrators from the Command Center. They can only
+   * tighten the platform limits (CRM_WORKFORCE_DAILY_DRAFT_LIMIT / _DAILY_BUDGET_MICRO_USD),
+   * never raise them. Stored under the reserved `costLimits` key of the TENANT control row.
+   */
+  async costLimits(tenantId: string) {
+    const row = await this.prisma.crmWfControl.findUnique({
+      where: { scopeKey: scopeKeys.tenant(tenantId) },
+    });
+    const c =
+      (
+        (row?.authorization ?? {}) as {
+          costLimits?: {
+            dailyDraftLimit?: number;
+            dailyBudgetMicroUsd?: number;
+          };
+        }
+      ).costLimits ?? {};
+    const platformDrafts = Math.max(
+      0,
+      Number(process.env.CRM_WORKFORCE_DAILY_DRAFT_LIMIT ?? 500),
+    );
+    const platformBudget = Math.max(
+      0,
+      Number(process.env.CRM_WORKFORCE_DAILY_BUDGET_MICRO_USD ?? 0),
+    );
+    const drafts =
+      typeof c.dailyDraftLimit === 'number'
+        ? Math.min(c.dailyDraftLimit, platformDrafts)
+        : platformDrafts;
+    const budget =
+      typeof c.dailyBudgetMicroUsd === 'number' && c.dailyBudgetMicroUsd > 0
+        ? platformBudget > 0
+          ? Math.min(c.dailyBudgetMicroUsd, platformBudget)
+          : c.dailyBudgetMicroUsd
+        : platformBudget;
+    return {
+      dailyDraftLimit: drafts,
+      dailyBudgetMicroUsd: budget,
+      dealershipSetting: c,
+      platform: {
+        dailyDraftLimit: platformDrafts,
+        dailyBudgetMicroUsd: platformBudget,
+      },
+    };
+  }
+
+  async setCostLimits(
+    actor: Actor,
+    tenantId: string,
+    p: { dailyDraftLimit?: number | null; dailyBudgetMicroUsd?: number | null },
+  ) {
+    if (!['SUPER_ADMIN', 'ADMIN'].includes(actor.role))
+      throw new ForbiddenException('cost_limits_require_admin');
+    const ok = (v: unknown, max: number) =>
+      v === null ||
+      v === undefined ||
+      (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= max);
+    if (
+      !ok(p.dailyDraftLimit, 100_000) ||
+      !ok(p.dailyBudgetMicroUsd, 10_000_000_000)
+    )
+      throw new BadRequestException('invalid_cost_limit');
+    const scopeKey = scopeKeys.tenant(tenantId);
+    const existing = await this.prisma.crmWfControl.findUnique({
+      where: { scopeKey },
+    });
+    const costLimits = {
+      ...(typeof p.dailyDraftLimit === 'number'
+        ? { dailyDraftLimit: p.dailyDraftLimit }
+        : {}),
+      ...(typeof p.dailyBudgetMicroUsd === 'number'
+        ? { dailyBudgetMicroUsd: p.dailyBudgetMicroUsd }
+        : {}),
+    };
+    const authorization = {
+      ...((existing?.authorization as object | null) ?? {}),
+      costLimits,
+    } as Prisma.InputJsonValue;
+    await this.prisma.$transaction(async (tx) => {
+      const row = await tx.crmWfControl.upsert({
+        where: { scopeKey },
+        create: {
+          scope: 'TENANT',
+          scopeKey,
+          tenantId,
+          authorization,
+          reason: 'cost limits',
+          updatedByUserId: actor.userId,
+        },
+        update: { authorization, updatedByUserId: actor.userId },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: actor.userId,
+          action: 'crmwf.cost_limits.changed',
+          resource: 'CrmWfControl',
+          resourceId: row.id,
+          metadata: costLimits,
+        },
+      });
+    });
+    return this.costLimits(tenantId);
+  }
+
+  /**
+   * Stop (or resume) every dealership in the caller's group at once. Needs GROUP_ADMIN on a
+   * membership whose group contains the caller's own dealership. Stopping is always allowed to
+   * such a member; it only ever halts work, it never enables anything.
+   */
+  async setGroupHalt(
+    actor: Actor & { homeTenantId: string },
+    halted: boolean,
+    reason: string,
+  ) {
+    if (!reason?.trim()) throw new BadRequestException('reason_required');
+    const home = await this.prisma.tenant.findUnique({
+      where: { id: actor.homeTenantId },
+      select: { dealerGroupId: true },
+    });
+    const m = home?.dealerGroupId
+      ? await this.prisma.dealerGroupMembership.findUnique({
+          where: {
+            dealerGroupId_userId: {
+              dealerGroupId: home.dealerGroupId,
+              userId: actor.userId,
+            },
+          },
+        })
+      : null;
+    if (!m || m.role !== 'GROUP_ADMIN')
+      throw new ForbiddenException('group_stop_requires_group_admin');
+    const tenants = await this.prisma.tenant.findMany({
+      where: { dealerGroupId: home!.dealerGroupId },
+      select: { id: true, name: true },
+    });
+    for (const t of tenants)
+      await this.set(
+        { userId: actor.userId, role: 'ADMIN', tenantId: t.id },
+        {
+          scope: 'TENANT',
+          tenantId: t.id,
+          halted,
+          reason: `group ${halted ? 'stop' : 'resume'}: ${reason}`,
+        },
+      );
+    return { dealerships: tenants.map((t) => t.name), halted };
+  }
+
   list(tenantId: string, locationId?: string | null) {
     return this.prisma.crmWfControl.findMany({
       where: {
@@ -256,6 +406,7 @@ export class CrmWfControlService {
     if (
       input.authorization &&
       ('policy' in input.authorization ||
+        'costLimits' in input.authorization ||
         'policyLegalApproval' in input.authorization)
     )
       throw new BadRequestException(
@@ -268,7 +419,10 @@ export class CrmWfControlService {
     const reserved = prior
       ? Object.fromEntries(
           Object.entries(prior).filter(
-            ([k]) => k === 'policy' || k === 'policyLegalApproval',
+            ([k]) =>
+              k === 'policy' ||
+              k === 'policyLegalApproval' ||
+              k === 'costLimits',
           ),
         )
       : {};

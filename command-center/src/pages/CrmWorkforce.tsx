@@ -1,5 +1,6 @@
-import { useState, type ReactNode } from 'react';
-import { api, session } from '../api';
+import { useEffect, useState, type ReactNode } from 'react';
+import { api, session, setActingTenant } from '../api';
+import { CostLimitsCard, DealershipSwitcher, GroupStopCard, PolicyCard, TeamTab, type MyDealerships } from './CrmWorkforceAdmin';
 import { ago, fmtDate, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, Stat } from '../ui';
 import { DirectorCard, ImportsTab, MiningTab, PrivacyCard, ReportsCard, RosterCard, WorkItemsTab, WorkspaceTab } from './CrmWorkforceOps';
@@ -9,7 +10,7 @@ import {
   type Action, type Mode, type Overview, type QueueId, type Status, type Task,
 } from '../crmwf/crmWorkforce';
 
-type Tab = 'workspace' | 'items' | 'mining' | 'imports' | 'overview' | 'queues' | 'drafts' | 'workforce' | 'controls' | 'compliance' | 'connections' | 'training' | 'performance' | 'audit';
+type Tab = 'team' | 'workspace' | 'items' | 'mining' | 'imports' | 'overview' | 'queues' | 'drafts' | 'workforce' | 'controls' | 'compliance' | 'connections' | 'training' | 'performance' | 'audit';
 const TABS: Array<{ id: Tab; label: string; managers?: boolean }> = [
   { id: 'workspace', label: 'Today' },
   { id: 'items', label: 'Appointments and follow-ups' },
@@ -25,6 +26,7 @@ const TABS: Array<{ id: Tab; label: string; managers?: boolean }> = [
   { id: 'training', label: 'Agent training', managers: true },
   { id: 'performance', label: 'Performance and costs', managers: true },
   { id: 'audit', label: 'Audit ledger', managers: true },
+  { id: 'team', label: 'Team, limits and policy', managers: true },
 ];
 const DEPTS = ['SALES', 'SERVICE', 'PARTS'] as const;
 const post = <T,>(path: string, body: object = {}) => api<T>(`${BASE}/${path}`, { method: 'POST', body: JSON.stringify(body) });
@@ -57,13 +59,25 @@ function useAct(after: () => void) {
  * customer sending by itself: that needs the deployment switch, the rooftop switch, an approved
  * identity, a verified CRM connection, consent and a counsel-approved policy — each shown here.
  */
-export function CrmWorkforce({ locationId }: { locationId: string }) {
-  const role = session.user?.role ?? 'STAFF';
+export function CrmWorkforce({ locationId: homeLocationId }: { locationId: string }) {
+  const mine = useAsync(() => api<MyDealerships>(`${BASE}/admin/my-dealerships`), []);
+  const [tenantId, setTenantId] = useState('');
+  useEffect(() => () => setActingTenant(null), []);
+  const home = !tenantId || tenantId === mine.data?.homeTenantId;
+  const dealer = mine.data?.dealerships.find((d) => d.tenantId === tenantId);
+  // Acting in another group dealership: its role comes from the group membership.
+  const role = home ? session.user?.role ?? 'STAFF' : mine.data?.groupRole === 'GROUP_ADMIN' ? 'ADMIN' : 'MANAGER';
   const isManager = role !== 'STAFF';
   const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
+  const readOnlyGroup = !home && mine.data?.groupRole === 'GROUP_VIEWER';
+  const locationId = home ? homeLocationId : dealer?.locations[0]?.id ?? '';
   const [tab, setTab] = useState<Tab>('workspace');
-  const status = useAsync(() => api<Status>(`${BASE}/status?${qs(locationId)}`), [locationId]);
-  const overview = useAsync(() => api<Overview>(`${BASE}/overview?${qs(locationId)}`), [locationId]);
+  const pick = (id: string) => {
+    setActingTenant(id === mine.data?.homeTenantId ? null : id);
+    setTenantId(id);
+  };
+  const status = useAsync(() => api<Status>(`${BASE}/status?${qs(locationId)}`), [locationId, tenantId]);
+  const overview = useAsync(() => api<Overview>(`${BASE}/overview?${qs(locationId)}`), [locationId, tenantId]);
   const reload = () => {
     void status.reload();
     void overview.reload();
@@ -76,8 +90,9 @@ export function CrmWorkforce({ locationId }: { locationId: string }) {
   return (
     <div className="page">
       <div className="row between">
-        <h1>CRM Workforce</h1>
-        {s && locationId && (
+        <h1>CRM Workforce{!home && dealer ? ` — ${dealer.name}` : ''}</h1>
+        {mine.data && <DealershipSwitcher mine={mine.data} value={tenantId || mine.data.homeTenantId} onChange={pick} />}
+        {s && locationId && !readOnlyGroup && (
           <button
             className="btn btn--danger"
             disabled={stop.busy}
@@ -106,6 +121,11 @@ export function CrmWorkforce({ locationId }: { locationId: string }) {
           <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'btn' : 'btn btn--ghost'} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
       </div>
+      <div key={tenantId || 'home'}>
+      {tab === 'team' && mine.data && <GroupStopCard mine={mine.data} />}
+      {tab === 'team' && <TeamTab isAdmin={isAdmin} actingRole={role} locations={mine.data?.dealerships.find((d) => d.tenantId === (home ? mine.data?.homeTenantId : tenantId))?.locations ?? []} />}
+      {tab === 'team' && <CostLimitsCard isAdmin={isAdmin} />}
+      {tab === 'team' && <PolicyCard />}
       {tab === 'workspace' && <WorkspaceTab locationId={locationId} isManager={isManager} />}
       {tab === 'items' && <WorkItemsTab locationId={locationId} />}
       {tab === 'mining' && <MiningTab locationId={locationId} />}
@@ -124,6 +144,7 @@ export function CrmWorkforce({ locationId }: { locationId: string }) {
       {tab === 'performance' && <ReportsCard locationId={locationId} />}
       {tab === 'performance' && <PerformanceTab locationId={locationId} />}
       {tab === 'audit' && <AuditTab locationId={locationId} />}
+      </div>
     </div>
   );
 }
