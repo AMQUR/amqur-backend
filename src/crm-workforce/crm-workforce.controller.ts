@@ -9,6 +9,8 @@ import {
   Post,
   Query,
   UseGuards,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import {
@@ -26,6 +28,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import {
   assertStaffRole,
@@ -38,9 +41,9 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CrmWfActionService } from './action.service';
-import { ExportImportError, parseCrmExport } from './adapters/export-import';
 import { Actor, CrmWfControlService } from './control.service';
 import { CRM_WORKFORCE_FLAG, DEPARTMENTS } from './crm-workforce.types';
+import { CrmWfImportService } from './import.service';
 import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
 import { CrmWfPrivacyService } from './privacy.service';
@@ -97,11 +100,18 @@ class ConnectorDto {
   @IsBoolean() enabled!: boolean;
   @IsOptional() @IsString() @MaxLength(200) authorizationRef?: string;
 }
-class ImportDto {
+class ImportPreviewDto {
   @IsString() @MaxLength(64) locationId!: string;
-  @IsString() @MinLength(1) @MaxLength(5_000_000) csv!: string;
   @IsISO8601() exportedAt!: string;
-  @IsString() @MinLength(3) @MaxLength(200) authorizationRef!: string;
+  /** JSON object: field → column header. Optional; auto-detected otherwise. */
+  @IsOptional() @IsString() @MaxLength(4000) mapping?: string;
+}
+class ImportCommitDto {
+  @IsString() @MaxLength(64) locationId!: string;
+}
+class ImportRollbackDto {
+  @IsString() @MaxLength(64) locationId!: string;
+  @IsString() @MinLength(3) @MaxLength(300) reason!: string;
 }
 class LegalApprovalDto {
   @IsString() @MinLength(2) @MaxLength(200) approvedBy!: string;
@@ -189,6 +199,7 @@ export class CrmWorkforceController {
     private readonly flags: FeatureFlagsService,
     private readonly prisma: PrismaService,
     private readonly privacy: CrmWfPrivacyService,
+    private readonly importer: CrmWfImportService,
   ) {}
 
   private scope(u: AuthUser, tenantId?: string, locationId?: string) {
@@ -483,71 +494,94 @@ export class CrmWorkforceController {
     return this.leads.setConnector(this.actor(u), s.tenantId, dto);
   }
 
-  /** Permitted dealership export upload (read-only import into the mirror). */
+  // ── CRM export import: preview → commit → rollback ──────────────────────
   @Roles(...MANAGERS)
-  @Post('import')
-  async import(
+  @Get('imports')
+  imports(
     @CurrentUser() u: AuthUser,
-    @Body() dto: ImportDto,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.importer.list(this.scope(u, t, l));
+  }
+  @Roles(...MANAGERS)
+  @Get('imports/fields')
+  importFields(@CurrentUser() u: AuthUser) {
+    assertStaffRole(u);
+    return this.importer.fields();
+  }
+  /** Parse and classify an export. Writes nothing but the batch record (hash, counts). */
+  @Roles(...MANAGERS)
+  @Post('imports/preview')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5_000_000 } }))
+  importPreview(
+    @CurrentUser() u: AuthUser,
+    @UploadedFile() file: { buffer: Buffer; originalname?: string } | undefined,
+    @Body() dto: ImportPreviewDto,
     @Query('tenantId') t?: string,
   ) {
     const s = this.scope(u, t, dto.locationId);
-    await this.requireEnabled(s.tenantId, dto.locationId);
-    const loc = await this.prisma.location.findFirst({
-      where: { id: dto.locationId, tenantId: s.tenantId },
-      select: { id: true },
-    });
-    if (!loc) throw new ForbiddenException('Location access denied');
-    const connector = await this.prisma.crmWfConnector.findUnique({
-      where: {
-        tenantId_locationId_adapterKey: {
-          tenantId: s.tenantId,
-          locationId: dto.locationId,
-          adapterKey: 'export_import',
-        },
-      },
-    });
-    if (!connector?.enabled || !connector.authorizedAt)
-      throw new ForbiddenException(
-        'export_import_connector_not_authorized_for_this_rooftop',
-      );
-    const exportedAt = new Date(dto.exportedAt);
-    if (exportedAt.getTime() > Date.now() + 60_000)
-      throw new BadRequestException('exportedAt_in_the_future');
-    let parsed;
-    try {
-      parsed = parseCrmExport(dto.csv, { exportedAt });
-    } catch (e) {
-      if (e instanceof ExportImportError)
-        throw new BadRequestException(e.message);
-      throw e;
+    if (!file?.buffer?.length) throw new BadRequestException('file_required');
+    let mapping: Record<string, string> | undefined;
+    if (dto.mapping) {
+      try {
+        const m = JSON.parse(dto.mapping) as unknown;
+        if (!m || typeof m !== 'object' || Array.isArray(m)) throw new Error();
+        mapping = Object.fromEntries(
+          Object.entries(m as Record<string, unknown>).filter(
+            (e): e is [string, string] => typeof e[1] === 'string',
+          ),
+        );
+      } catch {
+        throw new BadRequestException('mapping_must_be_a_json_object');
+      }
     }
-    const summary = await this.intake.ingest(
+    return this.importer.preview(
+      this.actor(u),
       { tenantId: s.tenantId, locationId: dto.locationId },
-      'export_import',
-      parsed.records,
-    );
-    await this.prisma.auditLog.create({
-      data: {
-        tenantId: s.tenantId,
-        userId: u.sub,
-        action: 'crmwf.import.completed',
-        resource: 'Location',
-        resourceId: dto.locationId,
-        metadata: {
-          ...summary,
-          rejectedRows: parsed.rejectedRows.length,
-          ignoredColumns: parsed.ignoredColumns.length,
-          authorizationRef: dto.authorizationRef,
-          exportedAt: dto.exportedAt,
-        },
+      {
+        csv: file.buffer.toString('utf8'),
+        fileName: file.originalname,
+        exportedAt: dto.exportedAt,
+        mapping,
       },
-    });
-    return {
-      summary,
-      rejectedRows: parsed.rejectedRows.slice(0, 50),
-      ignoredColumns: parsed.ignoredColumns,
-    };
+    );
+  }
+  /** Apply a previewed batch. The same file must be presented again (hash check). */
+  @Roles(...MANAGERS)
+  @Post('imports/:id/commit')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5_000_000 } }))
+  importCommit(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @UploadedFile() file: { buffer: Buffer } | undefined,
+    @Body() dto: ImportCommitDto,
+    @Query('tenantId') t?: string,
+  ) {
+    const s = this.scope(u, t, dto.locationId);
+    if (!file?.buffer?.length) throw new BadRequestException('file_required');
+    return this.importer.commit(
+      this.actor(u),
+      { tenantId: s.tenantId, locationId: dto.locationId },
+      id,
+      file.buffer.toString('utf8'),
+    );
+  }
+  @Roles(...MANAGERS)
+  @Post('imports/:id/rollback')
+  importRollback(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ImportRollbackDto,
+    @Query('tenantId') t?: string,
+  ) {
+    const s = this.scope(u, t, dto.locationId);
+    return this.importer.rollback(
+      this.actor(u),
+      { tenantId: s.tenantId, locationId: dto.locationId },
+      id,
+      dto.reason,
+    );
   }
 
   // ── drafts and actions ───────────────────────────────────────────────────

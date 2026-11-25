@@ -10,6 +10,7 @@ import { CrmWfControlService } from './control.service';
 import { CrmWorkforceController } from './crm-workforce.controller';
 import { CrmWfEngineService } from './engine.service';
 import { CrmWfFactsService } from './facts.service';
+import { CrmWfImportService } from './import.service';
 import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
 import { CrmWfPrivacyService } from './privacy.service';
@@ -31,6 +32,7 @@ import { CrmWfVaultService } from './vault.service';
   providers: [
     CrmWfVaultService,
     CrmWfPrivacyService,
+    CrmWfImportService,
     CrmAdapterRegistry,
     CrmWfControlService,
     CrmWfSuppressionService,

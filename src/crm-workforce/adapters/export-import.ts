@@ -59,13 +59,46 @@ export type ImportResult = {
   records: CrmLeadRecord[];
   rejectedRows: Array<{ row: number; reason: string }>;
   ignoredColumns: string[];
+  /** field → source column actually used (auto-detected, then overridden by `mapping`). */
+  mapping: Record<string, string>;
+  headers: string[];
+  /** Fields the workforce can use that this file did not provide. */
+  unmappedFields: string[];
+};
+
+/** Fields a column can be mapped to, with a plain label for the mapping screen. */
+export const IMPORT_FIELDS: Record<string, string> = {
+  sourceRecordId: 'CRM lead ID (required)',
+  firstName: 'First name',
+  lastName: 'Last name',
+  phone: 'Mobile phone',
+  email: 'Email',
+  language: 'Language',
+  leadSource: 'Lead source',
+  crmStatus: 'Lead status',
+  assignedTo: 'Assigned salesperson',
+  department: 'Department / lead type',
+  year: 'Vehicle year',
+  make: 'Vehicle make',
+  model: 'Vehicle model',
+  vin: 'VIN',
+  stock: 'Stock number',
+  createdInCrmAt: 'Lead created date',
+  lastInboundAt: 'Last customer contact',
+  lastOutboundAt: 'Last dealership contact',
+  lastInboundText: 'Last customer message',
+  nextFollowUpAt: 'Next follow-up date',
+  appointmentState: 'Appointment status',
+  appointmentAt: 'Appointment date',
+  visitedAt: 'Showroom visit date',
+  doNotContact: 'Do not contact',
 };
 
 export class ExportImportError extends Error {}
 
 export function parseCrmExport(
   csv: string,
-  opts: { exportedAt: Date; now?: Date },
+  opts: { exportedAt: Date; now?: Date; mapping?: Record<string, string> },
 ): ImportResult {
   if (csv.length > 5_000_000) throw new ExportImportError('file_too_large');
   let rows: Record<string, string>[];
@@ -81,7 +114,14 @@ export function parseCrmExport(
     throw new ExportImportError('not_valid_csv');
   }
   if (rows.length === 0)
-    return { records: [], rejectedRows: [], ignoredColumns: [] };
+    return {
+      records: [],
+      rejectedRows: [],
+      ignoredColumns: [],
+      mapping: {},
+      headers: [],
+      unmappedFields: Object.keys(IMPORT_FIELDS),
+    };
   if (rows.length > 20_000) throw new ExportImportError('too_many_rows');
 
   const headers = Object.keys(rows[0]);
@@ -94,6 +134,19 @@ export function parseCrmExport(
   const col: Record<string, string | undefined> = {};
   for (const [field, names] of Object.entries(ALIASES))
     col[field] = headers.find((h) => names.includes(norm(h)));
+  // Explicit mapping from the reviewer wins over auto-detection. Unknown fields and columns
+  // that are not in the file are refused rather than ignored.
+  for (const [field, header] of Object.entries(opts.mapping ?? {})) {
+    if (!(field in IMPORT_FIELDS))
+      throw new ExportImportError(`unknown_mapping_field:${field}`);
+    if (header === '') {
+      col[field] = undefined;
+      continue;
+    }
+    if (!headers.includes(header))
+      throw new ExportImportError(`mapped_column_not_in_file:${field}`);
+    col[field] = header;
+  }
   if (!col.sourceRecordId)
     throw new ExportImportError('missing_lead_id_column');
   const used = new Set(Object.values(col).filter(Boolean));
@@ -177,7 +230,17 @@ export function parseCrmExport(
       messages,
     });
   });
-  return { records, rejectedRows, ignoredColumns };
+  const mapping = Object.fromEntries(
+    Object.entries(col).filter((e): e is [string, string] => !!e[1]),
+  );
+  return {
+    records,
+    rejectedRows,
+    ignoredColumns,
+    mapping,
+    headers,
+    unmappedFields: Object.keys(IMPORT_FIELDS).filter((f) => !mapping[f]),
+  };
 }
 
 function date(s: string): string | null {

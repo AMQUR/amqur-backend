@@ -1470,51 +1470,112 @@ describe('CRM Workforce (e2e)', () => {
       }
     });
 
-    it('a CRM export can be imported only with a recorded authorization, and only into its own rooftop', async () => {
-      const csv =
-        'Lead ID,First Name,Mobile,Status,Created Date\nX-1,Test,(312) 555-0142,Active,' +
-        hoursAgo(10);
-      const body = {
-        locationId: ids.nissan.locationId,
-        csv,
-        exportedAt: hoursAgo(1),
-        authorizationRef: 'TEST-AUTH-1',
+    describe('CRM export import', () => {
+      const up = (k: Key, path: string, csv: string, fields: Record<string, string>, role: 'admin' | 'manager' | 'staff' = 'manager') => {
+        let r = http().post(`/api/ops/crm-workforce/${path}`).set('Authorization', `Bearer ${ids[k][role]}`).attach('file', Buffer.from(csv), 'export.csv');
+        for (const [f, v] of Object.entries(fields)) r = r.field(f, v);
+        return r;
       };
-      await api('nissan', 'manager').post('import', body).expect(403);
-      await api('nissan')
-        .post('connectors', {
-          locationId: ids.nissan.locationId,
-          adapterKey: 'export_import',
-          enabled: true,
-        })
-        .expect(400);
-      await api('nissan')
-        .post('connectors', {
-          locationId: ids.nissan.locationId,
-          adapterKey: 'export_import',
-          enabled: true,
-          authorizationRef: 'TEST-AUTH-1',
-        })
-        .expect(201);
-      const out = unwrap<{ summary: { created: number; tasksQueued: number } }>(
-        (await api('nissan', 'manager').post('import', body).expect(201)).body,
-      );
-      expect(out.summary).toMatchObject({ created: 1, tasksQueued: 1 });
-      const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({
-        where: { tenantId: ids.nissan.tenantId },
+      const loc = () => ({ locationId: ids.nissan.locationId });
+      const HEAD = 'Lead ID,First Name,Last Name,Mobile,Email,Status,Salesperson,Make,Model,Created Date,Last Outbound,Next Follow Up,Do Not Contact';
+      const CREATED_AT = hoursAgo(40); // fixed for the run so an unchanged row hashes the same
+      const row = (id: string, n: string, status = 'Active', extra = '') => `${id},Test,Person${n},(312) 555-01${n},p${n}@example.invalid,${status},Pat Example,Nissan,Rogue,${CREATED_AT},${extra},,No`;
+      const connect = () => api('nissan').post('connectors', { locationId: ids.nissan.locationId, adapterKey: 'export_import', enabled: true, authorizationRef: 'TEST-AUTH-1' }).expect(201);
+      const leadCount = () => ctx.prisma.crmWfLead.count({ where: { tenantId: ids.nissan.tenantId } });
+
+      it('needs a recorded authorization; previews without writing; commits only the same file', async () => {
+        const csv = [HEAD, row('X-1', '41'), row('X-2', '42'), row('X-2', '43'), ',NoId,,,,,,,,,,,'].join('\n');
+        const meta = { ...loc(), exportedAt: hoursAgo(1) };
+        await up('nissan', 'imports/preview', csv, meta).expect(403);
+        await api('nissan').post('connectors', { locationId: ids.nissan.locationId, adapterKey: 'export_import', enabled: true }).expect(400);
+        await connect();
+        await up('nissan', 'imports/preview', csv, meta, 'staff').expect(403);
+        const pv = unwrap<{ batch: { id: string; status: string; synthetic: boolean; counts: Record<string, number>; validation: { rejectedRows: Array<{ reason: string }>; warnings: string[] } }; sample: unknown[] }>(
+          (await up('nissan', 'imports/preview', csv, meta).expect(201)).body,
+        );
+        expect(pv.batch).toMatchObject({ status: 'PREVIEWED', synthetic: true });
+        expect(pv.batch.counts).toMatchObject({ rows: 4, rejected: 2, created: 2, updated: 0, duplicates: 0 });
+        expect(pv.batch.validation.rejectedRows.map((r) => r.reason).sort()).toEqual(['duplicate_lead_id', 'missing_lead_id']);
+        expect(JSON.stringify(pv)).not.toMatch(/555-0141|p41@example|Person41/);
+        expect(await leadCount()).toBe(0);
+        expect(await tasksOf('nissan')).toHaveLength(0);
+
+        await up('nissan', `imports/${pv.batch.id}/commit`, csv + '\nX-9,Extra,,,,,,,,,,,', loc()).expect(400);
+        await up('chevy', `imports/${pv.batch.id}/commit`, csv, { locationId: ids.chevy.locationId }).expect(403);
+        const done = unwrap<{ status: string }>((await up('nissan', `imports/${pv.batch.id}/commit`, csv, loc()).expect(201)).body);
+        expect(done.status).toBe('COMMITTED');
+        expect(await leadCount()).toBe(2);
+        const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: 'X-1' } });
+        expect(lead).toMatchObject({ verified: true, synthetic: false, adapterKey: 'export_import', importBatchId: pv.batch.id, assignedTo: 'Pat Example' });
+        await up('nissan', `imports/${pv.batch.id}/commit`, csv, loc()).expect(409);
       });
-      expect(lead).toMatchObject({
-        verified: true,
-        synthetic: false,
-        adapterKey: 'export_import',
+
+      it('refuses real customer contacts until the rooftop is authorized for real imports', async () => {
+        await connect();
+        const csv = [HEAD, 'R-1,Real,Person,(312) 867-5309,someone@gmail.com,Active,Pat Example,Nissan,Rogue,,,,No'].join('\n');
+        const meta = { ...loc(), exportedAt: hoursAgo(1) };
+        const res = await up('nissan', 'imports/preview', csv, meta).expect(403);
+        expect(JSON.stringify(res.body)).toContain('real_customer_data_import_not_authorized');
+        expect(await ctx.prisma.crmWfImportBatch.count({ where: { tenantId: ids.nissan.tenantId } })).toBe(0);
+        expect(await leadCount()).toBe(0);
+        await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { featureFlags: { crmWorkforce: true, crmWorkforceRealImports: true } } });
+        try {
+          const pv = unwrap<{ batch: { synthetic: boolean } }>((await up('nissan', 'imports/preview', csv, meta).expect(201)).body);
+          expect(pv.batch.synthetic).toBe(false);
+        } finally {
+          await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { featureFlags: { crmWorkforce: true } } });
+        }
       });
-      await api('chevy', 'manager')
-        .post('import', { ...body })
-        .expect(403);
-      await api('nissan', 'manager')
-        .post('import', { ...body, csv: 'Lead ID,SSN\n1,x' })
-        .expect(400);
-      await api('nissan', 'staff').post('import', body).expect(403);
+
+      it('accepts a reviewer column mapping and refuses sensitive or unknown columns', async () => {
+        await connect();
+        const meta = { ...loc(), exportedAt: hoursAgo(1) };
+        const csv = 'Deal Number,Cust Cell,Rep\nM-1,312-555-0155,Sam Other';
+        await up('nissan', 'imports/preview', csv, meta).expect(400); // no lead id column detected
+        await up('nissan', 'imports/preview', csv, { ...meta, mapping: JSON.stringify({ sourceRecordId: 'Deal Number', phone: 'Nope' }) }).expect(400);
+        await up('nissan', 'imports/preview', csv, { ...meta, mapping: JSON.stringify({ ssn: 'Rep' }) }).expect(400);
+        const pv = unwrap<{ batch: { id: string; mapping: Record<string, string>; validation: { warnings: string[] } }; sample: Array<{ hasPhone: boolean; salesperson: string }> }>(
+          (await up('nissan', 'imports/preview', csv, { ...meta, mapping: JSON.stringify({ sourceRecordId: 'Deal Number', phone: 'Cust Cell', assignedTo: 'Rep' }) }).expect(201)).body,
+        );
+        expect(pv.batch.mapping).toEqual({ sourceRecordId: 'Deal Number', phone: 'Cust Cell', assignedTo: 'Rep' });
+        expect(pv.sample[0]).toMatchObject({ hasPhone: true, salesperson: 'Sam Other' });
+        expect(pv.batch.validation.warnings.join(' ')).toMatch(/do-not-contact/);
+        await up('nissan', 'imports/preview', 'Lead ID,Credit Score\n1,700', meta).expect(400);
+      });
+
+      it('imports incrementally and rolls a batch back exactly', async () => {
+        await connect();
+        const meta = () => ({ ...loc(), exportedAt: hoursAgo(1) });
+        const run = async (csv: string) => {
+          const pv = unwrap<{ batch: { id: string; counts: Record<string, number> } }>((await up('nissan', 'imports/preview', csv, meta()).expect(201)).body);
+          await up('nissan', `imports/${pv.batch.id}/commit`, csv, loc()).expect(201);
+          return pv.batch;
+        };
+        const b1 = await run([HEAD, row('I-1', '61'), row('I-2', '62')].join('\n'));
+        expect(b1.counts).toMatchObject({ created: 2 });
+        // Next export: I-1 unchanged, I-2 changed status, I-3 new.
+        const b2 = await run([HEAD, row('I-1', '61'), row('I-2', '62', 'Appointment Set'), row('I-3', '63')].join('\n'));
+        expect(b2.counts).toMatchObject({ created: 1, updated: 1, unchanged: 1 });
+        const get = (id: string) => ctx.prisma.crmWfLead.findFirst({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: id } });
+        expect((await get('I-2'))!.crmStatus).toBe('Appointment Set');
+
+        await api('nissan', 'manager').post(`imports/${b1.id}/rollback`, { ...loc(), reason: 'wrong order' }).expect(409);
+        await api('nissan', 'staff').post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'no' }).expect(403);
+        const rb = unwrap<{ removed: number; restored: number; keptBecauseContacted: number }>(
+          (await api('nissan', 'manager').post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'bad file' }).expect(201)).body,
+        );
+        expect(rb).toMatchObject({ removed: 1, restored: 1, keptBecauseContacted: 0 });
+        expect(await get('I-3')).toBeNull();
+        expect((await get('I-2'))!.crmStatus).toBe('Active');
+        expect(await leadCount()).toBe(2);
+        await api('nissan', 'manager').post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'again' }).expect(409);
+        const rb1 = unwrap<{ removed: number }>((await api('nissan', 'manager').post(`imports/${b1.id}/rollback`, { ...loc(), reason: 'start over' }).expect(201)).body);
+        expect(rb1.removed).toBe(2);
+        expect(await leadCount()).toBe(0);
+        expect((await tasksOf('nissan')).filter((t) => t.status === 'PENDING')).toHaveLength(0);
+        const list = unwrap<Array<{ status: string }>>((await api('nissan', 'manager').get('imports').expect(200)).body);
+        expect(list.map((b) => b.status)).toEqual(['ROLLED_BACK', 'ROLLED_BACK']);
+      });
     });
 
     it('reports only what happened: demo label, zero duplicates, no invented numbers', async () => {

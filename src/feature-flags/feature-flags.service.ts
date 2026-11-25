@@ -106,6 +106,12 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
    * any customer-facing send needs its own control row, env switch and authorization.
    */
   crmWorkforce: false,
+  /**
+   * Lets a rooftop import CRM exports that contain REAL customer contacts. Default off: with
+   * it off only files made entirely of reserved test contacts are accepted. Turn on per
+   * rooftop only after the import authorization and privacy checks are recorded.
+   */
+  crmWorkforceRealImports: false,
 };
 
 @Injectable()
