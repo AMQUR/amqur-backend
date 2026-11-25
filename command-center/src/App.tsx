@@ -31,6 +31,7 @@ import { WorkflowStudio } from './pages/WorkflowStudio';
 import { ToolApprovals } from './pages/ToolApprovals';
 import { LeadDeliveries } from './pages/LeadDeliveries';
 import { Funnel } from './pages/Funnel';
+import { CrmWorkforce } from './pages/CrmWorkforce';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -59,6 +60,7 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'settings', label: 'Rooftop settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'funnel', label: 'Lead and appointment funnel' },
   { id: 'lead-deliveries', label: 'Lead deliveries (CRM)' },
+  { id: 'crm-workforce', label: 'CRM Workforce' },
   { id: 'ops', label: 'Delivery failures', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'group', label: 'Group overview' },
   { id: 'security', label: 'Security' },
@@ -139,6 +141,7 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'approvals' && <ToolApprovals locationId={locationId} />}
         {route === 'funnel' && <Funnel locationId={locationId} />}
         {route === 'lead-deliveries' && <LeadDeliveries locationId={locationId} />}
+        {route === 'crm-workforce' && <CrmWorkforce locationId={locationId} />}
         {route === 'campaigns' && <Campaigns locationId={locationId} />}
         {route === 'surveys' && <Surveys locationId={locationId} />}
         {route === 'action-pages' && <ActionPages locationId={locationId} />}

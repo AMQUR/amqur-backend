@@ -6,7 +6,11 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { Department, OperatingMode } from './crm-workforce.types';
-import { CompliancePolicy, DEFAULT_POLICY } from './policy/compliance.engine';
+import {
+  CompliancePolicy,
+  DEFAULT_POLICY,
+  sanitizePolicy,
+} from './policy/compliance.engine';
 import {
   ControlRow,
   ControlTarget,
@@ -54,15 +58,83 @@ export class CrmWfControlService {
     return !!g?.halted;
   }
 
-  /** Compliance policy for a tenant: defaults overlaid with the TENANT row's stored policy. */
+  /**
+   * Compliance policy for a tenant. Stored on the TENANT control row under the reserved
+   * `policy` / `policyLegalApproval` keys, which ONLY `setPolicy` (SUPER_ADMIN) can write —
+   * the general `set` method refuses them. Read back through the same validator, so a bad
+   * row can only ever fall back to defaults (which are not approved for sending).
+   */
   async policyFor(tenantId: string): Promise<CompliancePolicy> {
     const row = await this.prisma.crmWfControl.findUnique({
       where: { scopeKey: scopeKeys.tenant(tenantId) },
     });
-    const stored = (
-      row?.authorization as { policy?: Partial<CompliancePolicy> } | null
-    )?.policy;
-    return stored ? { ...DEFAULT_POLICY, ...stored } : DEFAULT_POLICY;
+    const a = (row?.authorization ?? null) as {
+      policy?: unknown;
+      policyLegalApproval?: CompliancePolicy['legalApproval'];
+    } | null;
+    return a?.policy
+      ? sanitizePolicy(a.policy, a.policyLegalApproval ?? null)
+      : DEFAULT_POLICY;
+  }
+
+  /** Platform operator records the counsel-approved policy for a tenant. SUPER_ADMIN only. */
+  async setPolicy(
+    actor: Actor,
+    tenantId: string,
+    policy: unknown,
+    legalApproval: CompliancePolicy['legalApproval'],
+    reason: string,
+  ) {
+    if (actor.role !== 'SUPER_ADMIN')
+      throw new ForbiddenException('policy_change_requires_platform_operator');
+    if (!reason?.trim()) throw new BadRequestException('reason_required');
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { id: true },
+    });
+    if (!tenant) throw new BadRequestException('unknown_tenant');
+    const clean = sanitizePolicy(policy, legalApproval);
+    const scopeKey = scopeKeys.tenant(tenantId);
+    const existing = await this.prisma.crmWfControl.findUnique({
+      where: { scopeKey },
+    });
+    const { legalApproval: approved, ...stored } = clean;
+    const authorization = {
+      ...((existing?.authorization as object | null) ?? {}),
+      policy: stored,
+      policyLegalApproval: approved,
+    } as Prisma.InputJsonValue;
+    const why = reason.trim().slice(0, 500);
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.crmWfControl.upsert({
+        where: { scopeKey },
+        create: {
+          scope: 'TENANT',
+          scopeKey,
+          tenantId,
+          authorization,
+          reason: why,
+          updatedByUserId: actor.userId,
+        },
+        update: { authorization, reason: why, updatedByUserId: actor.userId },
+      });
+      await tx.auditLog.create({
+        data: {
+          tenantId,
+          userId: actor.userId,
+          action: 'crmwf.policy.changed',
+          resource: 'CrmWfControl',
+          resourceId: row.id,
+          metadata: {
+            version: clean.version,
+            legallyApproved: !!approved,
+            documentRef: approved?.documentRef ?? null,
+            reason: why,
+          },
+        },
+      });
+      return clean;
+    });
   }
 
   list(tenantId: string, locationId?: string | null) {
@@ -179,6 +251,31 @@ export class CrmWfControlService {
     const existing = await this.prisma.crmWfControl.findUnique({
       where: { scopeKey },
     });
+    // The compliance-policy keys are reserved: never accepted here, always carried over.
+    if (
+      input.authorization &&
+      ('policy' in input.authorization ||
+        'policyLegalApproval' in input.authorization)
+    )
+      throw new BadRequestException(
+        'policy_is_set_through_the_policy_endpoint_only',
+      );
+    const prior = (existing?.authorization ?? null) as Record<
+      string,
+      unknown
+    > | null;
+    const reserved = prior
+      ? Object.fromEntries(
+          Object.entries(prior).filter(
+            ([k]) => k === 'policy' || k === 'policyLegalApproval',
+          ),
+        )
+      : {};
+    if (input.authorization !== undefined && Object.keys(reserved).length)
+      input = {
+        ...input,
+        authorization: { ...(input.authorization ?? {}), ...reserved },
+      };
     const data = {
       halted: input.halted ?? existing?.halted ?? false,
       // Only a LOCATION row has defaults; every other scope states an opinion only when asked.

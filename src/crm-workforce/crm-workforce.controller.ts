@@ -24,6 +24,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import {
@@ -100,6 +101,20 @@ class ImportDto {
   @IsString() @MinLength(1) @MaxLength(5_000_000) csv!: string;
   @IsISO8601() exportedAt!: string;
   @IsString() @MinLength(3) @MaxLength(200) authorizationRef!: string;
+}
+class LegalApprovalDto {
+  @IsString() @MinLength(2) @MaxLength(200) approvedBy!: string;
+  @IsString() @MinLength(4) @MaxLength(40) approvedAt!: string;
+  @IsString() @MinLength(2) @MaxLength(200) documentRef!: string;
+}
+class PolicyDto {
+  @IsString() @MaxLength(64) tenantId!: string;
+  @IsObject() policy!: Record<string, unknown>;
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => LegalApprovalDto)
+  legalApproval?: LegalApprovalDto;
+  @IsString() @MinLength(3) @MaxLength(500) reason!: string;
 }
 class ReasonDto {
   @IsString() @MinLength(3) @MaxLength(300) reason!: string;
@@ -316,34 +331,49 @@ export class CrmWorkforceController {
     }));
   }
 
-  /** Group overview: one row per rooftop the user may see. Counts only — no customer data. */
-  @Roles(...STAFF)
+  /**
+   * Group overview: counts only — no customer data. A rooftop-bound user gets their own
+   * rooftop and nothing else. Other dealerships appear only through an explicit dealer-group
+   * membership (or for the platform operator), never by default.
+   */
+  @Roles(...MANAGERS)
   @Get('group')
   async group(@CurrentUser() u: AuthUser) {
     assertStaffRole(u);
-    const own = await this.prisma.tenant.findUnique({
-      where: { id: u.tenantId },
-      select: { dealerGroupId: true },
-    });
-    const memberships = await this.prisma.dealerGroupMembership.findMany({
-      where: { userId: u.sub },
-      select: { dealerGroupId: true },
-    });
-    const groupIds = new Set(memberships.map((m) => m.dealerGroupId));
-    if (u.role === 'SUPER_ADMIN' && own?.dealerGroupId)
-      groupIds.add(own.dealerGroupId);
-    const tenants = groupIds.size
-      ? await this.prisma.tenant.findMany({
-          where: { dealerGroupId: { in: [...groupIds] } },
-          select: { id: true, name: true, slug: true },
-        })
-      : await this.prisma.tenant.findMany({
+    const bound = resolveLocationScope(u);
+    const pick = { id: true, name: true, slug: true } as const;
+    const ownOnly = () =>
+      this.prisma.tenant.findMany({ where: { id: u.tenantId }, select: pick });
+    let tenants: Array<{ id: string; name: string; slug: string }>;
+    if (bound) tenants = await ownOnly();
+    else {
+      const memberships = await this.prisma.dealerGroupMembership.findMany({
+        where: { userId: u.sub },
+        select: { dealerGroupId: true },
+      });
+      const groupIds = new Set(memberships.map((m) => m.dealerGroupId));
+      if (u.role === 'SUPER_ADMIN') {
+        const own = await this.prisma.tenant.findUnique({
           where: { id: u.tenantId },
-          select: { id: true, name: true, slug: true },
+          select: { dealerGroupId: true },
         });
+        if (own?.dealerGroupId) groupIds.add(own.dealerGroupId);
+      }
+      tenants = groupIds.size
+        ? await this.prisma.tenant.findMany({
+            where: { dealerGroupId: { in: [...groupIds] } },
+            select: pick,
+          })
+        : [];
+      if (!tenants.some((t) => t.id === u.tenantId))
+        tenants.push(...(await ownOnly()));
+    }
     return Promise.all(
       tenants.map(async (t) => {
-        const s = { tenantId: t.id, locationId: null };
+        const s = {
+          tenantId: t.id,
+          locationId: t.id === u.tenantId ? bound : null,
+        };
         const [overview, status] = await Promise.all([
           this.read.overview(s),
           this.read.status(s),
@@ -362,7 +392,7 @@ export class CrmWorkforceController {
             status.controls.some(
               (c) => c.halted && (c.scope === 'GLOBAL' || c.tenantId === t.id),
             ),
-          externalSendEnabled: loc.some((c) => c.externalSendEnabled),
+          externalSendEnabled: loc.some((c) => c.externalSendEnabled === true),
           dataLabel: overview.dataLabel,
           leads: overview.leads,
           tasks: overview.tasks,
@@ -403,6 +433,25 @@ export class CrmWorkforceController {
       tenantId: s.tenantId,
       locationId: s.locationId ?? dto.locationId,
     });
+  }
+
+  /** Counsel-approved communication policy. Platform operator only; validated and audited. */
+  @Roles('SUPER_ADMIN')
+  @Post('policy')
+  setPolicy(@CurrentUser() u: AuthUser, @Body() dto: PolicyDto) {
+    assertStaffRole(u);
+    return this.controls.setPolicy(
+      this.actor(u),
+      dto.tenantId,
+      dto.policy,
+      dto.legalApproval ?? null,
+      dto.reason,
+    );
+  }
+  @Roles(...MANAGERS)
+  @Get('policy')
+  getPolicy(@CurrentUser() u: AuthUser, @Query('tenantId') t?: string) {
+    return this.controls.policyFor(this.scope(u, t).tenantId);
   }
 
   // ── configuration ────────────────────────────────────────────────────────

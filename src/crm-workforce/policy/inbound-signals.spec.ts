@@ -1,6 +1,7 @@
 import {
   escalationFor,
   readInboundSignals,
+  standingOptOut,
   suppressionFor,
 } from './inbound-signals';
 
@@ -79,5 +80,57 @@ describe('inbound signals', () => {
     expect(
       readInboundSignals('Is it still available? I can come in today'),
     ).toContain('PURCHASE_INTENT');
+  });
+
+  describe('opt-out standing across the whole history', () => {
+    const at = (h: number) => new Date(Date.UTC(2026, 10, 18, h));
+    const m = (body: string, h: number, channel = 'SMS') => ({
+      body,
+      channel,
+      occurredAt: at(h),
+    });
+
+    it.each([
+      'STOP please',
+      'Stop. Thanks',
+      'stop texting',
+      'STOP ALL',
+      'unsubscribe please',
+    ])('"%s" is a keyword opt-out', (t) =>
+      expect(standingOptOut([m(t, 1)])).not.toBeNull(),
+    );
+    it.each([
+      'Can you stop by with the truck price?',
+      'cancel my appointment for Friday',
+      'I will stop in tomorrow',
+    ])('"%s" is not an opt-out', (t) =>
+      expect(standingOptOut([m(t, 1)])).toBeNull(),
+    );
+    it('an old STOP still stands after later, unrelated messages', () => {
+      expect(standingOptOut([m('STOP', 1), m('ok whatever', 5)])).toMatchObject(
+        { reason: 'STOP', channel: 'SMS' },
+      );
+    });
+    it("only the customer's own START on that channel re-opens it", () => {
+      expect(standingOptOut([m('STOP', 1), m('START', 5)])).toBeNull();
+      expect(
+        standingOptOut([m('STOP', 1), m('START', 5, 'EMAIL')]),
+      ).not.toBeNull();
+      expect(standingOptOut([m('START', 1), m('STOP', 5)])).not.toBeNull();
+    });
+    it('do-not-contact and wrong number are never re-opened or narrowed', () => {
+      expect(
+        standingOptOut([m('do not contact me again', 1), m('START', 5)]),
+      ).toMatchObject({ channelScope: 'ALL' });
+      expect(
+        standingOptOut([m('wrong number', 1), m('STOP', 5)]),
+      ).toMatchObject({ channelScope: 'ALL', reason: 'WRONG_NUMBER' });
+    });
+    it('records the channel the opt-out arrived on', () => {
+      expect(standingOptOut([m('unsubscribe', 1, 'EMAIL')])).toMatchObject({
+        channel: 'EMAIL',
+        channelScope: 'CHANNEL',
+      });
+    });
   });
 });

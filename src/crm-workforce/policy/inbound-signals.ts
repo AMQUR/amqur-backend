@@ -21,8 +21,13 @@ export type InboundSignal =
   | 'PROMPT_INJECTION'
   | 'HAS_LINK';
 
+/** An opt-out keyword that leads the message, alone or with a short tail ("STOP please",
+ *  "Stop. Thanks"). A sentence that merely contains the word ("can you stop by?",
+ *  "cancel my appointment") is not a keyword opt-out — the phrase rules read those. */
 const STOP_WORDS =
-  /^\s*(stop|stopall|end|cancel|quit|revoke|unsubscribe|alto|parar|cancelar)\s*[.!]*\s*$/i;
+  /^\s*(stop|stopall|stop all|end|cancel|quit|revoke|unsubscribe|alto|parar|cancelar)\b[\s.!,]*(?:(?:please|pls|now|thanks|thank you|it|this|all|messages?|texts?|texting|por favor)[\s.!,]*){0,3}$/i;
+/** Handset re-opt-in keywords. Only these re-open a channel after an opt-out in the history. */
+const START_WORDS = /^\s*(start|unstop|subscribe)\s*[.!]*\s*$/i;
 
 const RULES: Array<[InboundSignal, RegExp]> = [
   [
@@ -88,6 +93,42 @@ export function readInboundSignals(text: string): InboundSignal[] {
 /** Injection shapes specific to a CRM agent (data exfiltration, permission and tool requests). */
 const EXTRA_INJECTION =
   /\b(ignore (?:all |any |your )?(?:previous|prior|above) (?:instructions|rules)|system prompt|you are now|act as (?:an? )?(?:admin|developer|manager)|(?:list|show|send|give) (?:me )?(?:all|every|other) (?:customers?|leads?|phone numbers|emails|records)|change (?:my|your|the) permissions?|disable (?:the )?(?:compliance|filter|kill switch)|export (?:the )?(?:crm|database)|run (?:this|the) (?:command|tool|code))\b/i;
+
+/**
+ * Opt-out standing across a WHOLE conversation history, not just the unanswered tail: a STOP
+ * or do-not-contact that staff later replied to is still a STOP. Walks the customer's inbound
+ * messages oldest → newest; the last opt-out stands unless the customer themselves later sent
+ * a re-opt-in keyword on that channel. Do-not-contact and wrong-number are never re-opened.
+ */
+export type StandingOptOut = {
+  channelScope: 'CHANNEL' | 'ALL';
+  reason: string;
+  channel: 'SMS' | 'EMAIL';
+};
+export function standingOptOut(
+  inbound: Array<{ body: string; channel: string; occurredAt: Date }>,
+): StandingOptOut | null {
+  let standing: StandingOptOut | null = null;
+  const ordered = [...inbound].sort(
+    (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime(),
+  );
+  for (const m of ordered) {
+    const channel = m.channel === 'EMAIL' ? 'EMAIL' : 'SMS';
+    const sup = suppressionFor(readInboundSignals(m.body));
+    if (sup) {
+      // An every-channel opt-out is never narrowed by a later channel keyword.
+      if (!(standing?.channelScope === 'ALL' && sup.channelScope === 'CHANNEL'))
+        standing = { ...sup, channel };
+    } else if (
+      standing?.channelScope === 'CHANNEL' &&
+      standing.channel === channel &&
+      START_WORDS.test(m.body)
+    ) {
+      standing = null;
+    }
+  }
+  return standing;
+}
 
 /** Signals that end contact. `ALL` is used for explicit do-not-contact and wrong-number. */
 export function suppressionFor(

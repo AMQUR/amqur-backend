@@ -24,7 +24,7 @@ import { CrmWfFactsService } from './facts.service';
 import { leadFacts } from './intake.service';
 import { prioritize } from './intelligence/prioritization';
 import { evaluateCompliance } from './policy/compliance.engine';
-import { escalationFor, suppressionFor } from './policy/inbound-signals';
+import { escalationFor, standingOptOut } from './policy/inbound-signals';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfSuppressionService } from './suppression.service';
 
@@ -145,13 +145,17 @@ export class CrmWfSupervisorService {
     if (humanOwns(lead, lead.messages, now))
       return finish('SUPPRESSED', 'human_conversation_active', 'human_active');
 
-    const sup = suppressionFor(signals);
+    const sup = standingOptOut(
+      lead.messages.filter(
+        (m) => m.direction === 'INBOUND' && m.authorType === 'CUSTOMER',
+      ),
+    );
     if (sup) {
       await this.suppression.suppressLead({
         tenantId: lead.tenantId,
         crmLeadId: lead.id,
         scope: sup.channelScope,
-        channel: 'SMS',
+        channel: sup.channel,
         reason: sup.reason,
         source: 'INBOUND_MESSAGE',
       });

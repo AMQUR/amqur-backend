@@ -39,6 +39,10 @@ export class CrmWfEngineService {
   ) {}
 
   private async beat(state: string, detail: object = {}) {
+    // Heartbeats of processes that no longer exist are dropped after a day.
+    await this.prisma.crmWfHeartbeat.deleteMany({
+      where: { lastBeatAt: { lt: new Date(Date.now() - 86_400_000) } },
+    });
     await this.prisma.crmWfHeartbeat.upsert({
       where: { workerId: CRMWF_WORKER_ID },
       create: {

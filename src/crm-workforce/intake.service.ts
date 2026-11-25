@@ -12,7 +12,7 @@ import {
 import {
   InboundSignal,
   readInboundSignals,
-  suppressionFor,
+  standingOptOut,
 } from './policy/inbound-signals';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfSuppressionService } from './suppression.service';
@@ -225,27 +225,23 @@ export class CrmWfIntakeService {
         },
       });
 
-    // The customer said stop (or the CRM says do-not-contact): suppress first, queue nothing.
-    const sup = suppressionFor(signals);
+    // The customer said stop — anywhere in the history, answered or not — or the CRM says
+    // do-not-contact: suppress first, queue nothing.
+    const sup = standingOptOut(
+      lead.messages.filter(
+        (m) => m.direction === 'INBOUND' && m.authorType === 'CUSTOMER',
+      ),
+    );
     if (sup || lead.crmDoNotContact === true) {
-      const lastInbound = [...lead.messages]
-        .filter((m) => m.direction === 'INBOUND')
-        .sort((a, b) => b.occurredAt.getTime() - a.occurredAt.getTime())[0];
       await this.suppression.suppressLead({
         tenantId: lead.tenantId,
         crmLeadId: lead.id,
         scope: sup ? sup.channelScope : 'ALL',
-        channel: lastInbound?.channel === 'EMAIL' ? 'EMAIL' : 'SMS',
+        channel: sup ? sup.channel : 'SMS',
         reason: sup ? sup.reason : 'DO_NOT_CONTACT',
         source: sup ? 'INBOUND_MESSAGE' : 'CRM_PREFERENCE',
       });
-      if (sup)
-        await this.outcome(
-          lead,
-          'OPT_OUT',
-          `optout:${lead.contentHash?.slice(0, 16)}`,
-          now,
-        );
+      if (sup) await this.outcome(lead, 'OPT_OUT', `optout:${sup.reason}`, now);
       if (s) s.suppressed += 1;
       await done();
       return null;

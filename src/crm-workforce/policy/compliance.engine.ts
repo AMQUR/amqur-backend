@@ -48,6 +48,88 @@ export const DEFAULT_POLICY: CompliancePolicy = {
   legalApproval: null,
 };
 
+const PURPOSES: MessagePurpose[] = [
+  'TRANSACTIONAL',
+  'CONVERSATIONAL',
+  'MARKETING',
+];
+const int = (v: unknown, min: number, max: number): number | null =>
+  typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max
+    ? v
+    : null;
+
+/**
+ * Build a policy from untrusted stored/submitted JSON. Every field is validated and bounded;
+ * anything missing or invalid falls back to the default for THAT field (never to "no limit").
+ * `legalApproval` is taken only from the `legalApproval` argument — never from `raw` — so the
+ * caller decides who is allowed to attest it.
+ */
+export function sanitizePolicy(
+  raw: unknown,
+  legalApproval: CompliancePolicy['legalApproval'] = null,
+): CompliancePolicy {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const cw = (
+    r.contactWindow && typeof r.contactWindow === 'object'
+      ? r.contactWindow
+      : {}
+  ) as Record<string, unknown>;
+  const startMin = int(cw.startMin, 0, 1439);
+  const endMin = int(cw.endMin, 1, 1440);
+  const window =
+    startMin !== null && endMin !== null && startMin < endMin
+      ? { startMin, endMin }
+      : DEFAULT_POLICY.contactWindow;
+  const caps = (key: 'maxPerDay' | 'maxPerWeek', hi: number) => {
+    const src = (r[key] && typeof r[key] === 'object' ? r[key] : {}) as Record<
+      string,
+      unknown
+    >;
+    const out = { ...DEFAULT_POLICY[key] };
+    for (const p of PURPOSES)
+      out[p] = int(src[p], 0, hi) ?? DEFAULT_POLICY[key][p];
+    return out;
+  };
+  const sources = Array.isArray(r.restrictedLeadSources)
+    ? r.restrictedLeadSources
+        .filter((x): x is string => typeof x === 'string' && x.length <= 80)
+        .slice(0, 100)
+        .map((x) => x.trim().toLowerCase())
+    : DEFAULT_POLICY.restrictedLeadSources;
+  const la = legalApproval;
+  const okApproval =
+    !!la &&
+    [la.approvedBy, la.approvedAt, la.documentRef].every(
+      (x) => typeof x === 'string' && x.trim().length > 0 && x.length <= 200,
+    );
+  return {
+    version:
+      typeof r.version === 'string' && /^[\w.:-]{1,60}$/.test(r.version)
+        ? r.version
+        : DEFAULT_POLICY.version,
+    contactWindow: window,
+    maxPerDay: caps('maxPerDay', 10),
+    maxPerWeek: caps('maxPerWeek', 30),
+    maxUnansweredAttempts:
+      int(r.maxUnansweredAttempts, 1, 10) ??
+      DEFAULT_POLICY.maxUnansweredAttempts,
+    marketingConsentMaxAgeDays:
+      int(r.marketingConsentMaxAgeDays, 1, 1825) ??
+      DEFAULT_POLICY.marketingConsentMaxAgeDays,
+    restrictedLeadSources: sources,
+    legalApproval: okApproval
+      ? {
+          approvedBy: la!.approvedBy.trim(),
+          approvedAt: la!.approvedAt.trim(),
+          documentRef: la!.documentRef.trim(),
+        }
+      : null,
+  };
+}
+
 export type ConsentFact =
   | {
       allowed: true;

@@ -145,6 +145,12 @@ describe('CRM Workforce (e2e)', () => {
       await (
         p[m] as unknown as { deleteMany: (a?: object) => Promise<unknown> }
       ).deleteMany({});
+    // Consent grants / opt-outs written by earlier tests (or earlier runs) must not leak in.
+    const tenantIds = Object.values(ids).map((i) => i.tenantId);
+    if (tenantIds.length)
+      await p.consentRecord.deleteMany({
+        where: { tenantId: { in: tenantIds } },
+      });
     adapters.fixture.reset();
     route.mockClear();
     reply =
@@ -176,13 +182,11 @@ describe('CRM Workforce (e2e)', () => {
         mode: 'CONTROLLED_AUTONOMOUS',
         externalSendEnabled: true,
         authorization: {
-          policy: {
-            contactWindow: { startMin: 0, endMin: 1440 },
-            legalApproval: {
-              approvedBy: 'test-counsel',
-              approvedAt: '2026-11-01',
-              documentRef: 'TEST-LEGAL-1',
-            },
+          policy: { contactWindow: { startMin: 0, endMin: 1440 } },
+          policyLegalApproval: {
+            approvedBy: 'test-counsel',
+            approvedAt: '2026-11-01',
+            documentRef: 'TEST-LEGAL-1',
           },
         },
       },
@@ -548,6 +552,60 @@ describe('CRM Workforce (e2e)', () => {
       });
       expect(sup.map((s) => s.channel)).toEqual(['ALL', 'ALL']);
       expect(await tasksOf('nissan')).toHaveLength(0);
+    });
+
+    it('an older STOP that staff already replied to still suppresses the lead', async () => {
+      await openGates('nissan');
+      const r = rec({
+        sourceRecordId: 'OLD-STOP',
+        createdInCrmAt: hoursAgo(24 * 20),
+      });
+      r.messages = [
+        {
+          sourceRecordId: 'm1',
+          direction: 'INBOUND',
+          channel: 'SMS',
+          authorType: 'CUSTOMER',
+          body: 'STOP please',
+          occurredAt: hoursAgo(24 * 10),
+        },
+        {
+          sourceRecordId: 'm2',
+          direction: 'OUTBOUND',
+          channel: 'SMS',
+          authorType: 'STAFF',
+          body: 'Sorry to hear that.',
+          occurredAt: hoursAgo(24 * 9),
+        },
+      ];
+      await grant('nissan', r.phone!);
+      await intake.ingest(scope('nissan'), 'fixture', [r]);
+      expect(await tasksOf('nissan')).toHaveLength(0);
+      expect(
+        await ctx.prisma.crmWfSuppression.count({
+          where: { tenantId: ids.nissan.tenantId, reason: 'STOP' },
+        }),
+      ).toBe(1);
+    });
+
+    it('an email unsubscribe is recorded against the email address, not the phone', async () => {
+      const r = rec();
+      r.messages = [
+        {
+          sourceRecordId: 'e1',
+          direction: 'INBOUND',
+          channel: 'EMAIL',
+          authorType: 'CUSTOMER',
+          body: 'unsubscribe',
+          occurredAt: hoursAgo(2),
+        },
+      ];
+      await intake.ingest(scope('nissan'), 'fixture', [r]);
+      const sup = await ctx.prisma.crmWfSuppression.findMany({
+        where: { tenantId: ids.nissan.tenantId },
+      });
+      expect(sup).toHaveLength(1);
+      expect(sup[0]).toMatchObject({ channel: 'EMAIL', endpoint: r.email });
     });
 
     it('a CRM do-not-contact preference suppresses without any message', async () => {
@@ -1429,12 +1487,82 @@ describe('CRM Workforce (e2e)', () => {
       expect(kinds).toEqual(['DEAL_CREATED:OBSERVED:false']);
     });
 
-    it('group overview returns counts only', async () => {
-      const g = unwrap<Array<Record<string, unknown>>>(
+    it('group overview returns counts only, own dealership only without a group membership', async () => {
+      await intake.ingest(scope('chevy'), 'fixture', [rec()]);
+      const g = unwrap<Array<{ tenantId: string }>>(
         (await api('nissan').get('group').expect(200)).body,
       );
-      expect(g).toHaveLength(1);
+      expect(g.map((x) => x.tenantId)).toEqual([ids.nissan.tenantId]);
       expect(JSON.stringify(g)).not.toMatch(/phone|email|firstName/);
+      const m = unwrap<Array<{ tenantId: string }>>(
+        (await api('nissan', 'manager').get('group').expect(200)).body,
+      );
+      expect(m.map((x) => x.tenantId)).toEqual([ids.nissan.tenantId]);
+      await api('nissan', 'staff').get('group').expect(403);
+    });
+
+    it('a dealership admin cannot write or self-approve the communication policy', async () => {
+      const approval = {
+        approvedBy: 'me',
+        approvedAt: '2026-11-25',
+        documentRef: 'made-up',
+      };
+      await api('nissan')
+        .post('controls', {
+          scope: 'TENANT',
+          authorization: {
+            policy: { maxPerDay: { MARKETING: 99 } },
+            policyLegalApproval: approval,
+          },
+          reason: 'self approve',
+        })
+        .expect(400);
+      await api('nissan')
+        .post('policy', {
+          tenantId: ids.nissan.tenantId,
+          policy: { maxPerDay: { MARKETING: 9 } },
+          legalApproval: approval,
+          reason: 'self approve',
+        })
+        .expect(403);
+      const pol = unwrap<{ legalApproval: unknown }>(
+        (await api('nissan', 'manager').get('policy').expect(200)).body,
+      );
+      expect(pol.legalApproval).toBeNull();
+      // A stored policy that smuggles approval inside the policy body is still unapproved,
+      // and an out-of-range limit falls back to the default instead of applying.
+      await ctx.prisma.crmWfControl.create({
+        data: {
+          scope: 'TENANT',
+          scopeKey: `T:${ids.nissan.tenantId}`,
+          tenantId: ids.nissan.tenantId,
+          authorization: {
+            policy: { legalApproval: approval, maxPerDay: { MARKETING: 5000 } },
+          },
+        },
+      });
+      const after = unwrap<{
+        legalApproval: unknown;
+        maxPerDay: { MARKETING: number };
+      }>((await api('nissan', 'manager').get('policy').expect(200)).body);
+      expect(after.legalApproval).toBeNull();
+      expect(after.maxPerDay.MARKETING).toBe(1);
+      // Changing another control on the tenant row keeps the stored policy intact.
+      await api('nissan')
+        .post('controls', {
+          scope: 'TENANT',
+          halted: true,
+          authorization: { note: 'x' },
+          reason: 'stop tenant',
+        })
+        .expect(201);
+      const row = await ctx.prisma.crmWfControl.findUniqueOrThrow({
+        where: { scopeKey: `T:${ids.nissan.tenantId}` },
+      });
+      expect(Object.keys(row.authorization as object).sort()).toEqual([
+        'note',
+        'policy',
+      ]);
     });
   });
 });

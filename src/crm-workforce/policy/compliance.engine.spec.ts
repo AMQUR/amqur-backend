@@ -4,6 +4,7 @@ import {
   evaluateCompliance,
   nextWindowOpen,
   timezoneForPhone,
+  sanitizePolicy,
 } from './compliance.engine';
 import { EffectiveControl } from './controls';
 
@@ -268,5 +269,61 @@ describe('compliance engine', () => {
         9 * 60,
       ),
     ).toBe('2026-11-19T15:00:00.000Z');
+  });
+
+  describe('stored policy is validated, never trusted', () => {
+    const approval = {
+      approvedBy: 'counsel',
+      approvedAt: '2026-11-01',
+      documentRef: 'L-1',
+    };
+    it('never takes legal approval from the policy body itself', () => {
+      const p = sanitizePolicy({ legalApproval: approval, version: 'v2' });
+      expect(p.legalApproval).toBeNull();
+      expect(sanitizePolicy({ version: 'v2' }, approval).legalApproval).toEqual(
+        approval,
+      );
+      expect(
+        sanitizePolicy(
+          {},
+          { approvedBy: '', approvedAt: 'x', documentRef: 'y' },
+        ).legalApproval,
+      ).toBeNull();
+    });
+    it('falls back per field instead of removing a limit', () => {
+      const p = sanitizePolicy({
+        contactWindow: { startMin: 1200, endMin: 60 },
+        maxPerDay: { MARKETING: 9999, CONVERSATIONAL: 'lots' },
+        maxPerWeek: { TRANSACTIONAL: Infinity },
+        maxUnansweredAttempts: -1,
+        marketingConsentMaxAgeDays: Number.NaN,
+        restrictedLeadSources: ['  Cars-X  ', 7],
+      });
+      expect(p.contactWindow).toEqual(DEFAULT_POLICY.contactWindow);
+      expect(p.maxPerDay).toEqual(DEFAULT_POLICY.maxPerDay);
+      expect(p.maxPerWeek).toEqual(DEFAULT_POLICY.maxPerWeek);
+      expect(p.maxUnansweredAttempts).toBe(
+        DEFAULT_POLICY.maxUnansweredAttempts,
+      );
+      expect(p.marketingConsentMaxAgeDays).toBe(
+        DEFAULT_POLICY.marketingConsentMaxAgeDays,
+      );
+      expect(p.restrictedLeadSources).toEqual(['cars-x']);
+    });
+    it('accepts valid bounded values and tolerates junk input', () => {
+      const p = sanitizePolicy({
+        contactWindow: { startMin: 600, endMin: 1080 },
+        maxPerDay: { MARKETING: 0 },
+      });
+      expect(p.contactWindow).toEqual({ startMin: 600, endMin: 1080 });
+      expect(p.maxPerDay.MARKETING).toBe(0);
+      expect(sanitizePolicy(null)).toMatchObject({
+        legalApproval: null,
+        version: DEFAULT_POLICY.version,
+      });
+      expect(sanitizePolicy('x' as unknown)).toMatchObject({
+        maxPerDay: DEFAULT_POLICY.maxPerDay,
+      });
+    });
   });
 });
