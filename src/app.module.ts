@@ -1,6 +1,11 @@
 import { ExperimentsModule } from './experiments/experiments.module';
 import { SpotlightsModule } from './spotlights/spotlights.module';
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  ExecutionContext,
+} from '@nestjs/common';
 
 import { ConfigModule } from '@nestjs/config';
 import { envValidationSchema } from './config/env.validation';
@@ -58,6 +63,19 @@ import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
 
+/** True for routes that accept credentials or one-time codes. */
+export function isCredentialPath(path: string): boolean {
+  return /^\/api\/(?:auth(?:\/|$)|public\/canary-redeem(?:\/|$)|canary\/)/.test(
+    path.split('?')[0],
+  );
+}
+function isCredentialRoute(context: ExecutionContext): boolean {
+  const req = context
+    .switchToHttp()
+    .getRequest<{ originalUrl?: string; url?: string }>();
+  return isCredentialPath(req.originalUrl ?? req.url ?? '');
+}
+
 @Module({
   imports: [
     SpotlightsModule,
@@ -80,9 +98,13 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
         limit: rateLimit(120, 10_000),
       },
       {
+        // Credential endpoints only (login, MFA, password, invite redemption). Without this
+        // filter a named throttler applies to EVERY route, which capped the public widget
+        // (config + token + chat on each page view) at 20 requests a minute per address.
         name: 'auth',
         ttl: 60_000,
         limit: rateLimit(20, 5_000),
+        skipIf: (context) => !isCredentialRoute(context),
       },
     ]),
 
