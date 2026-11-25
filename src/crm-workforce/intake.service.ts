@@ -12,7 +12,7 @@ import {
 import {
   InboundSignal,
   readInboundSignals,
-  standingOptOut,
+  standingOptOuts,
 } from './policy/inbound-signals';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfSuppressionService } from './suppression.service';
@@ -227,21 +227,38 @@ export class CrmWfIntakeService {
 
     // The customer said stop — anywhere in the history, answered or not — or the CRM says
     // do-not-contact: suppress first, queue nothing.
-    const sup = standingOptOut(
+    const optOuts = standingOptOuts(
       lead.messages.filter(
         (m) => m.direction === 'INBOUND' && m.authorType === 'CUSTOMER',
       ),
     );
-    if (sup || lead.crmDoNotContact === true) {
-      await this.suppression.suppressLead({
-        tenantId: lead.tenantId,
-        crmLeadId: lead.id,
-        scope: sup ? sup.channelScope : 'ALL',
-        channel: sup ? sup.channel : 'SMS',
-        reason: sup ? sup.reason : 'DO_NOT_CONTACT',
-        source: sup ? 'INBOUND_MESSAGE' : 'CRM_PREFERENCE',
-      });
-      if (sup) await this.outcome(lead, 'OPT_OUT', `optout:${sup.reason}`, now);
+    if (optOuts.length || lead.crmDoNotContact === true) {
+      // One suppression per standing opt-out, so every channel the customer closed stays closed.
+      for (const o of optOuts) {
+        await this.suppression.suppressLead({
+          tenantId: lead.tenantId,
+          crmLeadId: lead.id,
+          scope: o.channelScope,
+          channel: o.channel,
+          reason: o.reason,
+          source: 'INBOUND_MESSAGE',
+        });
+        await this.outcome(
+          lead,
+          'OPT_OUT',
+          `optout:${o.reason}:${o.channel}`,
+          now,
+        );
+      }
+      if (lead.crmDoNotContact === true)
+        await this.suppression.suppressLead({
+          tenantId: lead.tenantId,
+          crmLeadId: lead.id,
+          scope: 'ALL',
+          channel: 'SMS',
+          reason: 'DO_NOT_CONTACT',
+          source: 'CRM_PREFERENCE',
+        });
       if (s) s.suppressed += 1;
       await done();
       return null;

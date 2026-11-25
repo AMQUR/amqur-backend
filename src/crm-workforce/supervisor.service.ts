@@ -24,7 +24,7 @@ import { CrmWfFactsService } from './facts.service';
 import { leadFacts } from './intake.service';
 import { prioritize } from './intelligence/prioritization';
 import { evaluateCompliance } from './policy/compliance.engine';
-import { escalationFor, standingOptOut } from './policy/inbound-signals';
+import { escalationFor, standingOptOuts } from './policy/inbound-signals';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfSuppressionService } from './suppression.service';
 
@@ -145,24 +145,25 @@ export class CrmWfSupervisorService {
     if (humanOwns(lead, lead.messages, now))
       return finish('SUPPRESSED', 'human_conversation_active', 'human_active');
 
-    const sup = standingOptOut(
+    const optOuts = standingOptOuts(
       lead.messages.filter(
         (m) => m.direction === 'INBOUND' && m.authorType === 'CUSTOMER',
       ),
     );
-    if (sup) {
-      await this.suppression.suppressLead({
-        tenantId: lead.tenantId,
-        crmLeadId: lead.id,
-        scope: sup.channelScope,
-        channel: sup.channel,
-        reason: sup.reason,
-        source: 'INBOUND_MESSAGE',
-      });
+    if (optOuts.length) {
+      for (const o of optOuts)
+        await this.suppression.suppressLead({
+          tenantId: lead.tenantId,
+          crmLeadId: lead.id,
+          scope: o.channelScope,
+          channel: o.channel,
+          reason: o.reason,
+          source: 'INBOUND_MESSAGE',
+        });
       await this.queue.finish(
         task.id,
         'SUPPRESSED',
-        `customer_${sup.reason.toLowerCase()}`,
+        `customer_${optOuts[0].reason.toLowerCase()}`,
       );
       return 'suppressed';
     }

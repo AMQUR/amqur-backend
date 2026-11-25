@@ -2,6 +2,7 @@ import {
   escalationFor,
   readInboundSignals,
   standingOptOut,
+  standingOptOuts,
   suppressionFor,
 } from './inbound-signals';
 
@@ -125,6 +126,29 @@ describe('inbound signals', () => {
       expect(
         standingOptOut([m('wrong number', 1), m('STOP', 5)]),
       ).toMatchObject({ channelScope: 'ALL', reason: 'WRONG_NUMBER' });
+    });
+    it('an opt-out on one channel is not lost when another channel opts out or re-opts in', () => {
+      const both = standingOptOuts([
+        m('STOP', 1),
+        m('unsubscribe', 5, 'EMAIL'),
+      ]);
+      expect(both.map((o) => o.channel).sort()).toEqual(['EMAIL', 'SMS']);
+      const emailBack = standingOptOuts([
+        m('STOP', 1),
+        m('unsubscribe', 2, 'EMAIL'),
+        m('START', 5, 'EMAIL'),
+      ]);
+      expect(emailBack).toEqual([
+        { channelScope: 'CHANNEL', reason: 'STOP', channel: 'SMS' },
+      ]);
+      const withAll = standingOptOuts([
+        m('STOP', 1),
+        m('do not contact me', 2, 'EMAIL'),
+        m('START', 3),
+      ]);
+      expect(withAll).toEqual([
+        { channelScope: 'ALL', reason: 'DO_NOT_CONTACT', channel: 'EMAIL' },
+      ]);
     });
     it('records the channel the opt-out arrived on', () => {
       expect(standingOptOut([m('unsubscribe', 1, 'EMAIL')])).toMatchObject({

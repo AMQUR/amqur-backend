@@ -105,29 +105,37 @@ export type StandingOptOut = {
   reason: string;
   channel: 'SMS' | 'EMAIL';
 };
-export function standingOptOut(
+export function standingOptOuts(
   inbound: Array<{ body: string; channel: string; occurredAt: Date }>,
-): StandingOptOut | null {
-  let standing: StandingOptOut | null = null;
+): StandingOptOut[] {
+  // State is kept per channel, plus one every-channel entry, so an opt-out on one channel is
+  // never overwritten by a later opt-out (or re-opt-in) on another.
+  const byChannel = new Map<'SMS' | 'EMAIL', StandingOptOut>();
+  let all: StandingOptOut | null = null;
   const ordered = [...inbound].sort(
     (a, b) => a.occurredAt.getTime() - b.occurredAt.getTime(),
   );
   for (const m of ordered) {
     const channel = m.channel === 'EMAIL' ? 'EMAIL' : 'SMS';
     const sup = suppressionFor(readInboundSignals(m.body));
-    if (sup) {
-      // An every-channel opt-out is never narrowed by a later channel keyword.
-      if (!(standing?.channelScope === 'ALL' && sup.channelScope === 'CHANNEL'))
-        standing = { ...sup, channel };
-    } else if (
-      standing?.channelScope === 'CHANNEL' &&
-      standing.channel === channel &&
-      START_WORDS.test(m.body)
-    ) {
-      standing = null;
+    if (sup?.channelScope === 'ALL') {
+      // Do-not-contact / wrong number: never re-opened; the first reason is kept.
+      all ??= { ...sup, channel };
+    } else if (sup) {
+      byChannel.set(channel, { ...sup, channel });
+    } else if (START_WORDS.test(m.body)) {
+      // A handset START re-opens only the channel it was sent on.
+      byChannel.delete(channel);
     }
   }
-  return standing;
+  return [...(all ? [all] : []), ...byChannel.values()];
+}
+
+/** The most restrictive standing opt-out, or null. See `standingOptOuts` for all of them. */
+export function standingOptOut(
+  inbound: Array<{ body: string; channel: string; occurredAt: Date }>,
+): StandingOptOut | null {
+  return standingOptOuts(inbound)[0] ?? null;
 }
 
 /** Signals that end contact. `ALL` is used for explicit do-not-contact and wrong-number. */
