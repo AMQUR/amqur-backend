@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { dealerDirectoryFor } from '../dealer-directory/dealer-directory';
 import { StoreHoursService } from '../locations/store-hours.service';
+import { SpotlightsService } from '../spotlights/spotlights.service';
 import { Department, VerifiedFact } from './crm-workforce.types';
 import { LeadView as CrmWfLead } from './vault.service';
 
@@ -21,7 +23,48 @@ export class CrmWfFactsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly hours: StoreHoursService,
+    private readonly spotlights: SpotlightsService,
   ) {}
+
+  /**
+   * Store-specific staff directory: the rooftop's own department lines from the verified
+   * dealer directory, plus the staff accounts bound to this rooftop. Never another store's.
+   */
+  async directory(tenantId: string, locationId: string) {
+    const loc = await this.prisma.location.findFirst({
+      where: { id: locationId, tenantId },
+      select: { tenant: { select: { slug: true } } },
+    });
+    const store = loc
+      ? (dealerDirectoryFor(loc.tenant.slug)?.self ?? null)
+      : null;
+    const staff = await this.prisma.user.findMany({
+      where: {
+        tenantId,
+        isActive: true,
+        OR: [{ locationId }, { locationId: null }],
+      },
+      select: { id: true, firstName: true, lastName: true, role: true },
+      orderBy: { firstName: 'asc' },
+    });
+    return {
+      departments: store
+        ? (['sales', 'service', 'parts'] as const).map((d) => ({
+            department: d.toUpperCase(),
+            phone: store.phones[d],
+            sourceRecordId: `dealer-directory:${store.sourceRecordId}:${d}`,
+            asOf: store.asOf,
+            verified: true,
+            rooftopId: locationId,
+          }))
+        : [],
+      staff: staff.map((u) => ({
+        id: u.id,
+        name: `${u.firstName} ${u.lastName}`.trim(),
+        role: u.role,
+      })),
+    };
+  }
 
   async dealership(tenantId: string, locationId: string) {
     const loc = await this.prisma.location.findFirst({
@@ -129,6 +172,84 @@ export class CrmWfFactsService {
         });
       }
     }
+
+    // Approved, in-window dealership offers for THIS rooftop, verbatim with their disclaimer.
+    for (const o of await this.spotlights.activeForStore(
+      lead.tenantId,
+      lead.locationId,
+      now,
+    )) {
+      const text = [o.title, o.body, o.disclaimer]
+        .filter((x) => typeof x === 'string' && x)
+        .join(' — ');
+      if (text)
+        facts.push({
+          kind: 'offer',
+          text: `${text} (offer ends ${String(o.endsAt).slice(0, 10)})`,
+          sourceRecordId: `spotlight:${String(o.id)}`,
+          asOf: now.toISOString(),
+          verified: true,
+          rooftopId,
+        });
+    }
+
+    // Verified alternatives when the requested vehicle is not (or no longer) available:
+    // same rooftop, same make and model, fresh feed, listed available.
+    const want = (lead.vehicleInterest ?? null) as {
+      make?: string;
+      model?: string;
+      vin?: string;
+    } | null;
+    if (want?.make && want.model && vehicleAvailable !== true) {
+      const alts = await this.prisma.vehicle.findMany({
+        where: {
+          tenantId: lead.tenantId,
+          locationId: lead.locationId,
+          make: { equals: want.make, mode: 'insensitive' },
+          model: { equals: want.model, mode: 'insensitive' },
+          status: 'AVAILABLE',
+          freshnessState: 'FRESH',
+          lastSeenAt: { gte: new Date(now.getTime() - INVENTORY_MAX_AGE_MS) },
+          ...(want.vin ? { vin: { not: want.vin } } : {}),
+          ...(process.env.NODE_ENV === 'production'
+            ? { NOT: { source: 'synthetic_demo' } }
+            : {}),
+        },
+        select: {
+          id: true,
+          year: true,
+          make: true,
+          model: true,
+          trim: true,
+          stock: true,
+          lastSeenAt: true,
+        },
+        orderBy: { lastSeenAt: 'desc' },
+        take: 2,
+      });
+      for (const v of alts)
+        facts.push({
+          kind: 'inventory',
+          text: `Similar vehicle in stock: ${v.year} ${v.make} ${v.model}${v.trim ? ` ${v.trim}` : ''}, stock ${v.stock ?? 'n/a'}, listed as available in the inventory feed`,
+          sourceRecordId: `vehicle:${v.id}`,
+          asOf: v.lastSeenAt!.toISOString(),
+          verified: true,
+          rooftopId,
+        });
+    }
+
+    // The rooftop's own department line (verified directory) for "call us" handoffs.
+    const dir = await this.directory(lead.tenantId, lead.locationId);
+    const line = dir.departments.find((x) => x.department === lead.department);
+    if (line)
+      facts.push({
+        kind: 'contact',
+        text: `${lead.department.toLowerCase()} department phone: ${line.phone}`,
+        sourceRecordId: line.sourceRecordId,
+        asOf: `${line.asOf}T00:00:00.000Z`,
+        verified: true,
+        rooftopId,
+      });
 
     const appointmentConfirmed =
       lead.verified &&

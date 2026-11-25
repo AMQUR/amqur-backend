@@ -141,18 +141,41 @@ export function resolveControl(
   };
 }
 
+/**
+ * A recorded permit for one workflow to run without per-message approval. Every field is
+ * required; a permit that leaves any of them open is not a permit.
+ */
 export type WorkflowAuthorization = {
+  /** Reference to the signed authorization (document id / ticket). */
   documentRef: string;
   authorizedBy: string;
   authorizedAt: string;
+  /** CRM account / sender identity the workflow may act as. */
+  account: string;
+  department: 'SALES' | 'SERVICE' | 'PARTS';
+  /** The single operation allowed, e.g. "message.sms.send". */
+  operation: string;
+  /** Plain description of the customer population. */
   audience: string;
   channels: string[];
+  /** Consent that must be on record, e.g. "CONVERSATIONAL" or "MARKETING". */
+  consentRequired: string;
+  /** Most messages one customer may receive from this workflow per week. */
+  maxPerCustomerPerWeek: number;
+  /** Most messages this workflow may send per day at this rooftop. */
   dailyLimit: number;
+  /** Local dealership time, "HH:MM". */
   window: { start: string; end: string };
-  expiresAt?: string;
+  /** What must go to a person instead. */
+  escalation: string;
+  /** Permits are time-bounded: an expiry is mandatory. */
+  expiresAt: string;
 };
 
-/** Customer-facing autonomy needs workflow, audience, channel, limits and window — all of them. */
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+export const hhmmToMin = (s: string) =>
+  Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
+
 export function isCompleteAuthorization(
   a: unknown,
   now = new Date(),
@@ -161,22 +184,48 @@ export function isCompleteAuthorization(
   const x = a as Record<string, unknown>;
   const str = (k: string) =>
     typeof x[k] === 'string' && (x[k] as string).trim().length > 0;
+  for (const k of [
+    'documentRef',
+    'authorizedBy',
+    'authorizedAt',
+    'account',
+    'operation',
+    'audience',
+    'consentRequired',
+    'escalation',
+    'expiresAt',
+  ])
+    if (!str(k)) return false;
+  if (!['SALES', 'SERVICE', 'PARTS'].includes(x.department as string))
+    return false;
   if (
-    !str('documentRef') ||
-    !str('authorizedBy') ||
-    !str('authorizedAt') ||
-    !str('audience')
+    !Array.isArray(x.channels) ||
+    x.channels.length === 0 ||
+    !x.channels.every((c) => c === 'SMS' || c === 'EMAIL')
   )
     return false;
-  if (!Array.isArray(x.channels) || x.channels.length === 0) return false;
-  if (typeof x.dailyLimit !== 'number' || !(x.dailyLimit > 0)) return false;
+  const pos = (k: string, max: number) =>
+    typeof x[k] === 'number' &&
+    Number.isInteger(x[k]) &&
+    (x[k] as number) > 0 &&
+    (x[k] as number) <= max;
+  if (!pos('dailyLimit', 5000) || !pos('maxPerCustomerPerWeek', 7))
+    return false;
   const w = x.window as Record<string, unknown> | undefined;
-  if (!w || typeof w.start !== 'string' || typeof w.end !== 'string')
-    return false;
   if (
-    typeof x.expiresAt === 'string' &&
-    new Date(x.expiresAt).getTime() <= now.getTime()
+    !w ||
+    typeof w.start !== 'string' ||
+    typeof w.end !== 'string' ||
+    !HHMM.test(w.start) ||
+    !HHMM.test(w.end) ||
+    hhmmToMin(w.start) >= hhmmToMin(w.end)
   )
+    return false;
+  const exp = new Date(x.expiresAt as string).getTime();
+  if (!Number.isFinite(exp) || exp <= now.getTime()) return false;
+  // No open-ended permits: at most 90 days from when it was granted.
+  const granted = new Date(x.authorizedAt as string).getTime();
+  if (!Number.isFinite(granted) || exp - granted > 90 * 86_400_000)
     return false;
   return true;
 }

@@ -30,11 +30,18 @@ const row = (
 const auth = {
   documentRef: 'DOC-1',
   authorizedBy: 'gm',
-  authorizedAt: '2026-11-01T00:00:00Z',
-  audience: 'new internet leads',
+  authorizedAt: new Date(Date.now() - 86_400_000).toISOString(),
+  account: 'nissan-bdc-service-account',
+  department: 'SALES',
+  operation: 'message.sms.send',
+  audience: 'new internet leads with conversational SMS consent',
   channels: ['SMS'],
+  consentRequired: 'CONVERSATIONAL',
+  maxPerCustomerPerWeek: 2,
   dailyLimit: 25,
   window: { start: '09:00', end: '18:00' },
+  escalation: 'anything but a simple question goes to the assigned salesperson',
+  expiresAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
 };
 
 describe('CRM Workforce controls', () => {
@@ -162,6 +169,34 @@ describe('CRM Workforce controls', () => {
     expect(
       isCompleteAuthorization({ ...auth, expiresAt: '2020-01-01T00:00:00Z' }),
     ).toBe(false);
+    expect(isCompleteAuthorization(auth)).toBe(true);
+    // Every field is mandatory, and a permit cannot be open-ended.
+    for (const k of [
+      'account',
+      'department',
+      'operation',
+      'audience',
+      'consentRequired',
+      'escalation',
+      'expiresAt',
+      'maxPerCustomerPerWeek',
+      'window',
+    ])
+      expect(isCompleteAuthorization({ ...auth, [k]: undefined })).toBe(false);
+    const farOff = new Date(Date.now() + 400 * 86_400_000).toISOString();
+    expect(isCompleteAuthorization({ ...auth, expiresAt: farOff })).toBe(false);
+    expect(
+      isCompleteAuthorization({
+        ...auth,
+        window: { start: '18:00', end: '09:00' },
+      }),
+    ).toBe(false);
+    expect(isCompleteAuthorization({ ...auth, channels: ['VOICE'] })).toBe(
+      false,
+    );
+    expect(isCompleteAuthorization({ ...auth, dailyLimit: 1_000_000 })).toBe(
+      false,
+    );
   });
 
   it('a row that only carries a kill switch changes nothing once it is released', () => {

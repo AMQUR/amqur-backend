@@ -43,7 +43,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CrmWfActionService } from './action.service';
 import { Actor, CrmWfControlService } from './control.service';
 import { CRM_WORKFORCE_FLAG, DEPARTMENTS } from './crm-workforce.types';
+import { CrmWfAssistService } from './assist.service';
+import { CrmWfDirectorService } from './director.service';
+import { CrmWfFactsService } from './facts.service';
 import { CrmWfImportService } from './import.service';
+import { CrmWfMiningService } from './mining.service';
+import { CrmWfWorkItemService } from './work-item.service';
 import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
 import { CrmWfPrivacyService } from './privacy.service';
@@ -132,6 +137,63 @@ class PrivacyDto {
   @IsOptional() @IsString() @MaxLength(200) email?: string;
   @IsString() @MinLength(3) @MaxLength(300) reason!: string;
 }
+class AssistLeadDto {
+  @IsString() @MaxLength(64) locationId!: string;
+  @IsIn(DEPARTMENTS as unknown as string[]) department!:
+    | 'SALES'
+    | 'SERVICE'
+    | 'PARTS';
+  @IsOptional() @IsString() @MaxLength(80) crmRecordId?: string;
+  @IsOptional() @IsString() @MaxLength(40) firstName?: string;
+  @IsOptional() @IsString() @MaxLength(80) assignedTo?: string;
+  @IsOptional() @IsString() @MaxLength(80) leadSource?: string;
+  @IsOptional() @IsString() @MaxLength(40) vehicleMake?: string;
+  @IsOptional() @IsString() @MaxLength(60) vehicleModel?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1980)
+  @Max(2100)
+  vehicleYear?: number;
+  @IsOptional() @IsString() @MaxLength(2000) customerMessage?: string;
+  @IsOptional() @IsIn(['SMS', 'EMAIL']) channel?: 'SMS' | 'EMAIL';
+}
+class AssistMessageDto {
+  @IsIn(['INBOUND', 'OUTBOUND']) direction!: 'INBOUND' | 'OUTBOUND';
+  @IsString() @MinLength(1) @MaxLength(2000) text!: string;
+  @IsOptional() @IsIn(['SMS', 'EMAIL']) channel?: 'SMS' | 'EMAIL';
+}
+class AssistDraftDto {
+  @IsOptional() @IsString() @MaxLength(300) staffNote?: string;
+  @IsOptional() @IsIn(['SMS', 'EMAIL']) channel?: 'SMS' | 'EMAIL';
+}
+class AppointmentDto {
+  @IsIn(['REQUEST', 'RESCHEDULE', 'CANCEL', 'CONFIRM']) change!:
+    | 'REQUEST'
+    | 'RESCHEDULE'
+    | 'CANCEL'
+    | 'CONFIRM';
+  @IsOptional()
+  @IsIn(['SALES_VISIT', 'TEST_DRIVE', 'SERVICE', 'PARTS_PICKUP'])
+  type?: string;
+  @IsOptional() @IsISO8601() requestedAt?: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+class FollowUpDto {
+  @IsISO8601() dueAt!: string;
+  @IsString() @MinLength(3) @MaxLength(500) instruction!: string;
+}
+class CrmNoteDto {
+  @IsString() @MinLength(3) @MaxLength(1000) text!: string;
+}
+class ResolveDto {
+  @IsIn(['DONE', 'DECLINED', 'CANCELLED']) outcome!:
+    | 'DONE'
+    | 'DECLINED'
+    | 'CANCELLED';
+  @IsOptional() @IsString() @MaxLength(120) crmReference?: string;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
 class ReasonDto {
   @IsString() @MinLength(3) @MaxLength(300) reason!: string;
 }
@@ -200,6 +262,11 @@ export class CrmWorkforceController {
     private readonly prisma: PrismaService,
     private readonly privacy: CrmWfPrivacyService,
     private readonly importer: CrmWfImportService,
+    private readonly assist: CrmWfAssistService,
+    private readonly items: CrmWfWorkItemService,
+    private readonly mining: CrmWfMiningService,
+    private readonly director: CrmWfDirectorService,
+    private readonly factsSvc: CrmWfFactsService,
   ) {}
 
   private scope(u: AuthUser, tenantId?: string, locationId?: string) {
@@ -689,6 +756,212 @@ export class CrmWorkforceController {
     if (!out) throw new NotFoundException('suppression_not_found');
     if ('refused' in out) throw new ForbiddenException(out.refused);
     return out;
+  }
+
+  // ── employee-assisted workspace (Mode A) ─────────────────────────────────
+  @Roles(...STAFF)
+  @Post('assist/leads')
+  assistLead(
+    @CurrentUser() u: AuthUser,
+    @Body() dto: AssistLeadDto,
+    @Query('tenantId') t?: string,
+  ) {
+    const s = this.scope(u, t, dto.locationId);
+    return this.assist.createLead(
+      this.actor(u),
+      { tenantId: s.tenantId, locationId: dto.locationId },
+      {
+        crmRecordId: dto.crmRecordId,
+        firstName: dto.firstName,
+        department: dto.department,
+        assignedTo: dto.assignedTo,
+        leadSource: dto.leadSource,
+        vehicle: {
+          year: dto.vehicleYear,
+          make: dto.vehicleMake,
+          model: dto.vehicleModel,
+        },
+        customerMessage: dto.customerMessage,
+        channel: dto.channel,
+      },
+    );
+  }
+  @Roles(...STAFF)
+  @Post('leads/:id/messages')
+  assistMessage(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AssistMessageDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.assist.addMessage(this.actor(u), this.scope(u, t), id, dto);
+  }
+  /** Write a reply for the employee to send as themselves in the CRM. */
+  @Roles(...STAFF)
+  @Post('leads/:id/draft')
+  assistDraft(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AssistDraftDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.assist.draft(this.actor(u), this.scope(u, t), id, dto);
+  }
+  @Roles(...STAFF)
+  @Get('leads/:id/recommendation')
+  async recommendation(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Query('tenantId') t?: string,
+  ) {
+    const s = this.scope(u, t);
+    const lead = await this.prisma.crmWfLead.findFirst({
+      where: {
+        id,
+        tenantId: s.tenantId,
+        ...(s.locationId ? { locationId: s.locationId } : {}),
+      },
+      select: { tenantId: true, locationId: true, assignedTo: true },
+    });
+    if (!lead) throw new NotFoundException('lead_not_found');
+    return this.items.recommendAssignee(
+      lead.tenantId,
+      lead.locationId,
+      lead.assignedTo,
+    );
+  }
+
+  // ── appointments, follow-ups, notes: requests for staff, never CRM records ─
+  @Roles(...STAFF)
+  @Post('leads/:id/appointment')
+  appointment(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AppointmentDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.items.requestAppointment(
+      `user:${u.sub}`,
+      this.scope(u, t),
+      id,
+      dto,
+    );
+  }
+  @Roles(...STAFF)
+  @Post('leads/:id/follow-up')
+  followUp(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: FollowUpDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.items.followUp(`user:${u.sub}`, this.scope(u, t), id, dto);
+  }
+  @Roles(...STAFF)
+  @Post('leads/:id/crm-note')
+  crmNote(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: CrmNoteDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.items.crmNote(`user:${u.sub}`, this.scope(u, t), id, dto.text);
+  }
+  @Roles(...STAFF)
+  @Get('work-items')
+  workItems(
+    @CurrentUser() u: AuthUser,
+    @Query('kind') kind?: string,
+    @Query('status') status?: string,
+    @Query('crmLeadId') crmLeadId?: string,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.items.list(this.scope(u, t, l), {
+      kind: kind ? kind.split(',') : undefined,
+      status: status ? status.split(',') : undefined,
+      crmLeadId,
+    });
+  }
+  @Roles(...STAFF)
+  @Post('work-items/:id/claim')
+  claimItem(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.items.claim(this.actor(u), this.scope(u, t), id);
+  }
+  @Roles(...STAFF)
+  @Post('work-items/:id/resolve')
+  resolveItem(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: ResolveDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.items.resolve(this.actor(u), this.scope(u, t), id, dto);
+  }
+
+  // ── data mining, roster, director, reports ───────────────────────────────
+  @Roles(...STAFF)
+  @Get('mining')
+  miningSummary(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.mining.summary(this.scope(u, t, l));
+  }
+  @Roles(...STAFF)
+  @Get('mining/:queue')
+  miningRows(
+    @CurrentUser() u: AuthUser,
+    @Param('queue') queue: string,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.mining.rows(this.scope(u, t, l), queue);
+  }
+  @Roles(...STAFF)
+  @Get('roster')
+  roster(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.director.roster(this.scope(u, t, l));
+  }
+  @Roles(...MANAGERS)
+  @Get('director')
+  directorFindings(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.director.findings(this.scope(u, t, l));
+  }
+  @Roles(...MANAGERS)
+  @Get('reports/:kind')
+  report(
+    @CurrentUser() u: AuthUser,
+    @Param('kind') kind: string,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    return this.director.report(this.scope(u, t, l), kind);
+  }
+  /** This rooftop's own department lines and staff — never another store's. */
+  @Roles(...STAFF)
+  @Get('directory')
+  directory(
+    @CurrentUser() u: AuthUser,
+    @Query('locationId') l: string,
+    @Query('tenantId') t?: string,
+  ) {
+    const s = this.scope(u, t, l);
+    if (!s.locationId) throw new BadRequestException('locationId_required');
+    return this.factsSvc.directory(s.tenantId, s.locationId);
   }
 
   // ── customer data rights ─────────────────────────────────────────────────

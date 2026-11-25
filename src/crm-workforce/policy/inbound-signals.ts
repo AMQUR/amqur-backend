@@ -72,7 +72,7 @@ const RULES: Array<[InboundSignal, RegExp]> = [
   ],
   [
     'PURCHASE_INTENT',
-    /\b(ready to buy|want to buy|i'?ll take it|come in today|coming (?:in|by) (?:today|tomorrow|now)|put (?:a |down a )?deposit|is it still available|still (?:have|got) it|when can i (?:come|pick)|test drive|quiero comprar|sigue disponible)\b/i,
+    /\b(ready to buy|want to buy|i'?ll take it|come in today|coming (?:in|by) (?:today|tomorrow|now)|put (?:a |down a )?deposit|when can i (?:come|pick)|test drive|quiero comprar)\b/i,
   ],
   [
     'SENSITIVE_DATA',

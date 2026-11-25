@@ -612,86 +612,209 @@ describe('CRM Workforce (e2e)', () => {
       expect(sup).toHaveLength(1);
       expect(sup[0].channel).toBe('EMAIL');
       expect(sup[0].hint).toMatch(/^s…@example\.invalid$/);
-      expect(sup[0].endpointHash).toBe(ctx.app.get(CrmWfVaultService).hash(r.email!));
+      expect(sup[0].endpointHash).toBe(
+        ctx.app.get(CrmWfVaultService).hash(r.email!),
+      );
     });
 
     it('contact details and message text are sealed at rest; nothing readable is in the database', async () => {
-      const r = rec({ lastName: 'Uniquelastname', inbound: 'my private words about the Rogue', outboundHoursAgo: 5 });
-      await intake.ingest(scope('nissan'), 'fixture', [r, rec({ inbound: 'STOP', outboundHoursAgo: 5 })]);
-      const dump = JSON.stringify(
-        await ctx.prisma.$queryRaw`SELECT row_to_json(l) AS lead, (SELECT json_agg(m) FROM "CrmWfMessage" m WHERE m."crmLeadId" = l.id) AS msgs FROM "CrmWfLead" l WHERE l."tenantId" = ${ids.nissan.tenantId}`,
-      ) + JSON.stringify(await ctx.prisma.crmWfSuppression.findMany({ where: { tenantId: ids.nissan.tenantId } }));
+      const r = rec({
+        lastName: 'Uniquelastname',
+        inbound: 'my private words about the Rogue',
+        outboundHoursAgo: 5,
+      });
+      await intake.ingest(scope('nissan'), 'fixture', [
+        r,
+        rec({ inbound: 'STOP', outboundHoursAgo: 5 }),
+      ]);
+      const dump =
+        JSON.stringify(
+          await ctx.prisma
+            .$queryRaw`SELECT row_to_json(l) AS lead, (SELECT json_agg(m) FROM "CrmWfMessage" m WHERE m."crmLeadId" = l.id) AS msgs FROM "CrmWfLead" l WHERE l."tenantId" = ${ids.nissan.tenantId}`,
+        ) +
+        JSON.stringify(
+          await ctx.prisma.crmWfSuppression.findMany({
+            where: { tenantId: ids.nissan.tenantId },
+          }),
+        );
       expect(dump).not.toContain(r.phone!.slice(2));
       expect(dump).not.toContain(r.email!);
       expect(dump).not.toContain('Uniquelastname');
       expect(dump).not.toContain('private words');
       // …and the API list never returns the phone, email or full last name either.
-      const body = JSON.stringify((await api('nissan').get('tasks').expect(200)).body);
+      const body = JSON.stringify(
+        (await api('nissan').get('tasks').expect(200)).body,
+      );
       expect(body).not.toContain(r.phone!.slice(2));
       expect(body).not.toContain(r.email!);
       expect(body).not.toContain('Uniquelastname');
-      const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: r.sourceRecordId } });
-      const detail = JSON.stringify((await api('nissan').get(`leads/${lead.id}`).expect(200)).body);
+      const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({
+        where: {
+          tenantId: ids.nissan.tenantId,
+          sourceRecordId: r.sourceRecordId,
+        },
+      });
+      const detail = JSON.stringify(
+        (await api('nissan').get(`leads/${lead.id}`).expect(200)).body,
+      );
       expect(detail).toContain('private words'); // staff can read the conversation
       expect(detail).not.toContain(r.phone!.slice(2));
       expect(detail).not.toContain(r.email!);
     });
 
     it('the same customer entered twice at one rooftop is worked once; another rooftop is never matched', async () => {
-      const first = rec({ inbound: 'Is it still available?', outboundHoursAgo: 5 });
+      const first = rec({
+        inbound: 'Is it still available?',
+        outboundHoursAgo: 5,
+      });
       await intake.ingest(scope('nissan'), 'fixture', [first]);
-      const again = rec({ phone: first.phone, email: 'other@example.invalid', inbound: 'hello, anyone there?', outboundHoursAgo: 5 });
+      const again = rec({
+        phone: first.phone,
+        email: 'other@example.invalid',
+        inbound: 'hello, anyone there?',
+        outboundHoursAgo: 5,
+      });
       const sum = await intake.ingest(scope('nissan'), 'fixture', [again]);
       expect(sum).toMatchObject({ created: 1, duplicates: 1, tasksQueued: 0 });
-      expect((await tasksOf('nissan')).filter((t) => t.status === 'PENDING')).toHaveLength(1);
-      const dup = await ctx.prisma.crmWfLead.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: again.sourceRecordId } });
+      expect(
+        (await tasksOf('nissan')).filter((t) => t.status === 'PENDING'),
+      ).toHaveLength(1);
+      const dup = await ctx.prisma.crmWfLead.findFirstOrThrow({
+        where: {
+          tenantId: ids.nissan.tenantId,
+          sourceRecordId: again.sourceRecordId,
+        },
+      });
       expect(dup.duplicateOfId).toBeTruthy();
       // Same phone at Chevy is a different dealership's customer record: no link, own task.
-      const chevy = await intake.ingest(scope('chevy'), 'fixture', [rec({ phone: first.phone, inbound: 'hi', outboundHoursAgo: 5 })]);
+      const chevy = await intake.ingest(scope('chevy'), 'fixture', [
+        rec({ phone: first.phone, inbound: 'hi', outboundHoursAgo: 5 }),
+      ]);
       expect(chevy).toMatchObject({ duplicates: 0, tasksQueued: 1 });
     });
 
     it('erasing a customer removes their data but keeps the opt-out working; export and erase are admin-only and audited', async () => {
-      const r = rec({ sourceRecordId: 'ERASE-1', inbound: 'STOP', outboundHoursAgo: 5 });
-      const keep = rec({ inbound: 'Is it still available?', outboundHoursAgo: 5 });
+      const r = rec({
+        sourceRecordId: 'ERASE-1',
+        inbound: 'STOP',
+        outboundHoursAgo: 5,
+      });
+      const keep = rec({
+        inbound: 'Is it still available?',
+        outboundHoursAgo: 5,
+      });
       await intake.ingest(scope('nissan'), 'fixture', [r, keep]);
-      await api('nissan', 'manager').post('privacy/export', { phone: r.phone, reason: 'customer request' }).expect(403);
-      await api('chevy').post('privacy/erase', { phone: r.phone, reason: 'wrong tenant' }).expect(201).then((res) => expect(unwrap<{ leads: number }>(res.body).leads).toBe(0));
-      const exp = unwrap<{ records: Array<{ phone: string; messages: Array<{ text: string }> }>; suppressions: unknown[] }>(
-        (await api('nissan').post('privacy/export', { phone: r.phone, reason: 'customer request' }).expect(201)).body,
+      await api('nissan', 'manager')
+        .post('privacy/export', { phone: r.phone, reason: 'customer request' })
+        .expect(403);
+      await api('chevy')
+        .post('privacy/erase', { phone: r.phone, reason: 'wrong tenant' })
+        .expect(201)
+        .then((res) =>
+          expect(unwrap<{ leads: number }>(res.body).leads).toBe(0),
+        );
+      const exp = unwrap<{
+        records: Array<{ phone: string; messages: Array<{ text: string }> }>;
+        suppressions: unknown[];
+      }>(
+        (
+          await api('nissan')
+            .post('privacy/export', {
+              phone: r.phone,
+              reason: 'customer request',
+            })
+            .expect(201)
+        ).body,
       );
       expect(exp.records).toHaveLength(1);
       expect(exp.records[0].phone).toBe(r.phone);
       expect(exp.records[0].messages.at(-1)!.text).toBe('STOP');
       expect(exp.suppressions).toHaveLength(1);
-      const out = unwrap<{ leads: number; messages: number; suppressionsKept: number }>(
-        (await api('nissan').post('privacy/erase', { phone: r.phone, reason: 'customer asked us to delete call 312-555-0100' }).expect(201)).body,
+      const out = unwrap<{
+        leads: number;
+        messages: number;
+        suppressionsKept: number;
+      }>(
+        (
+          await api('nissan')
+            .post('privacy/erase', {
+              phone: r.phone,
+              reason: 'customer asked us to delete call 312-555-0100',
+            })
+            .expect(201)
+        ).body,
       );
       expect(out).toMatchObject({ leads: 1, suppressionsKept: 1 });
-      expect(await ctx.prisma.crmWfLead.count({ where: { tenantId: ids.nissan.tenantId } })).toBe(1);
-      expect(await ctx.prisma.crmWfMessage.count({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: { startsWith: 'ERASE-1' } } })).toBe(0);
+      expect(
+        await ctx.prisma.crmWfLead.count({
+          where: { tenantId: ids.nissan.tenantId },
+        }),
+      ).toBe(1);
+      expect(
+        await ctx.prisma.crmWfMessage.count({
+          where: {
+            tenantId: ids.nissan.tenantId,
+            sourceRecordId: { startsWith: 'ERASE-1' },
+          },
+        }),
+      ).toBe(0);
       // Re-importing the erased customer does not make them contactable again.
-      const again = await intake.ingest(scope('nissan'), 'fixture', [rec({ sourceRecordId: 'ERASE-2', phone: r.phone, outboundHoursAgo: 5, inbound: 'hi again' })]);
+      const again = await intake.ingest(scope('nissan'), 'fixture', [
+        rec({
+          sourceRecordId: 'ERASE-2',
+          phone: r.phone,
+          outboundHoursAgo: 5,
+          inbound: 'hi again',
+        }),
+      ]);
       expect(again.tasksQueued).toBe(1);
       await openGates('nissan');
       await tick();
-      const t = (await tasksOf('nissan')).find((x) => x.statusReason?.includes('suppressed'));
+      const t = (await tasksOf('nissan')).find((x) =>
+        x.statusReason?.includes('suppressed'),
+      );
       expect(t?.status).toBe('SUPPRESSED');
-      const audit = await ctx.prisma.auditLog.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, action: 'crmwf.privacy.erased' }, orderBy: { createdAt: 'desc' } });
+      const audit = await ctx.prisma.auditLog.findFirstOrThrow({
+        where: {
+          tenantId: ids.nissan.tenantId,
+          action: 'crmwf.privacy.erased',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
       expect(JSON.stringify(audit.metadata)).not.toMatch(/555-0100|5550100/);
     });
 
     it('retention purge removes records past the dealership retention period, never under legal hold', async () => {
       const privacy = ctx.app.get(CrmWfPrivacyService);
-      await intake.ingest(scope('nissan'), 'fixture', [rec({ sourceRecordId: 'OLD-1', createdInCrmAt: hoursAgo(24 * 800) }), rec({ sourceRecordId: 'NEW-1' })]);
-      await ctx.prisma.$executeRaw`UPDATE "CrmWfLead" SET "updatedAt" = NOW() - interval '500 days' WHERE "tenantId" = ${ids.nissan.tenantId} AND "sourceRecordId" = 'OLD-1'`;
-      const r = unwrap<{ recordsPastRetention: number; retentionDays: number; vaultReady: boolean }>((await api('nissan').get('privacy/retention').expect(200)).body);
-      expect(r).toMatchObject({ recordsPastRetention: 1, retentionDays: 365, vaultReady: true });
-      await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { legalHold: true } });
+      await intake.ingest(scope('nissan'), 'fixture', [
+        rec({ sourceRecordId: 'OLD-1', createdInCrmAt: hoursAgo(24 * 800) }),
+        rec({ sourceRecordId: 'NEW-1' }),
+      ]);
+      await ctx.prisma
+        .$executeRaw`UPDATE "CrmWfLead" SET "updatedAt" = NOW() - interval '500 days' WHERE "tenantId" = ${ids.nissan.tenantId} AND "sourceRecordId" = 'OLD-1'`;
+      const r = unwrap<{
+        recordsPastRetention: number;
+        retentionDays: number;
+        vaultReady: boolean;
+      }>((await api('nissan').get('privacy/retention').expect(200)).body);
+      expect(r).toMatchObject({
+        recordsPastRetention: 1,
+        retentionDays: 365,
+        vaultReady: true,
+      });
+      await ctx.prisma.tenant.update({
+        where: { id: ids.nissan.tenantId },
+        data: { legalHold: true },
+      });
       expect(await privacy.purgeExpired()).toBe(0);
-      await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { legalHold: false } });
+      await ctx.prisma.tenant.update({
+        where: { id: ids.nissan.tenantId },
+        data: { legalHold: false },
+      });
       expect(await privacy.purgeExpired()).toBe(1);
-      const left = await ctx.prisma.crmWfLead.findMany({ where: { tenantId: ids.nissan.tenantId } });
+      const left = await ctx.prisma.crmWfLead.findMany({
+        where: { tenantId: ids.nissan.tenantId },
+      });
       expect(left.map((l) => l.sourceRecordId)).toEqual(['NEW-1']);
     });
 
@@ -1165,7 +1288,9 @@ describe('CRM Workforce (e2e)', () => {
       adapters.fixture.fault = 'uncertain_not_written';
       await approve(a.id);
       const r2 = ctx.app.get(CrmWfVaultService).lead(
-        await ctx.prisma.crmWfLead.findUniqueOrThrow({ where: { id: a.crmLeadId! } }),
+        await ctx.prisma.crmWfLead.findUniqueOrThrow({
+          where: { id: a.crmLeadId! },
+        }),
       );
       await intake.ingest(scope('nissan'), 'fixture', [
         rec({
@@ -1310,9 +1435,17 @@ describe('CRM Workforce (e2e)', () => {
       await intake.ingest(scope('nissan'), 'fixture', [rec(), rec()]);
       const [soon, later] = await tasksOf('nissan');
       // App clock ahead of DB clock by 2s (the skew that made fresh tasks invisible to claim).
-      await ctx.prisma.crmWfTask.update({ where: { id: soon.id }, data: { nextAttemptAt: new Date(Date.now() + 2_000) } });
-      await ctx.prisma.crmWfTask.update({ where: { id: later.id }, data: { nextAttemptAt: new Date(Date.now() + 120_000) } });
-      const claimed = await queue.claim(10, 'w-skew', 120_000, [ids.nissan.tenantId]);
+      await ctx.prisma.crmWfTask.update({
+        where: { id: soon.id },
+        data: { nextAttemptAt: new Date(Date.now() + 2_000) },
+      });
+      await ctx.prisma.crmWfTask.update({
+        where: { id: later.id },
+        data: { nextAttemptAt: new Date(Date.now() + 120_000) },
+      });
+      const claimed = await queue.claim(10, 'w-skew', 120_000, [
+        ids.nissan.tenantId,
+      ]);
       expect(claimed.map((t) => t.id)).toEqual([soon.id]);
     });
 
@@ -1471,59 +1604,173 @@ describe('CRM Workforce (e2e)', () => {
     });
 
     describe('CRM export import', () => {
-      const up = (k: Key, path: string, csv: string, fields: Record<string, string>, role: 'admin' | 'manager' | 'staff' = 'manager') => {
-        let r = http().post(`/api/ops/crm-workforce/${path}`).set('Authorization', `Bearer ${ids[k][role]}`).attach('file', Buffer.from(csv), 'export.csv');
+      const up = (
+        k: Key,
+        path: string,
+        csv: string,
+        fields: Record<string, string>,
+        role: 'admin' | 'manager' | 'staff' = 'manager',
+      ) => {
+        let r = http()
+          .post(`/api/ops/crm-workforce/${path}`)
+          .set('Authorization', `Bearer ${ids[k][role]}`)
+          .attach('file', Buffer.from(csv), 'export.csv');
         for (const [f, v] of Object.entries(fields)) r = r.field(f, v);
         return r;
       };
       const loc = () => ({ locationId: ids.nissan.locationId });
-      const HEAD = 'Lead ID,First Name,Last Name,Mobile,Email,Status,Salesperson,Make,Model,Created Date,Last Outbound,Next Follow Up,Do Not Contact';
+      const HEAD =
+        'Lead ID,First Name,Last Name,Mobile,Email,Status,Salesperson,Make,Model,Created Date,Last Outbound,Next Follow Up,Do Not Contact';
       const CREATED_AT = hoursAgo(40); // fixed for the run so an unchanged row hashes the same
-      const row = (id: string, n: string, status = 'Active', extra = '') => `${id},Test,Person${n},(312) 555-01${n},p${n}@example.invalid,${status},Pat Example,Nissan,Rogue,${CREATED_AT},${extra},,No`;
-      const connect = () => api('nissan').post('connectors', { locationId: ids.nissan.locationId, adapterKey: 'export_import', enabled: true, authorizationRef: 'TEST-AUTH-1' }).expect(201);
-      const leadCount = () => ctx.prisma.crmWfLead.count({ where: { tenantId: ids.nissan.tenantId } });
+      const row = (id: string, n: string, status = 'Active', extra = '') =>
+        `${id},Test,Person${n},(312) 555-01${n},p${n}@example.invalid,${status},Pat Example,Nissan,Rogue,${CREATED_AT},${extra},,No`;
+      const connect = () =>
+        api('nissan')
+          .post('connectors', {
+            locationId: ids.nissan.locationId,
+            adapterKey: 'export_import',
+            enabled: true,
+            authorizationRef: 'TEST-AUTH-1',
+          })
+          .expect(201);
+      const leadCount = () =>
+        ctx.prisma.crmWfLead.count({
+          where: { tenantId: ids.nissan.tenantId },
+        });
 
       it('needs a recorded authorization; previews without writing; commits only the same file', async () => {
-        const csv = [HEAD, row('X-1', '41'), row('X-2', '42'), row('X-2', '43'), ',NoId,,,,,,,,,,,'].join('\n');
+        const csv = [
+          HEAD,
+          row('X-1', '41'),
+          row('X-2', '42'),
+          row('X-2', '43'),
+          ',NoId,,,,,,,,,,,',
+        ].join('\n');
         const meta = { ...loc(), exportedAt: hoursAgo(1) };
         await up('nissan', 'imports/preview', csv, meta).expect(403);
-        await api('nissan').post('connectors', { locationId: ids.nissan.locationId, adapterKey: 'export_import', enabled: true }).expect(400);
+        await api('nissan')
+          .post('connectors', {
+            locationId: ids.nissan.locationId,
+            adapterKey: 'export_import',
+            enabled: true,
+          })
+          .expect(400);
         await connect();
         await up('nissan', 'imports/preview', csv, meta, 'staff').expect(403);
-        const pv = unwrap<{ batch: { id: string; status: string; synthetic: boolean; counts: Record<string, number>; validation: { rejectedRows: Array<{ reason: string }>; warnings: string[] } }; sample: unknown[] }>(
-          (await up('nissan', 'imports/preview', csv, meta).expect(201)).body,
-        );
-        expect(pv.batch).toMatchObject({ status: 'PREVIEWED', synthetic: true });
-        expect(pv.batch.counts).toMatchObject({ rows: 4, rejected: 2, created: 2, updated: 0, duplicates: 0 });
-        expect(pv.batch.validation.rejectedRows.map((r) => r.reason).sort()).toEqual(['duplicate_lead_id', 'missing_lead_id']);
+        const pv = unwrap<{
+          batch: {
+            id: string;
+            status: string;
+            synthetic: boolean;
+            counts: Record<string, number>;
+            validation: {
+              rejectedRows: Array<{ reason: string }>;
+              warnings: string[];
+            };
+          };
+          sample: unknown[];
+        }>((await up('nissan', 'imports/preview', csv, meta).expect(201)).body);
+        expect(pv.batch).toMatchObject({
+          status: 'PREVIEWED',
+          synthetic: true,
+        });
+        expect(pv.batch.counts).toMatchObject({
+          rows: 4,
+          rejected: 2,
+          created: 2,
+          updated: 0,
+          duplicates: 0,
+        });
+        expect(
+          pv.batch.validation.rejectedRows.map((r) => r.reason).sort(),
+        ).toEqual(['duplicate_lead_id', 'missing_lead_id']);
         expect(JSON.stringify(pv)).not.toMatch(/555-0141|p41@example|Person41/);
         expect(await leadCount()).toBe(0);
         expect(await tasksOf('nissan')).toHaveLength(0);
 
-        await up('nissan', `imports/${pv.batch.id}/commit`, csv + '\nX-9,Extra,,,,,,,,,,,', loc()).expect(400);
-        await up('chevy', `imports/${pv.batch.id}/commit`, csv, { locationId: ids.chevy.locationId }).expect(403);
-        const done = unwrap<{ status: string }>((await up('nissan', `imports/${pv.batch.id}/commit`, csv, loc()).expect(201)).body);
+        await up(
+          'nissan',
+          `imports/${pv.batch.id}/commit`,
+          csv + '\nX-9,Extra,,,,,,,,,,,',
+          loc(),
+        ).expect(400);
+        await up('chevy', `imports/${pv.batch.id}/commit`, csv, {
+          locationId: ids.chevy.locationId,
+        }).expect(403);
+        const done = unwrap<{ status: string }>(
+          (
+            await up(
+              'nissan',
+              `imports/${pv.batch.id}/commit`,
+              csv,
+              loc(),
+            ).expect(201)
+          ).body,
+        );
         expect(done.status).toBe('COMMITTED');
         expect(await leadCount()).toBe(2);
-        const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: 'X-1' } });
-        expect(lead).toMatchObject({ verified: true, synthetic: false, adapterKey: 'export_import', importBatchId: pv.batch.id, assignedTo: 'Pat Example' });
-        await up('nissan', `imports/${pv.batch.id}/commit`, csv, loc()).expect(409);
+        const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({
+          where: { tenantId: ids.nissan.tenantId, sourceRecordId: 'X-1' },
+        });
+        expect(lead).toMatchObject({
+          verified: true,
+          synthetic: false,
+          adapterKey: 'export_import',
+          importBatchId: pv.batch.id,
+          assignedTo: 'Pat Example',
+        });
+        await up('nissan', `imports/${pv.batch.id}/commit`, csv, loc()).expect(
+          409,
+        );
       });
 
       it('refuses real customer contacts until the rooftop is authorized for real imports', async () => {
         await connect();
-        const csv = [HEAD, 'R-1,Real,Person,(312) 867-5309,someone@gmail.com,Active,Pat Example,Nissan,Rogue,,,,No'].join('\n');
+        const csv = [
+          HEAD,
+          'R-1,Real,Person,(312) 867-5309,someone@gmail.com,Active,Pat Example,Nissan,Rogue,,,,No',
+        ].join('\n');
         const meta = { ...loc(), exportedAt: hoursAgo(1) };
-        const res = await up('nissan', 'imports/preview', csv, meta).expect(403);
-        expect(JSON.stringify(res.body)).toContain('real_customer_data_import_not_authorized');
-        expect(await ctx.prisma.crmWfImportBatch.count({ where: { tenantId: ids.nissan.tenantId } })).toBe(0);
+        const res = await up('nissan', 'imports/preview', csv, meta).expect(
+          403,
+        );
+        expect(JSON.stringify(res.body)).toContain(
+          'real_customer_data_import_not_authorized',
+        );
+        expect(
+          await ctx.prisma.crmWfImportBatch.count({
+            where: { tenantId: ids.nissan.tenantId },
+          }),
+        ).toBe(0);
         expect(await leadCount()).toBe(0);
-        await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { featureFlags: { crmWorkforce: true, crmWorkforceRealImports: true } } });
+        // A real number in a column nobody mapped, and a file with names but no contacts,
+        // are both real customer data.
+        for (const sneaky of [
+          'Lead ID,Mobile,Alt Phone\nS-1,(312) 555-0142,773-423-3000',
+          'Lead ID,First Name,Last Name,Status\nS-2,Jane,Realperson,Active',
+        ])
+          await up('nissan', 'imports/preview', sneaky, meta).expect(403);
+        expect(
+          await ctx.prisma.crmWfImportBatch.count({
+            where: { tenantId: ids.nissan.tenantId },
+          }),
+        ).toBe(0);
+        await ctx.prisma.tenant.update({
+          where: { id: ids.nissan.tenantId },
+          data: {
+            featureFlags: { crmWorkforce: true, crmWorkforceRealImports: true },
+          },
+        });
         try {
-          const pv = unwrap<{ batch: { synthetic: boolean } }>((await up('nissan', 'imports/preview', csv, meta).expect(201)).body);
+          const pv = unwrap<{ batch: { synthetic: boolean } }>(
+            (await up('nissan', 'imports/preview', csv, meta).expect(201)).body,
+          );
           expect(pv.batch.synthetic).toBe(false);
         } finally {
-          await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { featureFlags: { crmWorkforce: true } } });
+          await ctx.prisma.tenant.update({
+            where: { id: ids.nissan.tenantId },
+            data: { featureFlags: { crmWorkforce: true } },
+          });
         }
       });
 
@@ -1532,49 +1779,154 @@ describe('CRM Workforce (e2e)', () => {
         const meta = { ...loc(), exportedAt: hoursAgo(1) };
         const csv = 'Deal Number,Cust Cell,Rep\nM-1,312-555-0155,Sam Other';
         await up('nissan', 'imports/preview', csv, meta).expect(400); // no lead id column detected
-        await up('nissan', 'imports/preview', csv, { ...meta, mapping: JSON.stringify({ sourceRecordId: 'Deal Number', phone: 'Nope' }) }).expect(400);
-        await up('nissan', 'imports/preview', csv, { ...meta, mapping: JSON.stringify({ ssn: 'Rep' }) }).expect(400);
-        const pv = unwrap<{ batch: { id: string; mapping: Record<string, string>; validation: { warnings: string[] } }; sample: Array<{ hasPhone: boolean; salesperson: string }> }>(
-          (await up('nissan', 'imports/preview', csv, { ...meta, mapping: JSON.stringify({ sourceRecordId: 'Deal Number', phone: 'Cust Cell', assignedTo: 'Rep' }) }).expect(201)).body,
+        await up('nissan', 'imports/preview', csv, {
+          ...meta,
+          mapping: JSON.stringify({
+            sourceRecordId: 'Deal Number',
+            phone: 'Nope',
+          }),
+        }).expect(400);
+        await up('nissan', 'imports/preview', csv, {
+          ...meta,
+          mapping: JSON.stringify({ ssn: 'Rep' }),
+        }).expect(400);
+        const pv = unwrap<{
+          batch: {
+            id: string;
+            mapping: Record<string, string>;
+            validation: { warnings: string[] };
+          };
+          sample: Array<{ hasPhone: boolean; salesperson: string }>;
+        }>(
+          (
+            await up('nissan', 'imports/preview', csv, {
+              ...meta,
+              mapping: JSON.stringify({
+                sourceRecordId: 'Deal Number',
+                phone: 'Cust Cell',
+                assignedTo: 'Rep',
+              }),
+            }).expect(201)
+          ).body,
         );
-        expect(pv.batch.mapping).toEqual({ sourceRecordId: 'Deal Number', phone: 'Cust Cell', assignedTo: 'Rep' });
-        expect(pv.sample[0]).toMatchObject({ hasPhone: true, salesperson: 'Sam Other' });
-        expect(pv.batch.validation.warnings.join(' ')).toMatch(/do-not-contact/);
-        await up('nissan', 'imports/preview', 'Lead ID,Credit Score\n1,700', meta).expect(400);
+        expect(pv.batch.mapping).toEqual({
+          sourceRecordId: 'Deal Number',
+          phone: 'Cust Cell',
+          assignedTo: 'Rep',
+        });
+        expect(pv.sample[0]).toMatchObject({
+          hasPhone: true,
+          salesperson: 'Sam Other',
+        });
+        expect(pv.batch.validation.warnings.join(' ')).toMatch(
+          /do-not-contact/,
+        );
+        await up(
+          'nissan',
+          'imports/preview',
+          'Lead ID,Credit Score\n1,700',
+          meta,
+        ).expect(400);
       });
 
       it('imports incrementally and rolls a batch back exactly', async () => {
         await connect();
         const meta = () => ({ ...loc(), exportedAt: hoursAgo(1) });
         const run = async (csv: string) => {
-          const pv = unwrap<{ batch: { id: string; counts: Record<string, number> } }>((await up('nissan', 'imports/preview', csv, meta()).expect(201)).body);
-          await up('nissan', `imports/${pv.batch.id}/commit`, csv, loc()).expect(201);
+          const pv = unwrap<{
+            batch: { id: string; counts: Record<string, number> };
+          }>(
+            (await up('nissan', 'imports/preview', csv, meta()).expect(201))
+              .body,
+          );
+          await up(
+            'nissan',
+            `imports/${pv.batch.id}/commit`,
+            csv,
+            loc(),
+          ).expect(201);
           return pv.batch;
         };
-        const b1 = await run([HEAD, row('I-1', '61'), row('I-2', '62')].join('\n'));
+        const b1 = await run(
+          [HEAD, row('I-1', '61'), row('I-2', '62')].join('\n'),
+        );
         expect(b1.counts).toMatchObject({ created: 2 });
         // Next export: I-1 unchanged, I-2 changed status, I-3 new.
-        const b2 = await run([HEAD, row('I-1', '61'), row('I-2', '62', 'Appointment Set'), row('I-3', '63')].join('\n'));
-        expect(b2.counts).toMatchObject({ created: 1, updated: 1, unchanged: 1 });
-        const get = (id: string) => ctx.prisma.crmWfLead.findFirst({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: id } });
+        const b2 = await run(
+          [
+            HEAD,
+            row('I-1', '61'),
+            row('I-2', '62', 'Appointment Set'),
+            row('I-3', '63'),
+          ].join('\n'),
+        );
+        expect(b2.counts).toMatchObject({
+          created: 1,
+          updated: 1,
+          unchanged: 1,
+        });
+        const get = (id: string) =>
+          ctx.prisma.crmWfLead.findFirst({
+            where: { tenantId: ids.nissan.tenantId, sourceRecordId: id },
+          });
         expect((await get('I-2'))!.crmStatus).toBe('Appointment Set');
 
-        await api('nissan', 'manager').post(`imports/${b1.id}/rollback`, { ...loc(), reason: 'wrong order' }).expect(409);
-        await api('nissan', 'staff').post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'no' }).expect(403);
-        const rb = unwrap<{ removed: number; restored: number; keptBecauseContacted: number }>(
-          (await api('nissan', 'manager').post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'bad file' }).expect(201)).body,
+        await api('nissan', 'manager')
+          .post(`imports/${b1.id}/rollback`, {
+            ...loc(),
+            reason: 'wrong order',
+          })
+          .expect(409);
+        await api('nissan', 'staff')
+          .post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'no' })
+          .expect(403);
+        const rb = unwrap<{
+          removed: number;
+          restored: number;
+          keptBecauseContacted: number;
+        }>(
+          (
+            await api('nissan', 'manager')
+              .post(`imports/${b2.id}/rollback`, {
+                ...loc(),
+                reason: 'bad file',
+              })
+              .expect(201)
+          ).body,
         );
-        expect(rb).toMatchObject({ removed: 1, restored: 1, keptBecauseContacted: 0 });
+        expect(rb).toMatchObject({
+          removed: 1,
+          restored: 1,
+          keptBecauseContacted: 0,
+        });
         expect(await get('I-3')).toBeNull();
         expect((await get('I-2'))!.crmStatus).toBe('Active');
         expect(await leadCount()).toBe(2);
-        await api('nissan', 'manager').post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'again' }).expect(409);
-        const rb1 = unwrap<{ removed: number }>((await api('nissan', 'manager').post(`imports/${b1.id}/rollback`, { ...loc(), reason: 'start over' }).expect(201)).body);
+        await api('nissan', 'manager')
+          .post(`imports/${b2.id}/rollback`, { ...loc(), reason: 'again' })
+          .expect(409);
+        const rb1 = unwrap<{ removed: number }>(
+          (
+            await api('nissan', 'manager')
+              .post(`imports/${b1.id}/rollback`, {
+                ...loc(),
+                reason: 'start over',
+              })
+              .expect(201)
+          ).body,
+        );
         expect(rb1.removed).toBe(2);
         expect(await leadCount()).toBe(0);
-        expect((await tasksOf('nissan')).filter((t) => t.status === 'PENDING')).toHaveLength(0);
-        const list = unwrap<Array<{ status: string }>>((await api('nissan', 'manager').get('imports').expect(200)).body);
-        expect(list.map((b) => b.status)).toEqual(['ROLLED_BACK', 'ROLLED_BACK']);
+        expect(
+          (await tasksOf('nissan')).filter((t) => t.status === 'PENDING'),
+        ).toHaveLength(0);
+        const list = unwrap<Array<{ status: string }>>(
+          (await api('nissan', 'manager').get('imports').expect(200)).body,
+        );
+        expect(list.map((b) => b.status)).toEqual([
+          'ROLLED_BACK',
+          'ROLLED_BACK',
+        ]);
       });
     });
 
@@ -1721,6 +2073,725 @@ describe('CRM Workforce (e2e)', () => {
         'note',
         'policy',
       ]);
+    });
+  });
+
+  describe('employee-assisted workspace (Mode A)', () => {
+    const assistOn = async (k: Key = 'nissan') => {
+      await api(k)
+        .post('controls', {
+          scope: 'LOCATION',
+          locationId: ids[k].locationId,
+          mode: 'ASSIST',
+          reason: 'assist pilot',
+        })
+        .expect(201);
+      await api(k)
+        .post('connectors', {
+          locationId: ids[k].locationId,
+          adapterKey: 'manual_assist',
+          enabled: true,
+        })
+        .expect(201);
+    };
+    const enter = async (k: Key, body: object = {}) =>
+      unwrap<{ id: string }>(
+        (
+          await api(k, 'staff')
+            .post('assist/leads', {
+              locationId: ids[k].locationId,
+              department: 'SALES',
+              firstName: 'Test',
+              vehicleMake: 'Nissan',
+              vehicleModel: 'Rogue',
+              assignedTo: 'Pat Example',
+              customerMessage: 'Is the Rogue still available?',
+              ...body,
+            })
+            .expect(201)
+        ).body,
+      ).id;
+    type Draft = {
+      kind: string;
+      actionId?: string;
+      text?: string;
+      warnings?: Array<{ rule: string }>;
+      recommendation?: { action: string; name: string };
+      reason?: string;
+      workItemId?: string;
+    };
+
+    it('needs the rooftop out of Observe and the employee-assisted connection on', async () => {
+      await api('nissan', 'staff')
+        .post('assist/leads', {
+          locationId: ids.nissan.locationId,
+          department: 'SALES',
+          customerMessage: 'hi',
+        })
+        .expect(403);
+      await api('nissan')
+        .post('connectors', {
+          locationId: ids.nissan.locationId,
+          adapterKey: 'manual_assist',
+          enabled: true,
+        })
+        .expect(201);
+      const id = await enter('nissan');
+      await api('nissan', 'staff').post(`leads/${id}/draft`, {}).expect(409); // still Observe
+      expect(route).not.toHaveBeenCalled();
+    });
+
+    it("drafts a reply in the employee's own voice, records the send, and continues the conversation", async () => {
+      await assistOn();
+      reply =
+        'Which Rogue were you looking at, the new one or the pre-owned one? I can have it checked.';
+      const id = await enter('nissan');
+      const d = unwrap<Draft>(
+        (
+          await api('nissan', 'staff')
+            .post(`leads/${id}/draft`, { staffNote: 'ask which one' })
+            .expect(201)
+        ).body,
+      );
+      expect(d.kind).toBe('draft');
+      expect(d.text).toBe(reply);
+      // The employee is the sender: no "virtual assistant" introduction is demanded or added.
+      const prompt = JSON.stringify(route.mock.calls[0][0]);
+      expect(prompt).toContain('send it as their own message');
+      expect(prompt).not.toMatch(/identify yourself once as/);
+      expect(prompt).toContain('ask which one');
+      // No consent record is on file: the employee is told, not blocked.
+      expect(d.warnings!.map((w) => w.rule)).toContain('no_endpoint');
+      expect(d.recommendation).toMatchObject({
+        action: 'KEEP_OWNER',
+        name: 'Pat Example',
+      });
+      expect(adapters.fixture.executeCalls).toBe(0);
+
+      const sent = unwrap<{ status: string; verifiedAt: string | null }>(
+        (
+          await api('nissan', 'staff')
+            .post(`actions/${d.actionId}/staff-confirm`, {
+              note: 'sent from Tekion',
+            })
+            .expect(201)
+        ).body,
+      );
+      expect(sent).toMatchObject({
+        status: 'STAFF_CONFIRMED',
+        verifiedAt: null,
+      });
+
+      await api('nissan', 'staff')
+        .post(`leads/${id}/messages`, {
+          direction: 'INBOUND',
+          text: 'The new one. Can I come Saturday?',
+        })
+        .expect(201);
+      reply = 'Saturday works. What time is good for you?';
+      const d2 = unwrap<Draft>(
+        (await api('nissan', 'staff').post(`leads/${id}/draft`, {}).expect(201))
+          .body,
+      );
+      expect(d2.kind).toBe('draft');
+      const second = JSON.stringify(route.mock.calls.at(-1)![0]);
+      expect(second).toContain('Is the Rogue still available?');
+      expect(second).toContain('Which Rogue were you looking at');
+      expect(second).toContain('Can I come Saturday?');
+      const detail = unwrap<{ lead: { messages: unknown[] } }>(
+        (await api('nissan', 'staff').get(`leads/${id}`).expect(200)).body,
+      );
+      expect(detail.lead.messages).toHaveLength(3);
+    });
+
+    it('writes nothing when the customer opted out, and hands hard questions to a person', async () => {
+      await assistOn();
+      const stop = await enter('nissan', {
+        customerMessage: 'Stop texting me',
+      });
+      const d = unwrap<Draft>(
+        (
+          await api('nissan', 'staff')
+            .post(`leads/${stop}/draft`, {})
+            .expect(201)
+        ).body,
+      );
+      expect(d.kind).toBe('suppressed');
+      const price = await enter('nissan', {
+        customerMessage: "What's your best price out the door?",
+      });
+      const h = unwrap<Draft>(
+        (
+          await api('nissan', 'staff')
+            .post(`leads/${price}/draft`, {})
+            .expect(201)
+        ).body,
+      );
+      expect(h).toMatchObject({ kind: 'handoff', reason: 'NEGOTIATION' });
+      expect(route).not.toHaveBeenCalled();
+      const items = unwrap<Array<{ id: string; kind: string; status: string }>>(
+        (
+          await api('nissan', 'staff')
+            .get('work-items?kind=ESCALATION')
+            .expect(200)
+        ).body,
+      );
+      expect(items.map((i) => i.id)).toContain(h.workItemId);
+      // Another rooftop cannot draft for, read, or add to this lead.
+      await api('chevy', 'staff').post(`leads/${price}/draft`, {}).expect(404);
+      await api('chevy', 'staff')
+        .post(`leads/${price}/messages`, { direction: 'INBOUND', text: 'x' })
+        .expect(404);
+    });
+
+    it('a draft that would break the rules is not shown; a new draft replaces the old one', async () => {
+      await assistOn();
+      const id = await enter('nissan');
+      reply =
+        "Great news!! You're approved and it's only $199 a month. Hurry, this one won't last!";
+      const bad = unwrap<Draft>(
+        (await api('nissan', 'staff').post(`leads/${id}/draft`, {}).expect(201))
+          .body,
+      );
+      expect(bad.kind).toBe('no_draft');
+      expect(await actionsOf('nissan')).toHaveLength(0);
+      reply = 'I can have the team check on that Rogue for you.';
+      const a = unwrap<Draft>(
+        (await api('nissan', 'staff').post(`leads/${id}/draft`, {}).expect(201))
+          .body,
+      );
+      const b = unwrap<Draft>(
+        (await api('nissan', 'staff').post(`leads/${id}/draft`, {}).expect(201))
+          .body,
+      );
+      expect(a.actionId).not.toBe(b.actionId);
+      expect((await actionsOf('nissan')).map((x) => x.status)).toEqual([
+        'CANCELLED',
+        'DRAFT',
+      ]);
+    });
+
+    it('respects the daily drafting limit', async () => {
+      await assistOn();
+      const id = await enter('nissan');
+      process.env.CRM_WORKFORCE_DAILY_DRAFT_LIMIT = '1';
+      try {
+        await api('nissan', 'staff').post(`leads/${id}/draft`, {}).expect(201);
+        const res = await api('nissan', 'staff')
+          .post(`leads/${id}/draft`, {})
+          .expect(409);
+        expect(JSON.stringify(res.body)).toContain('budget_exhausted');
+        expect(route).toHaveBeenCalledTimes(1);
+      } finally {
+        delete process.env.CRM_WORKFORCE_DAILY_DRAFT_LIMIT;
+      }
+    });
+  });
+
+  describe('appointments, follow-ups and staff work items', () => {
+    const next = (dow: number, hourUtc: number) => {
+      const d = new Date();
+      d.setUTCHours(hourUtc, 0, 0, 0);
+      do d.setUTCDate(d.getUTCDate() + 1);
+      while (d.getUTCDay() !== dow);
+      return d.toISOString();
+    };
+    const leadId = async () => {
+      await intake.ingest(scope('nissan'), 'fixture', [
+        rec({ inbound: 'Can I come in Monday morning?', outboundHoursAgo: 5 }),
+      ]);
+      return (
+        await ctx.prisma.crmWfLead.findFirstOrThrow({
+          where: { tenantId: ids.nissan.tenantId },
+        })
+      ).id;
+    };
+
+    it('an appointment is a request until an employee confirms it with the CRM reference', async () => {
+      const id = await leadId();
+      const hours = {
+        mon: { open: '09:00', close: '19:00' },
+        tue: { open: '09:00', close: '19:00' },
+      };
+      await ctx.prisma.location.update({
+        where: { id: ids.nissan.locationId },
+        data: {
+          storeHours: hours,
+          storeHoursVerifiedAt: new Date(),
+          storeHoursVerifiedBy: 'test',
+        },
+      });
+      try {
+        await api('nissan', 'staff')
+          .post(`leads/${id}/appointment`, {
+            change: 'REQUEST',
+            requestedAt: hoursAgo(5),
+          })
+          .expect(400);
+        // Sunday is not in the verified hours → refused. 16:00 UTC Monday = 10:00 Chicago → accepted.
+        await api('nissan', 'staff')
+          .post(`leads/${id}/appointment`, {
+            change: 'REQUEST',
+            requestedAt: next(0, 18),
+          })
+          .expect(400);
+        const item = unwrap<{
+          id: string;
+          kind: string;
+          status: string;
+          payload: { hoursCheck: string; availability: string };
+        }>(
+          (
+            await api('nissan', 'staff')
+              .post(`leads/${id}/appointment`, {
+                change: 'REQUEST',
+                type: 'TEST_DRIVE',
+                requestedAt: next(1, 16),
+                note: 'call 312-555-0100 first',
+              })
+              .expect(201)
+          ).body,
+        );
+        expect(item).toMatchObject({
+          kind: 'APPOINTMENT_REQUEST',
+          status: 'OPEN',
+        });
+        expect(item.payload.hoursCheck).toBe('INSIDE_VERIFIED_HOURS');
+        expect(item.payload.availability).toContain('NOT_VERIFIED');
+        expect(JSON.stringify(item.payload)).not.toContain('555-0100');
+        // The CRM mirror is untouched: nothing here claims an appointment exists.
+        expect(
+          (await ctx.prisma.crmWfLead.findUniqueOrThrow({ where: { id } }))
+            .appointmentState,
+        ).toBe('NONE');
+        expect(
+          await ctx.prisma.crmWfOutcome.count({
+            where: { tenantId: ids.nissan.tenantId, kind: 'APPT_SET' },
+          }),
+        ).toBe(0);
+
+        await api('nissan', 'staff')
+          .post(`work-items/${item.id}/claim`)
+          .expect(201);
+        await api('nissan', 'manager')
+          .post(`work-items/${item.id}/claim`)
+          .expect(409);
+        await api('nissan', 'staff')
+          .post(`work-items/${item.id}/resolve`, { outcome: 'DONE' })
+          .expect(400); // no CRM reference
+        const done = unwrap<{
+          status: string;
+          resolution: { basis: string; crmReference: string };
+        }>(
+          (
+            await api('nissan', 'staff')
+              .post(`work-items/${item.id}/resolve`, {
+                outcome: 'DONE',
+                crmReference: 'TK-APPT-1',
+              })
+              .expect(201)
+          ).body,
+        );
+        expect(done.status).toBe('STAFF_CONFIRMED');
+        expect(done.resolution).toMatchObject({
+          basis: 'staff_statement',
+          crmReference: 'TK-APPT-1',
+        });
+        const out = await ctx.prisma.crmWfOutcome.findMany({
+          where: { tenantId: ids.nissan.tenantId, kind: 'APPT_SET' },
+        });
+        expect(out.map((o) => `${o.basis}:${o.verified}`)).toEqual([
+          'ATTRIBUTED:false',
+        ]);
+        expect(
+          await ctx.prisma.crmWfOutcome.count({
+            where: { tenantId: ids.nissan.tenantId, kind: 'APPT_SHOWN' },
+          }),
+        ).toBe(0);
+        await api('chevy', 'staff')
+          .post(`work-items/${item.id}/resolve`, { outcome: 'CANCELLED' })
+          .expect(404);
+      } finally {
+        await ctx.prisma.location.update({
+          where: { id: ids.nissan.locationId },
+          data: {
+            storeHours: undefined,
+            storeHoursVerifiedAt: null,
+            storeHoursVerifiedBy: null,
+          },
+        });
+      }
+    });
+
+    it('without verified hours a request is accepted but flagged; follow-ups and CRM notes are staff tasks', async () => {
+      const id = await leadId();
+      const item = unwrap<{ payload: { hoursCheck: string } }>(
+        (
+          await api('nissan', 'staff')
+            .post(`leads/${id}/appointment`, {
+              change: 'REQUEST',
+              requestedAt: next(3, 16),
+            })
+            .expect(201)
+        ).body,
+      );
+      expect(item.payload.hoursCheck).toBe('HOURS_NOT_VERIFIED');
+      await api('nissan', 'staff')
+        .post(`leads/${id}/follow-up`, {
+          dueAt: next(2, 15),
+          instruction: 'Call about the trade',
+        })
+        .expect(201);
+      await api('nissan', 'staff')
+        .post(`leads/${id}/crm-note`, { text: 'Customer prefers mornings' })
+        .expect(201);
+      const all = unwrap<Array<{ kind: string }>>(
+        (
+          await api('nissan', 'staff')
+            .get(`work-items?crmLeadId=${id}`)
+            .expect(200)
+        ).body,
+      );
+      expect(all.map((i) => i.kind).sort()).toEqual([
+        'APPOINTMENT_REQUEST',
+        'CRM_NOTE',
+        'FOLLOW_UP',
+      ]);
+      expect(
+        unwrap<unknown[]>(
+          (await api('chevy', 'staff').get('work-items').expect(200)).body,
+        ),
+      ).toHaveLength(0);
+    });
+
+    it('a ready buyer and an appointment change raise internal alerts for the owner', async () => {
+      await openGates('nissan', 'ASSIST');
+      await intake.ingest(scope('nissan'), 'fixture', [
+        rec({
+          inbound: 'Is it still available? I can come in today',
+          outboundHoursAgo: 5,
+        }),
+        rec({
+          inbound: 'I need to reschedule my appointment',
+          outboundHoursAgo: 5,
+        }),
+      ]);
+      await tick();
+      const items = unwrap<
+        Array<{ kind: string; urgency: string; assigneeName: string }>
+      >((await api('nissan', 'staff').get('work-items').expect(200)).body);
+      expect(items.map((i) => i.kind).sort()).toEqual([
+        'APPOINTMENT_RESCHEDULE',
+        'QUALIFIED_BUYER',
+      ]);
+      expect(
+        items.every(
+          (i) => i.urgency === 'HIGH' && i.assigneeName === 'Pat Example',
+        ),
+      ).toBe(true);
+      expect(adapters.fixture.executeCalls).toBe(0);
+    });
+  });
+
+  describe('lead mining, roster and reports', () => {
+    it('queues say why each lead is there and never treat an old lead as permission to contact', async () => {
+      const consented = rec({
+        sourceRecordId: 'M-OK',
+        createdInCrmAt: hoursAgo(24 * 95),
+        outboundHoursAgo: 24 * 80,
+      });
+      const optedOut = rec({
+        sourceRecordId: 'M-STOP',
+        createdInCrmAt: hoursAgo(24 * 95),
+        outboundHoursAgo: 24 * 80,
+        inbound: 'STOP',
+        inboundHoursAgo: 24 * 70,
+      });
+      await grant('nissan', consented.phone!, 'MARKETING');
+      await intake.ingest(scope('nissan'), 'fixture', [
+        consented,
+        rec({
+          sourceRecordId: 'M-NOCONSENT',
+          createdInCrmAt: hoursAgo(24 * 100),
+          outboundHoursAgo: 24 * 80,
+        }),
+        optedOut,
+        rec({
+          sourceRecordId: 'M-WAIT',
+          inbound: 'Any update?',
+          outboundHoursAgo: 5,
+        }),
+        rec({ sourceRecordId: 'M-NEW' }),
+        rec({ sourceRecordId: 'M-CHEVYONLY' }),
+      ]);
+      await intake.ingest(scope('chevy'), 'fixture', [
+        rec({ createdInCrmAt: hoursAgo(24 * 95) }),
+      ]);
+      const summary = unwrap<Array<{ id: string; count: number }>>(
+        (await api('nissan', 'staff').get('mining').expect(200)).body,
+      );
+      const n = (id: string) => summary.find((q) => q.id === id)!.count;
+      expect(n('age_90')).toBe(3);
+      expect(n('unanswered_inbound')).toBe(2); // M-WAIT and the STOP (customer wrote last)
+      expect(n('new_uncontacted')).toBe(2);
+      const q = unwrap<{
+        rows: Array<{
+          crmRecordId: string;
+          eligibility: { status: string };
+          recommendedAction: string;
+          reason: string;
+          salesperson: string;
+          lastEngagementAt: string;
+          phoneLast4: string;
+        }>;
+      }>((await api('nissan', 'staff').get('mining/age_90').expect(200)).body);
+      const by = Object.fromEntries(q.rows.map((r) => [r.crmRecordId, r]));
+      expect(by['M-OK'].eligibility.status).toBe('ELIGIBLE');
+      expect(by['M-NOCONSENT'].eligibility.status).toBe('NEEDS_CONSENT_REVIEW');
+      expect(by['M-NOCONSENT'].recommendedAction).toBe(
+        'Review consent before any outreach',
+      );
+      expect(by['M-STOP'].eligibility.status).toBe('SUPPRESSED');
+      expect(by['M-STOP'].recommendedAction).toBe('No outreach');
+      expect(by['M-OK']).toMatchObject({ salesperson: 'Pat Example' });
+      expect(by['M-OK'].reason).toBeTruthy();
+      expect(by['M-OK'].lastEngagementAt).toBeTruthy();
+      const body = JSON.stringify(q);
+      expect(body).not.toContain(consented.phone!.slice(2, 9));
+      expect(body).not.toContain('example.invalid');
+      await api('nissan', 'staff').get('mining/not_a_queue').expect(400);
+    });
+
+    it('the roster shows recorded workload and honest state; the director lists what needs a person', async () => {
+      env(false); // engine off for this deployment
+      await openGates('nissan', 'ASSIST');
+      await intake.ingest(scope('nissan'), 'fixture', [
+        rec({ inbound: 'Any update?', outboundHoursAgo: 5 }),
+      ]);
+      await ctx.prisma.crmWfTask.updateMany({
+        where: { tenantId: ids.nissan.tenantId },
+        data: { createdAt: new Date(Date.now() - 2 * 3_600_000) },
+      });
+      const roster = unwrap<
+        Array<{
+          key: string;
+          state: string;
+          workload: number;
+          authorization: string;
+          runsOn: string;
+        }>
+      >((await api('nissan', 'staff').get('roster').expect(200)).body);
+      expect(roster).toHaveLength(18);
+      expect(new Set(roster.map((r) => r.state))).toEqual(
+        new Set(['ENGINE OFF']),
+      );
+      expect(
+        roster.every((r) => r.authorization.startsWith('Internal work only')),
+      ).toBe(true);
+      expect(
+        roster.find((r) => r.key === 'inbound_conversation')!.workload,
+      ).toBe(1);
+      expect(roster.find((r) => r.key === 'parts_bdc')!.workload).toBe(0);
+      expect(
+        roster.filter((r) => r.runsOn === 'model').length,
+      ).toBeLessThanOrEqual(7);
+      const findings = unwrap<
+        Array<{ severity: string; finding: string; count: number }>
+      >((await api('nissan', 'manager').get('director').expect(200)).body);
+      expect(findings[0]).toMatchObject({ severity: 'CRITICAL', count: 1 });
+      expect(findings[0].finding).toContain('waited over an hour');
+      await api('nissan', 'staff').get('director').expect(403);
+      const report = unwrap<{
+        kind: string;
+        customers: { waitingOnReply: number };
+        outcomes: unknown[];
+        cost: { modelCalls: number };
+      }>(
+        (await api('nissan', 'manager').get('reports/morning').expect(200))
+          .body,
+      );
+      expect(report).toMatchObject({
+        kind: 'morning',
+        customers: { waitingOnReply: 1 },
+        outcomes: [],
+        cost: { modelCalls: 0 },
+      });
+      await api('nissan', 'manager').get('reports/hourly').expect(400);
+      expect(
+        unwrap<unknown[]>(
+          (await api('chevy', 'manager').get('director').expect(200)).body,
+        ),
+      ).toEqual([]);
+    });
+
+    it('offers and the staff directory come only from this rooftop', async () => {
+      const dir = unwrap<{
+        staff: Array<{ name: string }>;
+        departments: unknown[];
+      }>(
+        (
+          await api('nissan', 'staff')
+            .get(`directory?locationId=${ids.nissan.locationId}`)
+            .expect(200)
+        ).body,
+      );
+      expect(dir.staff.map((s) => s.name).sort()).toEqual([
+        'admin User',
+        'manager User',
+        'staff User',
+      ]);
+      expect(dir.departments).toEqual([]); // test tenant is not in the verified dealer directory
+      await api('nissan', 'staff')
+        .get(`directory?locationId=${ids.chevy.locationId}`)
+        .expect(403);
+    });
+  });
+
+  describe('controlled autonomy (Level 3)', () => {
+    const permit = (over: object = {}) => ({
+      documentRef: 'TEST-PERMIT-1',
+      authorizedBy: 'test-gm',
+      authorizedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      account: 'fixture-service-account',
+      department: 'SALES',
+      operation: 'message.sms.send',
+      audience: 'customers who wrote in, with SMS consent',
+      channels: ['SMS'],
+      consentRequired: 'CONVERSATIONAL',
+      maxPerCustomerPerWeek: 1,
+      dailyLimit: 1,
+      window: { start: '00:00', end: '23:59' },
+      escalation: 'anything that is not a simple question',
+      expiresAt: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+      ...over,
+    });
+    const setup = async (over: object = {}) => {
+      await openGates('nissan');
+      await api('nissan')
+        .post('controls', {
+          scope: 'LOCATION',
+          locationId: ids.nissan.locationId,
+          mode: 'CONTROLLED_AUTONOMOUS',
+          reason: 'test',
+        })
+        .expect(201);
+      return api('nissan').post('controls', {
+        scope: 'WORKFLOW',
+        locationId: ids.nissan.locationId,
+        subjectKey: 'reply_inbound',
+        mode: 'CONTROLLED_AUTONOMOUS',
+        externalSendEnabled: true,
+        authorization: permit(over),
+        reason: 'recorded permit',
+      });
+    };
+    const inbound = async () => {
+      const r = rec({ inbound: 'Is it still available?', outboundHoursAgo: 5 });
+      await grant('nissan', r.phone!);
+      await intake.ingest(scope('nissan'), 'fixture', [r]);
+    };
+
+    it('an incomplete or open-ended permit is refused', async () => {
+      await openGates('nissan');
+      for (const bad of [
+        { expiresAt: undefined },
+        { account: '' },
+        { dailyLimit: 0 },
+        { expiresAt: new Date(Date.now() + 400 * 86_400_000).toISOString() },
+      ])
+        await api('nissan')
+          .post('controls', {
+            scope: 'WORKFLOW',
+            locationId: ids.nissan.locationId,
+            subjectKey: 'reply_inbound',
+            mode: 'CONTROLLED_AUTONOMOUS',
+            authorization: permit(bad),
+            reason: 'try',
+          })
+          .expect(400);
+      await api('nissan', 'manager')
+        .post('controls', {
+          scope: 'WORKFLOW',
+          locationId: ids.nissan.locationId,
+          subjectKey: 'reply_inbound',
+          mode: 'CONTROLLED_AUTONOMOUS',
+          authorization: permit(),
+          reason: 'manager',
+        })
+        .expect(403);
+    });
+
+    it("sends within a complete permit, verifies it, and stops at the permit's daily limit", async () => {
+      (await setup()).status === 201 || fail('permit not accepted');
+      await inbound();
+      const r1 = await tick();
+      expect(r1.outcomes.sent_autonomously).toBe(1);
+      const [a] = await actionsOf('nissan');
+      expect(a).toMatchObject({ status: 'VERIFIED', approvedByUserId: null });
+      expect(adapters.fixture.executeCalls).toBe(1);
+      // Second customer the same day: the permit allows one per day → blocked, nothing written.
+      await inbound();
+      await tick();
+      const second = (await actionsOf('nissan'))[1];
+      expect(second).toMatchObject({
+        status: 'BLOCKED',
+        statusReason: 'permit_daily_limit_reached',
+      });
+      expect(adapters.fixture.executeCalls).toBe(1);
+    });
+
+    it('a workflow without its own permit still waits for a manager, even in autonomous mode', async () => {
+      await setup();
+      const r = rec(); // first_response: no permit for this workflow
+      await grant('nissan', r.phone!);
+      await intake.ingest(scope('nissan'), 'fixture', [r]);
+      await tick();
+      expect((await actionsOf('nissan'))[0].status).toBe('PENDING_APPROVAL');
+      expect(adapters.fixture.executeCalls).toBe(0);
+    });
+
+    it.each([
+      [
+        'wrong department',
+        { department: 'SERVICE' },
+        'permit_department_mismatch',
+      ],
+      ['email only', { channels: ['EMAIL'] }, 'permit_channel_not_allowed'],
+      [
+        'a different operation',
+        { operation: 'note.add' },
+        'permit_operation_mismatch',
+      ],
+    ])(
+      'a permit for %s does not cover an SMS sales reply',
+      async (_n, over, reason) => {
+        await setup(over);
+        await inbound();
+        await tick();
+        expect((await actionsOf('nissan'))[0]).toMatchObject({
+          status: 'BLOCKED',
+          statusReason: reason,
+        });
+        expect(adapters.fixture.executeCalls).toBe(0);
+      },
+    );
+
+    it('the kill switch and an opt-out still win inside a permit', async () => {
+      await setup();
+      await inbound();
+      await api('nissan', 'staff')
+        .post('controls', {
+          scope: 'WORKFLOW',
+          locationId: ids.nissan.locationId,
+          subjectKey: 'reply_inbound',
+          halted: true,
+          reason: 'stop this workflow',
+        })
+        .expect(201);
+      const r = await tick();
+      expect(r.outcomes.deferred_halted).toBe(1);
+      expect(adapters.fixture.executeCalls).toBe(0);
+      expect(await actionsOf('nissan')).toHaveLength(0);
     });
   });
 });

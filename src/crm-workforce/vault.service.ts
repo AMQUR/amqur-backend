@@ -149,7 +149,10 @@ export class CrmWfVaultService {
     row: CrmWfLead & { messages: CrmWfMessage[] },
   ): LeadView & { messages: MsgView[] } {
     const { messages, ...lead } = row;
-    return { ...this.lead(lead as CrmWfLead), messages: this.messages(messages) };
+    return {
+      ...this.lead(lead as CrmWfLead),
+      messages: this.messages(messages),
+    };
   }
 }
 
@@ -158,7 +161,9 @@ export function isReservedTestContact(c: {
   phone?: string | null;
   email?: string | null;
 }): boolean {
-  const digits = (c.phone ?? '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+  const digits = (c.phone ?? '')
+    .replace(/\D/g, '')
+    .replace(/^1(?=\d{10}$)/, '');
   // NANP fictional range: NXX-555-0100 … 0199.
   const phoneOk = !c.phone || /^\d{3}55501\d{2}$/.test(digits);
   const emailOk =
@@ -170,6 +175,33 @@ export function isReservedTestContact(c: {
   return phoneOk && emailOk;
 }
 
+/**
+ * Is a whole uploaded file made only of reserved test contacts?
+ * Decided from EVERY cell, not from the mapped columns — a real phone number or email in an
+ * unmapped or mis-mapped column makes the file real. A row with no contact at all is also
+ * treated as real: names and messages without a test contact cannot be shown to be synthetic.
+ */
+export function fileIsSynthetic(
+  rawFile: string,
+  records: Array<{ phone?: string | null; email?: string | null }>,
+): boolean {
+  if (!records.length) return true;
+  if (!records.every((r) => (r.phone || r.email) && isReservedTestContact(r)))
+    return false;
+  for (const m of rawFile.match(/[^\s,;"'<>()]+@[^\s,;"'<>()]+\.[a-z]{2,}/gi) ??
+    [])
+    if (!isReservedTestContact({ email: m })) return false;
+  // Anything shaped like a North American phone number, wherever it sits in the file.
+  for (const m of rawFile.match(
+    /(?<![\d.:T-])(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\d:])/g,
+  ) ?? []) {
+    const digits = m.replace(/\D/g, '');
+    if (digits.length < 10) continue;
+    if (!isReservedTestContact({ phone: m })) return false;
+  }
+  return true;
+}
+
 /** Remove contact details and long free text from anything headed for the audit log. */
 export function auditSafe<T>(value: T): T {
   const scrub = (v: unknown, depth: number): unknown => {
@@ -179,13 +211,16 @@ export function auditSafe<T>(value: T): T {
         .replace(/\+?\d[\d\s().-]{8,}\d/g, '[phone]')
         .replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[redacted]')
         .slice(0, 300);
-    if (Array.isArray(v)) return depth > 4 ? [] : v.slice(0, 50).map((x) => scrub(x, depth + 1));
+    if (Array.isArray(v))
+      return depth > 4 ? [] : v.slice(0, 50).map((x) => scrub(x, depth + 1));
     if (v && typeof v === 'object') {
       if (depth > 4) return {};
       return Object.fromEntries(
         Object.entries(v as Record<string, unknown>).map(([k, x]) => [
           k,
-          /^(phone|email|lastName|body|endpoint|csv)$/i.test(k) ? '[omitted]' : scrub(x, depth + 1),
+          /^(phone|email|lastName|body|endpoint|csv)$/i.test(k)
+            ? '[omitted]'
+            : scrub(x, depth + 1),
         ]),
       );
     }

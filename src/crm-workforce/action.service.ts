@@ -20,7 +20,8 @@ import { CrmWfComplianceFactsService } from './compliance-facts.service';
 import { Actor } from './control.service';
 import { Channel, WorkflowKey } from './crm-workforce.types';
 import { CrmWfFactsService } from './facts.service';
-import { evaluateCompliance } from './policy/compliance.engine';
+import { evaluateCompliance, localMinutes } from './policy/compliance.engine';
+import { hhmmToMin, isCompleteAuthorization } from './policy/controls';
 import { auditSafe, CrmWfVaultService } from './vault.service';
 
 type Scope = { tenantId: string; locationId: string | null };
@@ -196,6 +197,11 @@ export class CrmWfActionService {
       : run();
   }
 
+  /** For callers that ALREADY hold the lead's conversation lock (the supervisor). */
+  executeAfterLock(id: string): Promise<CrmWfAction> {
+    return this.executeLocked(id);
+  }
+
   private async executeLocked(id: string): Promise<CrmWfAction> {
     const current = () =>
       this.prisma.crmWfAction.findUniqueOrThrow({ where: { id } });
@@ -252,6 +258,63 @@ export class CrmWfActionService {
     // else must carry a human approval.
     if (!a.approvedByUserId && input.control.mode !== 'CONTROLLED_AUTONOMOUS')
       return block('human_approval_required');
+    if (!a.approvedByUserId) {
+      // No person approved this: it must fit the workflow's recorded permit exactly.
+      const permit = input.control.workflowAuthorization;
+      if (!isCompleteAuthorization(permit, now))
+        return block('permit_missing_or_expired');
+      if (permit.department !== lead.department)
+        return block('permit_department_mismatch');
+      if (permit.operation !== a.actionType)
+        return block('permit_operation_mismatch');
+      if (!permit.channels.includes(a.channel ?? ''))
+        return block('permit_channel_not_allowed');
+      const loc = await this.prisma.location.findFirst({
+        where: { id: a.locationId, tenantId: a.tenantId },
+        select: { timezone: true },
+      });
+      const mins = localMinutes(now, loc?.timezone ?? 'America/Chicago');
+      if (
+        mins === null ||
+        mins < hhmmToMin(permit.window.start) ||
+        mins >= hhmmToMin(permit.window.end)
+      )
+        return block('permit_outside_operating_window');
+      const auto = {
+        tenantId: a.tenantId,
+        locationId: a.locationId,
+        approvedByUserId: null,
+        sideEffect: 'EXTERNAL' as const,
+        id: { not: a.id },
+        status: {
+          in: [
+            'SENT_UNVERIFIED',
+            'UNCERTAIN',
+            'VERIFIED',
+          ] as CrmWfActionStatus[],
+        },
+        payload: { path: ['workflow'], equals: payload.workflow ?? '' },
+      };
+      const [today, thisCustomer] = await Promise.all([
+        this.prisma.crmWfAction.count({
+          where: {
+            ...auto,
+            updatedAt: { gte: new Date(now.getTime() - 86_400_000) },
+          },
+        }),
+        this.prisma.crmWfAction.count({
+          where: {
+            ...auto,
+            crmLeadId: lead.id,
+            updatedAt: { gte: new Date(now.getTime() - 7 * 86_400_000) },
+          },
+        }),
+      ]);
+      if (today >= permit.dailyLimit)
+        return block('permit_daily_limit_reached');
+      if (thisCustomer >= permit.maxPerCustomerPerWeek)
+        return block('permit_customer_weekly_limit_reached');
+    }
 
     const req: WriteRequest = {
       tenantId: a.tenantId,

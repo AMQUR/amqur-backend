@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ChatModule } from '../chat/chat.module';
 import { IntegrationsModule } from '../integrations/integrations.module';
 import { PrismaModule } from '../prisma/prisma.module';
+import { SpotlightsModule } from '../spotlights/spotlights.module';
 import { CrmWfActionService } from './action.service';
 import { CrmAdapterRegistry } from './adapters/adapter.registry';
 import { CrmWfDrafterService } from './agents/drafter.service';
@@ -19,6 +20,10 @@ import { CrmWfReadService } from './read.service';
 import { CrmWfSupervisorService } from './supervisor.service';
 import { CrmWfSuppressionService } from './suppression.service';
 import { CrmWfVaultService } from './vault.service';
+import { CrmWfWorkItemService } from './work-item.service';
+import { CrmWfAssistService } from './assist.service';
+import { CrmWfMiningService } from './mining.service';
+import { CrmWfDirectorService } from './director.service';
 
 /**
  * AMQUR CRM Workforce — an additive division of the AMQUR platform (docs/CRM_WORKFORCE.md).
@@ -27,12 +32,16 @@ import { CrmWfVaultService } from './vault.service';
  * widget/chat surface and registers no handler in the existing outbox.
  */
 @Module({
-  imports: [PrismaModule, IntegrationsModule, ChatModule],
+  imports: [PrismaModule, IntegrationsModule, ChatModule, SpotlightsModule],
   controllers: [CrmWorkforceController],
   providers: [
     CrmWfVaultService,
     CrmWfPrivacyService,
     CrmWfImportService,
+    CrmWfWorkItemService,
+    CrmWfAssistService,
+    CrmWfMiningService,
+    CrmWfDirectorService,
     CrmAdapterRegistry,
     CrmWfControlService,
     CrmWfSuppressionService,

@@ -98,11 +98,35 @@ export type IngestOptions = {
 
 /** Columns a sync may overwrite; captured before an update so a batch can be rolled back. */
 const SNAPSHOT_KEYS = [
-  'asOf', 'verified', 'synthetic', 'department', 'firstName', 'lastNameEnc', 'phoneEnc',
-  'emailEnc', 'phoneHash', 'emailHash', 'phoneLast4', 'language', 'leadSource', 'crmStatus',
-  'assignedTo', 'vehicleInterest', 'createdInCrmAt', 'lastInboundAt', 'lastOutboundAt',
-  'hasFutureFollowUp', 'appointmentState', 'appointmentAt', 'visitedAt', 'crmDoNotContact',
-  'humanActiveUntil', 'contentHash', 'lastProcessedHash', 'duplicateOfId', 'lastImportBatchId',
+  'asOf',
+  'verified',
+  'synthetic',
+  'department',
+  'firstName',
+  'lastNameEnc',
+  'phoneEnc',
+  'emailEnc',
+  'phoneHash',
+  'emailHash',
+  'phoneLast4',
+  'language',
+  'leadSource',
+  'crmStatus',
+  'assignedTo',
+  'vehicleInterest',
+  'createdInCrmAt',
+  'lastInboundAt',
+  'lastOutboundAt',
+  'hasFutureFollowUp',
+  'appointmentState',
+  'appointmentAt',
+  'visitedAt',
+  'crmDoNotContact',
+  'humanActiveUntil',
+  'contentHash',
+  'lastProcessedHash',
+  'duplicateOfId',
+  'lastImportBatchId',
 ] as const;
 export const IMPORT_SNAPSHOT_KEYS: readonly string[] = SNAPSHOT_KEYS;
 
@@ -371,7 +395,12 @@ export class CrmWfIntakeService {
           reason: o.reason,
           source: 'INBOUND_MESSAGE',
         });
-        await this.outcome(row, 'OPT_OUT', `optout:${o.reason}:${o.channel}`, now);
+        await this.outcome(
+          row,
+          'OPT_OUT',
+          `optout:${o.reason}:${o.channel}`,
+          now,
+        );
       }
       if (lead.crmDoNotContact === true)
         await this.suppression.suppressLead({

@@ -34,7 +34,11 @@ export class CrmWfPrivacyService {
     const email = this.vault.endpoint('EMAIL', who.email);
     if (!sms && !email)
       throw new BadRequestException('a_valid_phone_or_email_is_required');
-    return { sms, email, all: [sms?.hash, email?.hash].filter((h): h is string => !!h) };
+    return {
+      sms,
+      email,
+      all: [sms?.hash, email?.hash].filter((h): h is string => !!h),
+    };
   }
 
   private async find(tenantId: string, who: Who) {
@@ -66,15 +70,36 @@ export class CrmWfPrivacyService {
     const [actions, items, suppressions] = await Promise.all([
       this.prisma.crmWfAction.findMany({
         where: { tenantId, crmLeadId: { in: ids } },
-        select: { id: true, actionType: true, channel: true, status: true, payload: true, createdAt: true, verifiedAt: true },
+        select: {
+          id: true,
+          actionType: true,
+          channel: true,
+          status: true,
+          payload: true,
+          createdAt: true,
+          verifiedAt: true,
+        },
       }),
       this.prisma.crmWfWorkItem.findMany({
         where: { tenantId, crmLeadId: { in: ids } },
-        select: { id: true, kind: true, status: true, title: true, createdAt: true },
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          title: true,
+          createdAt: true,
+        },
       }),
       this.prisma.crmWfSuppression.findMany({
         where: { tenantId, endpointHash: { in: h.all } },
-        select: { channel: true, reason: true, source: true, createdAt: true, liftedAt: true, hint: true },
+        select: {
+          channel: true,
+          reason: true,
+          source: true,
+          createdAt: true,
+          liftedAt: true,
+          hint: true,
+        },
       }),
     ]);
     await this.prisma.auditLog.create({
@@ -102,10 +127,22 @@ export class CrmWfPrivacyService {
           leadSource: l.leadSource,
           crmStatus: l.crmStatus,
           vehicleInterest: l.vehicleInterest,
-          messages: l.messages.map((m) => ({ direction: m.direction, channel: m.channel, at: m.occurredAt, text: m.body })),
+          messages: l.messages.map((m) => ({
+            direction: m.direction,
+            channel: m.channel,
+            at: m.occurredAt,
+            text: m.body,
+          })),
         };
       }),
-      messagesPrepared: actions.map((a) => ({ type: a.actionType, channel: a.channel, status: a.status, text: (a.payload as { body?: string }).body ?? null, createdAt: a.createdAt, sentConfirmedAt: a.verifiedAt })),
+      messagesPrepared: actions.map((a) => ({
+        type: a.actionType,
+        channel: a.channel,
+        status: a.status,
+        text: (a.payload as { body?: string }).body ?? null,
+        createdAt: a.createdAt,
+        sentConfirmedAt: a.verifiedAt,
+      })),
       staffWorkItems: items,
       suppressions,
     };
@@ -114,12 +151,18 @@ export class CrmWfPrivacyService {
   async erase(actor: Actor, tenantId: string, who: Who, reason: string) {
     this.admin(actor, tenantId);
     if (!reason?.trim()) throw new BadRequestException('reason_required');
-    const tenant = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { legalHold: true } });
-    if (tenant?.legalHold) throw new ConflictException('tenant_under_legal_hold');
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { legalHold: true },
+    });
+    if (tenant?.legalHold)
+      throw new ConflictException('tenant_under_legal_hold');
     const { h, leads } = await this.find(tenantId, who);
     const ids = leads.map((l) => l.id);
     const counts = await this.eraseLeads(tenantId, ids);
-    const suppressionsKept = await this.prisma.crmWfSuppression.count({ where: { tenantId, endpointHash: { in: h.all }, liftedAt: null } });
+    const suppressionsKept = await this.prisma.crmWfSuppression.count({
+      where: { tenantId, endpointHash: { in: h.all }, liftedAt: null },
+    });
     await this.prisma.auditLog.create({
       data: {
         tenantId,
@@ -134,30 +177,78 @@ export class CrmWfPrivacyService {
 
   /** Remove mirror rows and everything hanging off them. Suppressions are never deleted. */
   async eraseLeads(tenantId: string, ids: string[]) {
-    if (!ids.length) return { leads: 0, messages: 0, actions: 0, tasks: 0, workItems: 0 };
+    if (!ids.length)
+      return { leads: 0, messages: 0, actions: 0, tasks: 0, workItems: 0 };
     return this.prisma.$transaction(async (tx) => {
-      const actionIds = (await tx.crmWfAction.findMany({ where: { tenantId, crmLeadId: { in: ids } }, select: { id: true } })).map((a) => a.id);
-      await tx.crmWfReview.deleteMany({ where: { tenantId, actionId: { in: actionIds } } });
-      const actions = await tx.crmWfAction.deleteMany({ where: { tenantId, crmLeadId: { in: ids } } });
-      const tasks = await tx.crmWfTask.deleteMany({ where: { tenantId, crmLeadId: { in: ids } } });
-      const workItems = await tx.crmWfWorkItem.deleteMany({ where: { tenantId, crmLeadId: { in: ids } } });
-      await tx.crmWfOutcome.deleteMany({ where: { tenantId, crmLeadId: { in: ids } } });
-      await tx.crmWfUsage.updateMany({ where: { tenantId, crmLeadId: { in: ids } }, data: { crmLeadId: null } });
-      await tx.crmWfImportChange.deleteMany({ where: { tenantId, crmLeadId: { in: ids } } });
-      await tx.crmWfSuppression.updateMany({ where: { tenantId, crmLeadId: { in: ids } }, data: { crmLeadId: null } });
-      await tx.crmWfLead.updateMany({ where: { tenantId, duplicateOfId: { in: ids } }, data: { duplicateOfId: null } });
-      const messages = await tx.crmWfMessage.deleteMany({ where: { tenantId, crmLeadId: { in: ids } } });
-      const leads = await tx.crmWfLead.deleteMany({ where: { tenantId, id: { in: ids } } });
-      return { leads: leads.count, messages: messages.count, actions: actions.count, tasks: tasks.count, workItems: workItems.count };
+      const actionIds = (
+        await tx.crmWfAction.findMany({
+          where: { tenantId, crmLeadId: { in: ids } },
+          select: { id: true },
+        })
+      ).map((a) => a.id);
+      await tx.crmWfReview.deleteMany({
+        where: { tenantId, actionId: { in: actionIds } },
+      });
+      const actions = await tx.crmWfAction.deleteMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+      });
+      const tasks = await tx.crmWfTask.deleteMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+      });
+      const workItems = await tx.crmWfWorkItem.deleteMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+      });
+      await tx.crmWfOutcome.deleteMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+      });
+      await tx.crmWfUsage.updateMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+        data: { crmLeadId: null },
+      });
+      await tx.crmWfImportChange.deleteMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+      });
+      await tx.crmWfSuppression.updateMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+        data: { crmLeadId: null },
+      });
+      await tx.crmWfLead.updateMany({
+        where: { tenantId, duplicateOfId: { in: ids } },
+        data: { duplicateOfId: null },
+      });
+      const messages = await tx.crmWfMessage.deleteMany({
+        where: { tenantId, crmLeadId: { in: ids } },
+      });
+      const leads = await tx.crmWfLead.deleteMany({
+        where: { tenantId, id: { in: ids } },
+      });
+      return {
+        leads: leads.count,
+        messages: messages.count,
+        actions: actions.count,
+        tasks: tasks.count,
+        workItems: workItems.count,
+      };
     });
   }
 
   async retention(tenantId: string) {
-    const t = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { dataRetentionDays: true, legalHold: true } });
+    const t = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { dataRetentionDays: true, legalHold: true },
+    });
     const days = Math.max(30, t?.dataRetentionDays ?? 365);
     const cutoff = new Date(Date.now() - days * 86_400_000);
-    const due = await this.prisma.crmWfLead.count({ where: this.expired(tenantId, cutoff) });
-    return { retentionDays: days, legalHold: !!t?.legalHold, cutoff, recordsPastRetention: due, vaultReady: this.vault.isReady() };
+    const due = await this.prisma.crmWfLead.count({
+      where: this.expired(tenantId, cutoff),
+    });
+    return {
+      retentionDays: days,
+      legalHold: !!t?.legalHold,
+      cutoff,
+      recordsPastRetention: due,
+      vaultReady: this.vault.isReady(),
+    };
   }
 
   private expired(tenantId: string, cutoff: Date) {
@@ -173,17 +264,38 @@ export class CrmWfPrivacyService {
 
   /** Retention purge for every tenant. Called by the engine at most once a day. */
   async purgeExpired(now = new Date(), batch = 500) {
-    const tenants = await this.prisma.crmWfLead.findMany({ distinct: ['tenantId'], select: { tenantId: true } });
+    const tenants = await this.prisma.crmWfLead.findMany({
+      distinct: ['tenantId'],
+      select: { tenantId: true },
+    });
     let purged = 0;
     for (const { tenantId } of tenants) {
-      const t = await this.prisma.tenant.findUnique({ where: { id: tenantId }, select: { dataRetentionDays: true, legalHold: true } });
+      const t = await this.prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { dataRetentionDays: true, legalHold: true },
+      });
       if (!t || t.legalHold) continue;
-      const cutoff = new Date(now.getTime() - Math.max(30, t.dataRetentionDays) * 86_400_000);
-      const ids = (await this.prisma.crmWfLead.findMany({ where: this.expired(tenantId, cutoff), select: { id: true }, take: batch })).map((l) => l.id);
+      const cutoff = new Date(
+        now.getTime() - Math.max(30, t.dataRetentionDays) * 86_400_000,
+      );
+      const ids = (
+        await this.prisma.crmWfLead.findMany({
+          where: this.expired(tenantId, cutoff),
+          select: { id: true },
+          take: batch,
+        })
+      ).map((l) => l.id);
       if (!ids.length) continue;
       const c = await this.eraseLeads(tenantId, ids);
       purged += c.leads;
-      await this.prisma.auditLog.create({ data: { tenantId, action: 'crmwf.privacy.retention_purged', resource: 'CrmWfLead', metadata: { ...c, cutoff: cutoff.toISOString() } } });
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId,
+          action: 'crmwf.privacy.retention_purged',
+          resource: 'CrmWfLead',
+          metadata: { ...c, cutoff: cutoff.toISOString() },
+        },
+      });
     }
     return purged;
   }

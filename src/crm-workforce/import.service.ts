@@ -18,7 +18,7 @@ import { Actor } from './control.service';
 import { CRM_WORKFORCE_FLAG } from './crm-workforce.types';
 import { CrmWfIntakeService, IMPORT_SNAPSHOT_KEYS } from './intake.service';
 import { CrmWfPrivacyService } from './privacy.service';
-import { auditSafe, isReservedTestContact } from './vault.service';
+import { auditSafe, fileIsSynthetic } from './vault.service';
 
 export const REAL_IMPORTS_FLAG = 'crmWorkforceRealImports';
 type Scope = { tenantId: string; locationId: string };
@@ -62,7 +62,9 @@ export class CrmWfImportService {
     if (!loc) throw new ForbiddenException('Location access denied');
     const flags = await this.flags.resolve(scope.tenantId, scope.locationId);
     if (!flags[CRM_WORKFORCE_FLAG])
-      throw new ForbiddenException('crm_workforce_not_enabled_for_this_rooftop');
+      throw new ForbiddenException(
+        'crm_workforce_not_enabled_for_this_rooftop',
+      );
     const connector = await this.prisma.crmWfConnector.findUnique({
       where: {
         tenantId_locationId_adapterKey: {
@@ -88,10 +90,14 @@ export class CrmWfImportService {
     try {
       return {
         exportedAt,
-        parsed: parseCrmExport(u.csv, { exportedAt, mapping: mapping ?? u.mapping }),
+        parsed: parseCrmExport(u.csv, {
+          exportedAt,
+          mapping: mapping ?? u.mapping,
+        }),
       };
     } catch (e) {
-      if (e instanceof ExportImportError) throw new BadRequestException(e.message);
+      if (e instanceof ExportImportError)
+        throw new BadRequestException(e.message);
       throw e;
     }
   }
@@ -99,7 +105,7 @@ export class CrmWfImportService {
   async preview(actor: Actor, scope: Scope, u: Upload) {
     const { realAllowed, connector } = await this.gate(scope);
     const { exportedAt, parsed } = this.parse(u);
-    const synthetic = parsed.records.every((r) => isReservedTestContact(r));
+    const synthetic = fileIsSynthetic(u.csv, parsed.records);
     if (!synthetic && !realAllowed)
       // Refused before anything about the file is stored.
       throw new ForbiddenException(
@@ -115,18 +121,28 @@ export class CrmWfImportService {
     const warnings: string[] = [];
     const missing = (f: string) => parsed.unmappedFields.includes(f);
     if (missing('doNotContact'))
-      warnings.push('No do-not-contact column: communication preference will be unknown for every row.');
+      warnings.push(
+        'No do-not-contact column: communication preference will be unknown for every row.',
+      );
     if (missing('phone') && missing('email'))
-      warnings.push('No phone or email column: no row can be matched, de-duplicated or contacted.');
+      warnings.push(
+        'No phone or email column: no row can be matched, de-duplicated or contacted.',
+      );
     if (missing('lastInboundAt') && missing('lastOutboundAt'))
-      warnings.push('No last-contact columns: every lead will look never-contacted.');
+      warnings.push(
+        'No last-contact columns: every lead will look never-contacted.',
+      );
     if (missing('nextFollowUpAt'))
-      warnings.push('No follow-up date column: leads cannot be recognised as already scheduled.');
+      warnings.push(
+        'No follow-up date column: leads cannot be recognised as already scheduled.',
+      );
     if (missing('assignedTo'))
       warnings.push('No salesperson column: ownership will be unknown.');
     const ageH = (Date.now() - exportedAt.getTime()) / 3_600_000;
     if (ageH > 24)
-      warnings.push(`This export is ${Math.floor(ageH / 24)} day(s) old; the CRM may have changed since.`);
+      warnings.push(
+        `This export is ${Math.floor(ageH / 24)} day(s) old; the CRM may have changed since.`,
+      );
 
     const batch = await this.prisma.crmWfImportBatch.create({
       data: {
@@ -138,7 +154,11 @@ export class CrmWfImportService {
         exportedAt,
         synthetic,
         mapping: parsed.mapping,
-        counts: { rows: parsed.records.length + parsed.rejectedRows.length, rejected: parsed.rejectedRows.length, ...counts },
+        counts: {
+          rows: parsed.records.length + parsed.rejectedRows.length,
+          rejected: parsed.rejectedRows.length,
+          ...counts,
+        },
         validation: {
           rejectedRows: parsed.rejectedRows.slice(0, 200),
           ignoredColumns: parsed.ignoredColumns,
@@ -161,7 +181,15 @@ export class CrmWfImportService {
         hasEmail: !!r.email,
         status: r.crmStatus ?? null,
         salesperson: r.assignedTo ?? null,
-        vehicle: r.vehicleInterest ? [r.vehicleInterest.year, r.vehicleInterest.make, r.vehicleInterest.model].filter(Boolean).join(' ') : null,
+        vehicle: r.vehicleInterest
+          ? [
+              r.vehicleInterest.year,
+              r.vehicleInterest.make,
+              r.vehicleInterest.model,
+            ]
+              .filter(Boolean)
+              .join(' ')
+          : null,
         department: r.department,
         appointment: r.appointmentState ?? 'NONE',
         futureFollowUp: !!r.hasFutureFollowUp,
@@ -173,27 +201,54 @@ export class CrmWfImportService {
   async commit(actor: Actor, scope: Scope, batchId: string, csv: string) {
     const { realAllowed } = await this.gate(scope);
     const batch = await this.prisma.crmWfImportBatch.findFirst({
-      where: { id: batchId, tenantId: scope.tenantId, locationId: scope.locationId },
+      where: {
+        id: batchId,
+        tenantId: scope.tenantId,
+        locationId: scope.locationId,
+      },
     });
     if (!batch) throw new NotFoundException('import_batch_not_found');
     if (batch.status !== 'PREVIEWED')
       throw new ConflictException(`batch_is_${batch.status.toLowerCase()}`);
     if (createHash('sha256').update(csv).digest('hex') !== batch.fileSha256)
       throw new BadRequestException('file_does_not_match_the_previewed_file');
+    // Re-decided from the file itself at commit: the stored flag is not trusted on its own.
+    if (
+      !realAllowed &&
+      !fileIsSynthetic(
+        csv,
+        this.parse(
+          { csv, exportedAt: batch.exportedAt.toISOString() },
+          batch.mapping as Record<string, string>,
+        ).parsed.records,
+      )
+    )
+      throw new ForbiddenException(
+        'real_customer_data_import_not_authorized_for_this_rooftop',
+      );
     if (!batch.synthetic && !realAllowed)
-      throw new ForbiddenException('real_customer_data_import_not_authorized_for_this_rooftop');
+      throw new ForbiddenException(
+        'real_customer_data_import_not_authorized_for_this_rooftop',
+      );
     // Single winner: two commits of one batch cannot both proceed.
     const claimed = await this.prisma.crmWfImportBatch.updateMany({
       where: { id: batch.id, status: 'PREVIEWED' },
       data: { status: 'COMMITTING' },
     });
-    if (claimed.count !== 1) throw new ConflictException('batch_already_being_committed');
+    if (claimed.count !== 1)
+      throw new ConflictException('batch_already_being_committed');
     try {
       const { parsed } = this.parse(
         { csv, exportedAt: batch.exportedAt.toISOString() },
         batch.mapping as Record<string, string>,
       );
-      const counts = await this.intake.ingest(scope, 'export_import', parsed.records, new Date(), { importBatchId: batch.id });
+      const counts = await this.intake.ingest(
+        scope,
+        'export_import',
+        parsed.records,
+        new Date(),
+        { importBatchId: batch.id },
+      );
       const out = await this.prisma.crmWfImportBatch.update({
         where: { id: batch.id },
         data: {
@@ -203,13 +258,24 @@ export class CrmWfImportService {
         },
       });
       await this.prisma.crmWfConnector.updateMany({
-        where: { tenantId: scope.tenantId, locationId: scope.locationId, adapterKey: 'export_import' },
+        where: {
+          tenantId: scope.tenantId,
+          locationId: scope.locationId,
+          adapterKey: 'export_import',
+        },
         data: { lastSyncAt: new Date(), status: 'READY', lastError: null },
       });
-      await this.audit(actor, scope, 'crmwf.import.committed', batch.id, { ...counts, synthetic: batch.synthetic, authorizationRef: batch.authorizationRef });
+      await this.audit(actor, scope, 'crmwf.import.committed', batch.id, {
+        ...counts,
+        synthetic: batch.synthetic,
+        authorizationRef: batch.authorizationRef,
+      });
       return out;
     } catch (e) {
-      await this.prisma.crmWfImportBatch.updateMany({ where: { id: batch.id, status: 'COMMITTING' }, data: { status: 'PREVIEWED' } });
+      await this.prisma.crmWfImportBatch.updateMany({
+        where: { id: batch.id, status: 'COMMITTING' },
+        data: { status: 'PREVIEWED' },
+      });
       throw e;
     }
   }
@@ -225,26 +291,56 @@ export class CrmWfImportService {
     if (!['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(actor.role))
       throw new ForbiddenException('rollback_requires_manager');
     const batch = await this.prisma.crmWfImportBatch.findFirst({
-      where: { id: batchId, tenantId: scope.tenantId, locationId: scope.locationId },
+      where: {
+        id: batchId,
+        tenantId: scope.tenantId,
+        locationId: scope.locationId,
+      },
     });
     if (!batch) throw new NotFoundException('import_batch_not_found');
-    if (batch.status !== 'COMMITTED') throw new ConflictException(`batch_is_${batch.status.toLowerCase()}`);
+    if (batch.status !== 'COMMITTED')
+      throw new ConflictException(`batch_is_${batch.status.toLowerCase()}`);
     const newer = await this.prisma.crmWfImportBatch.count({
-      where: { tenantId: scope.tenantId, locationId: scope.locationId, status: 'COMMITTED', committedAt: { gt: batch.committedAt! } },
+      where: {
+        tenantId: scope.tenantId,
+        locationId: scope.locationId,
+        status: 'COMMITTED',
+        committedAt: { gt: batch.committedAt! },
+      },
     });
-    if (newer) throw new ConflictException('a_newer_import_exists_roll_that_back_first');
+    if (newer)
+      throw new ConflictException('a_newer_import_exists_roll_that_back_first');
 
-    const changes = await this.prisma.crmWfImportChange.findMany({ where: { batchId: batch.id, tenantId: scope.tenantId } });
+    const changes = await this.prisma.crmWfImportChange.findMany({
+      where: { batchId: batch.id, tenantId: scope.tenantId },
+    });
     const contacted = new Set(
       (
         await this.prisma.crmWfAction.findMany({
-          where: { tenantId: scope.tenantId, crmLeadId: { in: changes.map((c) => c.crmLeadId) }, status: { in: ['VERIFIED', 'STAFF_CONFIRMED', 'SENT_UNVERIFIED', 'UNCERTAIN', 'EXECUTING'] }, updatedAt: { gte: batch.committedAt! } },
+          where: {
+            tenantId: scope.tenantId,
+            crmLeadId: { in: changes.map((c) => c.crmLeadId) },
+            status: {
+              in: [
+                'VERIFIED',
+                'STAFF_CONFIRMED',
+                'SENT_UNVERIFIED',
+                'UNCERTAIN',
+                'EXECUTING',
+              ],
+            },
+            updatedAt: { gte: batch.committedAt! },
+          },
           select: { crmLeadId: true },
         })
       ).map((a) => a.crmLeadId),
     );
-    const created = changes.filter((c) => c.kind === 'CREATED' && !contacted.has(c.crmLeadId)).map((c) => c.crmLeadId);
-    const updated = changes.filter((c) => c.kind === 'UPDATED' && !contacted.has(c.crmLeadId));
+    const created = changes
+      .filter((c) => c.kind === 'CREATED' && !contacted.has(c.crmLeadId))
+      .map((c) => c.crmLeadId);
+    const updated = changes.filter(
+      (c) => c.kind === 'UPDATED' && !contacted.has(c.crmLeadId),
+    );
     const removed = await this.privacy.eraseLeads(scope.tenantId, created);
     let restored = 0;
     for (const c of updated) {
@@ -253,36 +349,96 @@ export class CrmWfImportService {
       for (const k of IMPORT_SNAPSHOT_KEYS) {
         if (!(k in before)) continue;
         const v = before[k];
-        data[k] = /At$|^asOf$|Until$/.test(k) && typeof v === 'string' ? new Date(v) : k === 'vehicleInterest' && v === null ? Prisma.JsonNull : v;
+        data[k] =
+          /At$|^asOf$|Until$/.test(k) && typeof v === 'string'
+            ? new Date(v)
+            : k === 'vehicleInterest' && v === null
+              ? Prisma.JsonNull
+              : v;
       }
       await this.prisma.$transaction(async (tx) => {
-        await tx.crmWfMessage.deleteMany({ where: { tenantId: scope.tenantId, crmLeadId: c.crmLeadId, importBatchId: batch.id } });
-        await tx.crmWfTask.updateMany({ where: { tenantId: scope.tenantId, crmLeadId: c.crmLeadId, status: { in: ['PENDING', 'CLAIMED', 'AWAITING_APPROVAL'] } }, data: { status: 'CANCELLED', statusReason: 'import_rolled_back', leaseExpiresAt: null } });
-        await tx.crmWfAction.updateMany({ where: { tenantId: scope.tenantId, crmLeadId: c.crmLeadId, status: { in: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'QUEUED'] } }, data: { status: 'CANCELLED', statusReason: 'import_rolled_back' } });
-        await tx.crmWfLead.updateMany({ where: { id: c.crmLeadId, tenantId: scope.tenantId }, data: data as Prisma.CrmWfLeadUncheckedUpdateManyInput });
+        await tx.crmWfMessage.deleteMany({
+          where: {
+            tenantId: scope.tenantId,
+            crmLeadId: c.crmLeadId,
+            importBatchId: batch.id,
+          },
+        });
+        await tx.crmWfTask.updateMany({
+          where: {
+            tenantId: scope.tenantId,
+            crmLeadId: c.crmLeadId,
+            status: { in: ['PENDING', 'CLAIMED', 'AWAITING_APPROVAL'] },
+          },
+          data: {
+            status: 'CANCELLED',
+            statusReason: 'import_rolled_back',
+            leaseExpiresAt: null,
+          },
+        });
+        await tx.crmWfAction.updateMany({
+          where: {
+            tenantId: scope.tenantId,
+            crmLeadId: c.crmLeadId,
+            status: { in: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'QUEUED'] },
+          },
+          data: { status: 'CANCELLED', statusReason: 'import_rolled_back' },
+        });
+        await tx.crmWfLead.updateMany({
+          where: { id: c.crmLeadId, tenantId: scope.tenantId },
+          data: data as Prisma.CrmWfLeadUncheckedUpdateManyInput,
+        });
       });
       restored += 1;
     }
-    const result = { removed: removed.leads, restored, keptBecauseContacted: contacted.size };
+    const result = {
+      removed: removed.leads,
+      restored,
+      keptBecauseContacted: contacted.size,
+    };
     const out = await this.prisma.crmWfImportBatch.update({
       where: { id: batch.id },
-      data: { status: 'ROLLED_BACK', rolledBackAt: new Date(), rolledBackByUserId: actor.userId, counts: { ...(batch.counts as object), rollback: result } },
+      data: {
+        status: 'ROLLED_BACK',
+        rolledBackAt: new Date(),
+        rolledBackByUserId: actor.userId,
+        counts: { ...(batch.counts as object), rollback: result },
+      },
     });
-    await this.audit(actor, scope, 'crmwf.import.rolled_back', batch.id, { ...result, reason });
+    await this.audit(actor, scope, 'crmwf.import.rolled_back', batch.id, {
+      ...result,
+      reason,
+    });
     return { batch: out, ...result };
   }
 
   list(scope: { tenantId: string; locationId: string | null }) {
     return this.prisma.crmWfImportBatch.findMany({
-      where: { tenantId: scope.tenantId, ...(scope.locationId ? { locationId: scope.locationId } : {}) },
+      where: {
+        tenantId: scope.tenantId,
+        ...(scope.locationId ? { locationId: scope.locationId } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
     });
   }
 
-  private audit(actor: Actor, scope: Scope, action: string, batchId: string, metadata: object) {
+  private audit(
+    actor: Actor,
+    scope: Scope,
+    action: string,
+    batchId: string,
+    metadata: object,
+  ) {
     return this.prisma.auditLog.create({
-      data: { tenantId: scope.tenantId, userId: actor.userId, action, resource: 'CrmWfImportBatch', resourceId: batchId, metadata: auditSafe({ locationId: scope.locationId, ...metadata }) },
+      data: {
+        tenantId: scope.tenantId,
+        userId: actor.userId,
+        action,
+        resource: 'CrmWfImportBatch',
+        resourceId: batchId,
+        metadata: auditSafe({ locationId: scope.locationId, ...metadata }),
+      },
     });
   }
 }

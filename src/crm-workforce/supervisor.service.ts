@@ -28,6 +28,8 @@ import { escalationFor, standingOptOuts } from './policy/inbound-signals';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfSuppressionService } from './suppression.service';
 import { auditSafe, CrmWfVaultService } from './vault.service';
+import { CrmWfActionService } from './action.service';
+import { CrmWfWorkItemService } from './work-item.service';
 
 export type ProcessOutcome =
   | 'flag_off'
@@ -40,6 +42,8 @@ export type ProcessOutcome =
   | 'consent_review'
   | 'not_contactable'
   | 'drafted'
+  | 'sent_autonomously'
+  | 'budget_deferred'
   | 'draft_blocked'
   | 'lost_claim'
   | 'lock_busy';
@@ -66,6 +70,8 @@ export class CrmWfSupervisorService {
     private readonly drafter: CrmWfDrafterService,
     private readonly suppression: CrmWfSuppressionService,
     private readonly vault: CrmWfVaultService,
+    private readonly items: CrmWfWorkItemService,
+    private readonly actions: CrmWfActionService,
   ) {}
 
   async process(task: CrmWfTask, now = new Date()): Promise<ProcessOutcome> {
@@ -182,6 +188,63 @@ export class CrmWfSupervisorService {
       );
       return 'escalated';
     }
+    // Sales-team assistance: tell the owner about a ready buyer or an appointment change
+    // right away. These are internal work items — nothing is sent to the customer by them.
+    const version = (lead.contentHash ?? '').slice(0, 16);
+    if (signals.includes('PURCHASE_INTENT')) {
+      await this.items.create({
+        tenantId: lead.tenantId,
+        locationId: lead.locationId,
+        crmLeadId: lead.id,
+        department: lead.department,
+        kind: 'QUALIFIED_BUYER',
+        urgency: 'HIGH',
+        title: 'Customer shows immediate purchase intent',
+        assigneeName: lead.assignedTo,
+        createdBy: `agent:${task.agentKey}`,
+        payload: {
+          signals,
+          recommendedNextAction: 'Call or reply now; offer a visit time.',
+        },
+        dedupeKey: `QUALIFIED_BUYER:${lead.id}:${version}`,
+      });
+      await this.prisma.crmWfOutcome.createMany({
+        skipDuplicates: true,
+        data: [
+          {
+            tenantId: lead.tenantId,
+            locationId: lead.locationId,
+            crmLeadId: lead.id,
+            department: lead.department,
+            kind: 'QUALIFIED',
+            basis: 'OBSERVED',
+            sourceRecordId: `intent:${version}`,
+            verified: lead.verified,
+            occurredAt: now,
+          },
+        ],
+      });
+    }
+    if (signals.includes('APPOINTMENT_CHANGE'))
+      await this.items.create({
+        tenantId: lead.tenantId,
+        locationId: lead.locationId,
+        crmLeadId: lead.id,
+        department: lead.department,
+        kind: 'APPOINTMENT_RESCHEDULE',
+        urgency: 'HIGH',
+        title: 'Customer asked to change or cancel their appointment',
+        dueAt: lead.appointmentAt,
+        assigneeName: lead.assignedTo,
+        createdBy: `agent:${task.agentKey}`,
+        payload: {
+          crmAppointmentAt: lead.appointmentAt?.toISOString() ?? null,
+          availability:
+            'NOT_VERIFIED — an employee updates the appointment in the CRM',
+        },
+        dedupeKey: `APPOINTMENT_RESCHEDULE:${lead.id}:${version}`,
+      });
+
     if (signals.includes('PROMPT_INJECTION'))
       await this.audit(task, 'crmwf.security.prompt_injection_detected', {
         leadId: lead.id,
@@ -264,8 +327,24 @@ export class CrmWfSupervisorService {
       identity,
       dealershipName: dealership?.name ?? 'the dealership',
       taskId: task.id,
+      // ASSIST: an employee sends it as themselves. Otherwise the virtual representative does.
+      sender: control.mode === 'ASSIST' ? 'EMPLOYEE' : 'VIRTUAL',
     });
     if (!draft.ok) {
+      if (draft.reason.startsWith('budget_exhausted')) {
+        // Spending limit reached: wait for tomorrow. Not an error, not charged as an attempt.
+        const tomorrow = new Date(
+          Date.UTC(
+            now.getUTCFullYear(),
+            now.getUTCMonth(),
+            now.getUTCDate() + 1,
+            0,
+            5,
+          ),
+        );
+        await this.queue.defer(task.id, tomorrow, draft.reason);
+        return 'budget_deferred';
+      }
       if (draft.reason.startsWith('model_unavailable')) {
         // Provider outage / spend cap: retry later with backoff; nothing is sent meanwhile.
         const dead = await this.queue.fail(
@@ -289,7 +368,17 @@ export class CrmWfSupervisorService {
 
     // ASSIST → a recommendation for an employee. SUPERVISED / CONTROLLED_AUTONOMOUS → waits for
     // approval. Auto-approval is decided by the action service at execution time, never here.
-    const status = control.mode === 'ASSIST' ? 'DRAFT' : 'PENDING_APPROVAL';
+    // Level 3: inside a complete, unexpired workflow permit — and only when every compliance
+    // rule already passes — the action is created approved-by-policy. The action service
+    // re-checks everything, plus the permit's own channel, window and volume limits.
+    const autonomous =
+      control.mode === 'CONTROLLED_AUTONOMOUS' && decision.sendAllowed;
+    const status =
+      control.mode === 'ASSIST'
+        ? 'DRAFT'
+        : autonomous
+          ? 'APPROVED'
+          : 'PENDING_APPROVAL';
     const idempotencyKey = `msg:${task.dedupeKey}`;
     await this.prisma.$transaction(async (tx) => {
       const exists = await tx.crmWfAction.findUnique({
@@ -351,8 +440,20 @@ export class CrmWfSupervisorService {
       'AWAITING_APPROVAL',
       control.mode === 'ASSIST'
         ? 'draft_for_employee'
-        : 'awaiting_manager_approval',
+        : autonomous
+          ? 'sending_within_permit'
+          : 'awaiting_manager_approval',
     );
+    if (autonomous) {
+      const a = await this.prisma.crmWfAction.findUnique({
+        where: {
+          tenantId_idempotencyKey: { tenantId: lead.tenantId, idempotencyKey },
+        },
+      });
+      // The conversation lock is already held by this task.
+      if (a) await this.actions.executeAfterLock(a.id);
+      return 'sent_autonomously';
+    }
     return 'drafted';
   }
 
@@ -386,6 +487,23 @@ export class CrmWfSupervisorService {
           metadata: auditSafe({ taskId: task.id, reason, urgency, ...detail }),
         },
       });
+    });
+    // Department-specific escalation: an internal item for the owner / department lead.
+    const level =
+      (['LOW', 'NORMAL', 'HIGH', 'CRITICAL'] as const).find(
+        (u) => u === urgency,
+      ) ?? 'NORMAL';
+    await this.items.create({
+      tenantId: task.tenantId,
+      locationId: task.locationId,
+      crmLeadId: leadId,
+      department: task.department,
+      kind: 'ESCALATION',
+      urgency: level,
+      title: `Customer needs a person: ${reason.replace(/^customer_/, '').replace(/_/g, ' ')}`,
+      createdBy: `agent:${task.agentKey}`,
+      payload: { reason, ...detail },
+      dedupeKey: `ESCALATION:${leadId}:${task.id}`,
     });
     await this.queue.finish(task.id, 'ESCALATED', `${urgency}:${reason}`);
   }
