@@ -6,6 +6,8 @@ import {
   normalizeEndpoint,
 } from '../messaging/consent.service';
 
+import { auditSafe, CrmWfVaultService } from './vault.service';
+
 type Tx = Prisma.TransactionClient;
 
 /**
@@ -19,6 +21,7 @@ export class CrmWfSuppressionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly consent: ConsentService,
+    private readonly vault: CrmWfVaultService,
   ) {}
 
   static endpointsOf(lead: { phone?: string | null; email?: string | null }) {
@@ -27,11 +30,16 @@ export class CrmWfSuppressionService {
     return { sms, email, all: [sms, email].filter((e): e is string => !!e) };
   }
 
+  /** Active suppressions for NORMALIZED endpoints. Matched by keyed hash, never plaintext. */
   async activeFor(tenantId: string, endpoints: string[]) {
     if (!endpoints.length) return [];
     return this.prisma.crmWfSuppression.findMany({
-      where: { tenantId, endpoint: { in: endpoints }, liftedAt: null },
-      select: { channel: true, reason: true, endpoint: true },
+      where: {
+        tenantId,
+        endpointHash: { in: endpoints.map((e) => this.vault.hash(e)) },
+        liftedAt: null,
+      },
+      select: { channel: true, reason: true },
     });
   }
 
@@ -48,7 +56,7 @@ export class CrmWfSuppressionService {
       where: { id: p.crmLeadId, tenantId: p.tenantId },
     });
     if (!lead) return { created: 0 };
-    const ep = CrmWfSuppressionService.endpointsOf(lead);
+    const ep = CrmWfSuppressionService.endpointsOf(this.vault.lead(lead));
     const rows: Array<{ channel: string; endpoint: string }> = [];
     if (p.scope === 'ALL')
       for (const e of ep.all) rows.push({ channel: 'ALL', endpoint: e });
@@ -62,7 +70,7 @@ export class CrmWfSuppressionService {
         const dup = await tx.crmWfSuppression.findFirst({
           where: {
             tenantId: p.tenantId,
-            endpoint: r.endpoint,
+            endpointHash: this.vault.hash(r.endpoint),
             channel: r.channel,
             liftedAt: null,
           },
@@ -72,7 +80,10 @@ export class CrmWfSuppressionService {
           data: {
             tenantId: p.tenantId,
             channel: r.channel,
-            endpoint: r.endpoint,
+            endpointHash: this.vault.hash(r.endpoint),
+            hint: r.endpoint.includes('@')
+              ? r.endpoint.replace(/^(.).*(@.*)$/, '$1…$2')
+              : `…${r.endpoint.slice(-4)}`,
             reason: p.reason,
             source: p.source,
             crmLeadId: p.crmLeadId,
@@ -94,12 +105,12 @@ export class CrmWfSuppressionService {
           action: 'crmwf.suppression.added',
           resource: 'CrmWfLead',
           resourceId: p.crmLeadId,
-          metadata: {
+          metadata: auditSafe({
             reason: p.reason,
             scope: p.scope,
             source: p.source,
             endpoints: rows.length,
-          },
+          }),
         },
       });
       return n;
@@ -191,7 +202,7 @@ export class CrmWfSuppressionService {
           action: 'crmwf.suppression.lifted',
           resource: 'CrmWfSuppression',
           resourceId: id,
-          metadata: { reason },
+          metadata: auditSafe({ reason }),
         },
       });
       return out;

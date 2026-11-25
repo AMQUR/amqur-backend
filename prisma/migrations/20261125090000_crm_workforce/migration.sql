@@ -88,9 +88,15 @@ CREATE TABLE "CrmWfLead" (
     "synthetic" BOOLEAN NOT NULL DEFAULT false,
     "department" "CrmWfDepartment" NOT NULL DEFAULT 'SALES',
     "firstName" TEXT,
-    "lastName" TEXT,
-    "phone" TEXT,
-    "email" TEXT,
+    "lastNameEnc" TEXT,
+    "phoneEnc" TEXT,
+    "emailEnc" TEXT,
+    "phoneHash" TEXT,
+    "emailHash" TEXT,
+    "phoneLast4" TEXT,
+    "duplicateOfId" TEXT,
+    "importBatchId" TEXT,
+    "lastImportBatchId" TEXT,
     "language" TEXT,
     "leadSource" TEXT,
     "crmStatus" TEXT,
@@ -126,7 +132,8 @@ CREATE TABLE "CrmWfMessage" (
     "direction" TEXT NOT NULL,
     "channel" TEXT NOT NULL,
     "authorType" TEXT NOT NULL,
-    "body" TEXT NOT NULL,
+    "bodyEnc" TEXT NOT NULL,
+    "importBatchId" TEXT,
     "sourceRecordId" TEXT NOT NULL,
     "occurredAt" TIMESTAMP(3) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -197,7 +204,8 @@ CREATE TABLE "CrmWfSuppression" (
     "id" TEXT NOT NULL,
     "tenantId" TEXT NOT NULL,
     "channel" TEXT NOT NULL,
-    "endpoint" TEXT NOT NULL,
+    "endpointHash" TEXT NOT NULL,
+    "hint" TEXT NOT NULL,
     "reason" TEXT NOT NULL,
     "source" TEXT NOT NULL,
     "crmLeadId" TEXT,
@@ -274,6 +282,69 @@ CREATE TABLE "CrmWfOutcome" (
     CONSTRAINT "CrmWfOutcome_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "CrmWfImportBatch" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "locationId" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'PREVIEWED',
+    "fileName" TEXT,
+    "fileSha256" TEXT NOT NULL,
+    "exportedAt" TIMESTAMP(3) NOT NULL,
+    "synthetic" BOOLEAN NOT NULL DEFAULT false,
+    "mapping" JSONB NOT NULL,
+    "counts" JSONB NOT NULL,
+    "validation" JSONB NOT NULL,
+    "authorizationRef" TEXT,
+    "createdByUserId" TEXT NOT NULL,
+    "committedAt" TIMESTAMP(3),
+    "rolledBackAt" TIMESTAMP(3),
+    "rolledBackByUserId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "CrmWfImportBatch_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CrmWfImportChange" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "batchId" TEXT NOT NULL,
+    "crmLeadId" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "before" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "CrmWfImportChange_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "CrmWfWorkItem" (
+    "id" TEXT NOT NULL,
+    "tenantId" TEXT NOT NULL,
+    "locationId" TEXT NOT NULL,
+    "crmLeadId" TEXT,
+    "department" "CrmWfDepartment" NOT NULL,
+    "kind" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'OPEN',
+    "urgency" TEXT NOT NULL DEFAULT 'NORMAL',
+    "title" TEXT NOT NULL,
+    "payload" JSONB NOT NULL,
+    "dueAt" TIMESTAMP(3),
+    "assigneeName" TEXT,
+    "assignedUserId" TEXT,
+    "createdBy" TEXT NOT NULL,
+    "resolution" JSONB,
+    "resolvedByUserId" TEXT,
+    "resolvedAt" TIMESTAMP(3),
+    "dedupeKey" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "CrmWfWorkItem_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "CrmWfControl_scopeKey_key" ON "CrmWfControl"("scopeKey");
 
@@ -290,10 +361,13 @@ CREATE UNIQUE INDEX "CrmWfConnector_tenantId_locationId_adapterKey_key" ON "CrmW
 CREATE INDEX "CrmWfLead_tenantId_locationId_department_idx" ON "CrmWfLead"("tenantId", "locationId", "department");
 
 -- CreateIndex
-CREATE INDEX "CrmWfLead_tenantId_phone_idx" ON "CrmWfLead"("tenantId", "phone");
+CREATE INDEX "CrmWfLead_tenantId_phoneHash_idx" ON "CrmWfLead"("tenantId", "phoneHash");
 
 -- CreateIndex
-CREATE INDEX "CrmWfLead_tenantId_email_idx" ON "CrmWfLead"("tenantId", "email");
+CREATE INDEX "CrmWfLead_tenantId_emailHash_idx" ON "CrmWfLead"("tenantId", "emailHash");
+
+-- CreateIndex
+CREATE INDEX "CrmWfLead_tenantId_importBatchId_idx" ON "CrmWfLead"("tenantId", "importBatchId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "CrmWfLead_tenantId_adapterKey_sourceRecordId_key" ON "CrmWfLead"("tenantId", "adapterKey", "sourceRecordId");
@@ -329,7 +403,7 @@ CREATE INDEX "CrmWfAction_crmLeadId_createdAt_idx" ON "CrmWfAction"("crmLeadId",
 CREATE UNIQUE INDEX "CrmWfAction_tenantId_idempotencyKey_key" ON "CrmWfAction"("tenantId", "idempotencyKey");
 
 -- CreateIndex
-CREATE INDEX "CrmWfSuppression_tenantId_endpoint_idx" ON "CrmWfSuppression"("tenantId", "endpoint");
+CREATE INDEX "CrmWfSuppression_tenantId_endpointHash_idx" ON "CrmWfSuppression"("tenantId", "endpointHash");
 
 -- CreateIndex
 CREATE INDEX "CrmWfSuppression_tenantId_createdAt_idx" ON "CrmWfSuppression"("tenantId", "createdAt");
@@ -351,6 +425,24 @@ CREATE INDEX "CrmWfOutcome_tenantId_locationId_kind_occurredAt_idx" ON "CrmWfOut
 
 -- CreateIndex
 CREATE UNIQUE INDEX "CrmWfOutcome_tenantId_crmLeadId_kind_sourceRecordId_key" ON "CrmWfOutcome"("tenantId", "crmLeadId", "kind", "sourceRecordId");
+
+-- CreateIndex
+CREATE INDEX "CrmWfImportBatch_tenantId_locationId_createdAt_idx" ON "CrmWfImportBatch"("tenantId", "locationId", "createdAt");
+
+-- CreateIndex
+CREATE INDEX "CrmWfImportChange_batchId_idx" ON "CrmWfImportChange"("batchId");
+
+-- CreateIndex
+CREATE INDEX "CrmWfImportChange_tenantId_crmLeadId_idx" ON "CrmWfImportChange"("tenantId", "crmLeadId");
+
+-- CreateIndex
+CREATE INDEX "CrmWfWorkItem_tenantId_locationId_status_kind_idx" ON "CrmWfWorkItem"("tenantId", "locationId", "status", "kind");
+
+-- CreateIndex
+CREATE INDEX "CrmWfWorkItem_crmLeadId_idx" ON "CrmWfWorkItem"("crmLeadId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CrmWfWorkItem_tenantId_dedupeKey_key" ON "CrmWfWorkItem"("tenantId", "dedupeKey");
 
 -- AddForeignKey
 ALTER TABLE "CrmWfMessage" ADD CONSTRAINT "CrmWfMessage_crmLeadId_fkey" FOREIGN KEY ("crmLeadId") REFERENCES "CrmWfLead"("id") ON DELETE CASCADE ON UPDATE CASCADE;

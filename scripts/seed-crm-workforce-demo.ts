@@ -153,6 +153,9 @@ async function main() {
   }
 
   for (const m of [
+    'crmWfWorkItem',
+    'crmWfImportChange',
+    'crmWfImportBatch',
     'crmWfReview',
     'crmWfOutcome',
     'crmWfUsage',

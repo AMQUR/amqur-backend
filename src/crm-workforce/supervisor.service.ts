@@ -27,6 +27,7 @@ import { evaluateCompliance } from './policy/compliance.engine';
 import { escalationFor, standingOptOuts } from './policy/inbound-signals';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfSuppressionService } from './suppression.service';
+import { auditSafe, CrmWfVaultService } from './vault.service';
 
 export type ProcessOutcome =
   | 'flag_off'
@@ -64,6 +65,7 @@ export class CrmWfSupervisorService {
     private readonly complianceFacts: CrmWfComplianceFactsService,
     private readonly drafter: CrmWfDrafterService,
     private readonly suppression: CrmWfSuppressionService,
+    private readonly vault: CrmWfVaultService,
   ) {}
 
   async process(task: CrmWfTask, now = new Date()): Promise<ProcessOutcome> {
@@ -97,7 +99,7 @@ export class CrmWfSupervisorService {
       return outcome;
     };
 
-    const lead = await this.prisma.crmWfLead.findFirst({
+    const leadRow = await this.prisma.crmWfLead.findFirst({
       // Tenant AND rooftop are part of the lookup: a task can never resolve another store's lead.
       where: {
         id: task.crmLeadId,
@@ -106,6 +108,7 @@ export class CrmWfSupervisorService {
       },
       include: { messages: true },
     });
+    const lead = leadRow ? this.vault.withMessages(leadRow) : null;
     if (!lead)
       return finish('CANCELLED', 'lead_not_in_task_rooftop', 'superseded');
 
@@ -333,13 +336,13 @@ export class CrmWfSupervisorService {
           action: 'crmwf.action.drafted',
           resource: 'CrmWfLead',
           resourceId: lead.id,
-          metadata: {
+          metadata: auditSafe({
             taskId: task.id,
             workflowKey,
             channel,
             mode: control.mode,
             sendAllowed: decision.sendAllowed,
-          },
+          }),
         },
       });
     });
@@ -380,7 +383,7 @@ export class CrmWfSupervisorService {
           action: 'crmwf.escalated',
           resource: 'CrmWfLead',
           resourceId: leadId,
-          metadata: { taskId: task.id, reason, urgency, ...detail },
+          metadata: auditSafe({ taskId: task.id, reason, urgency, ...detail }),
         },
       });
     });

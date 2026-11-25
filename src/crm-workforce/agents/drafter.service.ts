@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { CrmWfLead, CrmWfMessage } from '@prisma/client';
 import { LlmRouterService } from '../../ai/llm-router.service';
 import { neutralizePromptInjection } from '../../knowledge/prompt-injection.util';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -9,6 +8,10 @@ import {
   VerifiedFact,
   WorkflowKey,
 } from '../crm-workforce.types';
+import {
+  LeadView as CrmWfLead,
+  MsgView as CrmWfMessage,
+} from '../vault.service';
 import { guardDraft, GuardViolation } from './output-guard';
 import { Playbook, playbookFor } from './playbooks';
 

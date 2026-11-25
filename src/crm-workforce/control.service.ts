@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { auditSafe } from './vault.service';
 import { Department, OperatingMode } from './crm-workforce.types';
 import {
   CompliancePolicy,
@@ -125,12 +126,12 @@ export class CrmWfControlService {
           action: 'crmwf.policy.changed',
           resource: 'CrmWfControl',
           resourceId: row.id,
-          metadata: {
+          metadata: auditSafe({
             version: clean.version,
             legallyApproved: !!approved,
             documentRef: approved?.documentRef ?? null,
             reason: why,
-          },
+          }),
         },
       });
       return clean;
@@ -319,7 +320,7 @@ export class CrmWfControlService {
           action: 'crmwf.control.changed',
           resource: 'CrmWfControl',
           resourceId: row.id,
-          metadata: {
+          metadata: auditSafe({
             scopeKey,
             before: existing
               ? {
@@ -334,7 +335,7 @@ export class CrmWfControlService {
               externalSendEnabled: row.externalSendEnabled,
             },
             reason: data.reason,
-          },
+          }),
         },
       });
       return row;

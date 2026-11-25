@@ -13,7 +13,9 @@ import { CrmLeadRecord } from '../../src/crm-workforce/adapters/crm-adapter';
 import { CrmWfActionService } from '../../src/crm-workforce/action.service';
 import { CrmWfEngineService } from '../../src/crm-workforce/engine.service';
 import { CrmWfIntakeService } from '../../src/crm-workforce/intake.service';
+import { CrmWfPrivacyService } from '../../src/crm-workforce/privacy.service';
 import { CrmWfQueueService } from '../../src/crm-workforce/queue.service';
+import { CrmWfVaultService } from '../../src/crm-workforce/vault.service';
 import { ConsentService } from '../../src/messaging/consent.service';
 
 const PASSWORD = 'TestPass123!';
@@ -130,6 +132,9 @@ describe('CRM Workforce (e2e)', () => {
   async function wipe() {
     const p = ctx.prisma;
     for (const m of [
+      'crmWfWorkItem',
+      'crmWfImportChange',
+      'crmWfImportBatch',
       'crmWfReview',
       'crmWfOutcome',
       'crmWfUsage',
@@ -605,7 +610,89 @@ describe('CRM Workforce (e2e)', () => {
         where: { tenantId: ids.nissan.tenantId },
       });
       expect(sup).toHaveLength(1);
-      expect(sup[0]).toMatchObject({ channel: 'EMAIL', endpoint: r.email });
+      expect(sup[0].channel).toBe('EMAIL');
+      expect(sup[0].hint).toMatch(/^s…@example\.invalid$/);
+      expect(sup[0].endpointHash).toBe(ctx.app.get(CrmWfVaultService).hash(r.email!));
+    });
+
+    it('contact details and message text are sealed at rest; nothing readable is in the database', async () => {
+      const r = rec({ lastName: 'Uniquelastname', inbound: 'my private words about the Rogue', outboundHoursAgo: 5 });
+      await intake.ingest(scope('nissan'), 'fixture', [r, rec({ inbound: 'STOP', outboundHoursAgo: 5 })]);
+      const dump = JSON.stringify(
+        await ctx.prisma.$queryRaw`SELECT row_to_json(l) AS lead, (SELECT json_agg(m) FROM "CrmWfMessage" m WHERE m."crmLeadId" = l.id) AS msgs FROM "CrmWfLead" l WHERE l."tenantId" = ${ids.nissan.tenantId}`,
+      ) + JSON.stringify(await ctx.prisma.crmWfSuppression.findMany({ where: { tenantId: ids.nissan.tenantId } }));
+      expect(dump).not.toContain(r.phone!.slice(2));
+      expect(dump).not.toContain(r.email!);
+      expect(dump).not.toContain('Uniquelastname');
+      expect(dump).not.toContain('private words');
+      // …and the API list never returns the phone, email or full last name either.
+      const body = JSON.stringify((await api('nissan').get('tasks').expect(200)).body);
+      expect(body).not.toContain(r.phone!.slice(2));
+      expect(body).not.toContain(r.email!);
+      expect(body).not.toContain('Uniquelastname');
+      const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: r.sourceRecordId } });
+      const detail = JSON.stringify((await api('nissan').get(`leads/${lead.id}`).expect(200)).body);
+      expect(detail).toContain('private words'); // staff can read the conversation
+      expect(detail).not.toContain(r.phone!.slice(2));
+      expect(detail).not.toContain(r.email!);
+    });
+
+    it('the same customer entered twice at one rooftop is worked once; another rooftop is never matched', async () => {
+      const first = rec({ inbound: 'Is it still available?', outboundHoursAgo: 5 });
+      await intake.ingest(scope('nissan'), 'fixture', [first]);
+      const again = rec({ phone: first.phone, email: 'other@example.invalid', inbound: 'hello, anyone there?', outboundHoursAgo: 5 });
+      const sum = await intake.ingest(scope('nissan'), 'fixture', [again]);
+      expect(sum).toMatchObject({ created: 1, duplicates: 1, tasksQueued: 0 });
+      expect((await tasksOf('nissan')).filter((t) => t.status === 'PENDING')).toHaveLength(1);
+      const dup = await ctx.prisma.crmWfLead.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: again.sourceRecordId } });
+      expect(dup.duplicateOfId).toBeTruthy();
+      // Same phone at Chevy is a different dealership's customer record: no link, own task.
+      const chevy = await intake.ingest(scope('chevy'), 'fixture', [rec({ phone: first.phone, inbound: 'hi', outboundHoursAgo: 5 })]);
+      expect(chevy).toMatchObject({ duplicates: 0, tasksQueued: 1 });
+    });
+
+    it('erasing a customer removes their data but keeps the opt-out working; export and erase are admin-only and audited', async () => {
+      const r = rec({ sourceRecordId: 'ERASE-1', inbound: 'STOP', outboundHoursAgo: 5 });
+      const keep = rec({ inbound: 'Is it still available?', outboundHoursAgo: 5 });
+      await intake.ingest(scope('nissan'), 'fixture', [r, keep]);
+      await api('nissan', 'manager').post('privacy/export', { phone: r.phone, reason: 'customer request' }).expect(403);
+      await api('chevy').post('privacy/erase', { phone: r.phone, reason: 'wrong tenant' }).expect(201).then((res) => expect(unwrap<{ leads: number }>(res.body).leads).toBe(0));
+      const exp = unwrap<{ records: Array<{ phone: string; messages: Array<{ text: string }> }>; suppressions: unknown[] }>(
+        (await api('nissan').post('privacy/export', { phone: r.phone, reason: 'customer request' }).expect(201)).body,
+      );
+      expect(exp.records).toHaveLength(1);
+      expect(exp.records[0].phone).toBe(r.phone);
+      expect(exp.records[0].messages.at(-1)!.text).toBe('STOP');
+      expect(exp.suppressions).toHaveLength(1);
+      const out = unwrap<{ leads: number; messages: number; suppressionsKept: number }>(
+        (await api('nissan').post('privacy/erase', { phone: r.phone, reason: 'customer asked us to delete call 312-555-0100' }).expect(201)).body,
+      );
+      expect(out).toMatchObject({ leads: 1, suppressionsKept: 1 });
+      expect(await ctx.prisma.crmWfLead.count({ where: { tenantId: ids.nissan.tenantId } })).toBe(1);
+      expect(await ctx.prisma.crmWfMessage.count({ where: { tenantId: ids.nissan.tenantId, sourceRecordId: { startsWith: 'ERASE-1' } } })).toBe(0);
+      // Re-importing the erased customer does not make them contactable again.
+      const again = await intake.ingest(scope('nissan'), 'fixture', [rec({ sourceRecordId: 'ERASE-2', phone: r.phone, outboundHoursAgo: 5, inbound: 'hi again' })]);
+      expect(again.tasksQueued).toBe(1);
+      await openGates('nissan');
+      await tick();
+      const t = (await tasksOf('nissan')).find((x) => x.statusReason?.includes('suppressed'));
+      expect(t?.status).toBe('SUPPRESSED');
+      const audit = await ctx.prisma.auditLog.findFirstOrThrow({ where: { tenantId: ids.nissan.tenantId, action: 'crmwf.privacy.erased' }, orderBy: { createdAt: 'desc' } });
+      expect(JSON.stringify(audit.metadata)).not.toMatch(/555-0100|5550100/);
+    });
+
+    it('retention purge removes records past the dealership retention period, never under legal hold', async () => {
+      const privacy = ctx.app.get(CrmWfPrivacyService);
+      await intake.ingest(scope('nissan'), 'fixture', [rec({ sourceRecordId: 'OLD-1', createdInCrmAt: hoursAgo(24 * 800) }), rec({ sourceRecordId: 'NEW-1' })]);
+      await ctx.prisma.$executeRaw`UPDATE "CrmWfLead" SET "updatedAt" = NOW() - interval '500 days' WHERE "tenantId" = ${ids.nissan.tenantId} AND "sourceRecordId" = 'OLD-1'`;
+      const r = unwrap<{ recordsPastRetention: number; retentionDays: number; vaultReady: boolean }>((await api('nissan').get('privacy/retention').expect(200)).body);
+      expect(r).toMatchObject({ recordsPastRetention: 1, retentionDays: 365, vaultReady: true });
+      await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { legalHold: true } });
+      expect(await privacy.purgeExpired()).toBe(0);
+      await ctx.prisma.tenant.update({ where: { id: ids.nissan.tenantId }, data: { legalHold: false } });
+      expect(await privacy.purgeExpired()).toBe(1);
+      const left = await ctx.prisma.crmWfLead.findMany({ where: { tenantId: ids.nissan.tenantId } });
+      expect(left.map((l) => l.sourceRecordId)).toEqual(['NEW-1']);
     });
 
     it('a CRM do-not-contact preference suppresses without any message', async () => {
@@ -1077,9 +1164,9 @@ describe('CRM Workforce (e2e)', () => {
       const a = await approved();
       adapters.fixture.fault = 'uncertain_not_written';
       await approve(a.id);
-      const r2 = await ctx.prisma.crmWfLead.findUniqueOrThrow({
-        where: { id: a.crmLeadId! },
-      });
+      const r2 = ctx.app.get(CrmWfVaultService).lead(
+        await ctx.prisma.crmWfLead.findUniqueOrThrow({ where: { id: a.crmLeadId! } }),
+      );
       await intake.ingest(scope('nissan'), 'fixture', [
         rec({
           sourceRecordId: r2.sourceRecordId,

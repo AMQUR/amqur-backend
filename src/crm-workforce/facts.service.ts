@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { CrmWfLead } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreHoursService } from '../locations/store-hours.service';
 import { Department, VerifiedFact } from './crm-workforce.types';
+import { LeadView as CrmWfLead } from './vault.service';
 
 const INVENTORY_MAX_AGE_MS = 36 * 3_600_000;
 const HOURS_MAX_AGE_MS = 180 * 86_400_000;

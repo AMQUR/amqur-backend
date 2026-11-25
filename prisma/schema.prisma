@@ -2571,12 +2571,22 @@ model CrmWfLead {
 
   department CrmWfDepartment @default(SALES)
 
-  firstName String?
-  lastName  String?
-  /// Staff-only PII; never logged, never sent to analytics.
-  phone     String?
-  email     String?
-  language  String?
+  firstName         String?
+  /// AES-256-GCM sealed (CrmWfVaultService). Plain contact data is never stored.
+  lastNameEnc       String?
+  phoneEnc          String?
+  emailEnc          String?
+  /// Keyed HMAC of the normalized endpoint — lookup and duplicate detection without plaintext.
+  phoneHash         String?
+  emailHash         String?
+  /// Last four digits, for staff to recognise a record without revealing the number.
+  phoneLast4        String?
+  /// Another mirror row at this rooftop with the same phone or email (oldest wins).
+  duplicateOfId     String?
+  /// Import batch that created this row / last changed it (export_import adapter).
+  importBatchId     String?
+  lastImportBatchId String?
+  language          String?
 
   leadSource      String?
   crmStatus       String?
@@ -2617,8 +2627,9 @@ model CrmWfLead {
 
   @@unique([tenantId, adapterKey, sourceRecordId])
   @@index([tenantId, locationId, department])
-  @@index([tenantId, phone])
-  @@index([tenantId, email])
+  @@index([tenantId, phoneHash])
+  @@index([tenantId, emailHash])
+  @@index([tenantId, importBatchId])
 }
 
 /// Communication history mirror (one conversation per customer and dealership).
@@ -2635,7 +2646,9 @@ model CrmWfMessage {
   channel        String
   /// CUSTOMER | STAFF | AGENT | SYSTEM
   authorType     String
-  body           String
+  /// Sealed message text (customer words are personal data).
+  bodyEnc        String
+  importBatchId  String?
   sourceRecordId String
   occurredAt     DateTime
 
@@ -2735,15 +2748,18 @@ model CrmWfAction {
 model CrmWfSuppression {
   id String @id @default(cuid())
 
-  tenantId String
+  tenantId     String
   /// SMS | EMAIL | CALL | ALL
-  channel  String
-  /// Normalized endpoint (E.164 / lowercased email) — staff-only PII.
-  endpoint String
+  channel      String
+  /// Keyed HMAC of the normalized endpoint. Survives customer deletion: a suppression must
+  /// keep working after the contact data itself is erased.
+  endpointHash String
+  /// Masked hint for staff ("…0142", "s…@example.com").
+  hint         String
   /// STOP | UNSUBSCRIBE | WRONG_NUMBER | DO_NOT_CONTACT | COMPLAINT | CUSTOMER_REQUEST | MANUAL
-  reason   String
+  reason       String
   /// INBOUND_MESSAGE | CRM_PREFERENCE | STAFF | IMPORT
-  source   String
+  source       String
 
   crmLeadId       String?
   createdByUserId String?
@@ -2752,7 +2768,7 @@ model CrmWfSuppression {
 
   createdAt DateTime @default(now())
 
-  @@index([tenantId, endpoint])
+  @@index([tenantId, endpointHash])
   @@index([tenantId, createdAt])
 }
 
@@ -2834,4 +2850,98 @@ model CrmWfOutcome {
 
   @@unique([tenantId, crmLeadId, kind, sourceRecordId])
   @@index([tenantId, locationId, kind, occurredAt])
+}
+
+/// One uploaded CRM export. PREVIEWED → COMMITTED → ROLLED_BACK. The file itself is never
+/// stored — only its hash, the column mapping and the validation report.
+model CrmWfImportBatch {
+  id String @id @default(cuid())
+
+  tenantId   String
+  locationId String
+
+  /// PREVIEWED | COMMITTED | ROLLED_BACK | REJECTED
+  status     String   @default("PREVIEWED")
+  fileName   String?
+  fileSha256 String
+  exportedAt DateTime
+  /// True when every contact in the file is a reserved test value (555-01xx / .invalid etc.).
+  synthetic  Boolean  @default(false)
+  /// field → source column actually used.
+  mapping    Json
+  /// { rows, created, updated, unchanged, duplicates, rejected, suppressed, tasksQueued }
+  counts     Json
+  /// Rejected rows + ignored columns + warnings. Row numbers and reasons only, no cell values.
+  validation Json
+
+  authorizationRef   String?
+  createdByUserId    String
+  committedAt        DateTime?
+  rolledBackAt       DateTime?
+  rolledBackByUserId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId, locationId, createdAt])
+}
+
+/// What a committed batch did to one mirror row, so the batch can be rolled back exactly.
+model CrmWfImportChange {
+  id String @id @default(cuid())
+
+  tenantId  String
+  batchId   String
+  crmLeadId String
+  /// CREATED | UPDATED
+  kind      String
+  /// For UPDATED: the row's previous column values (contact fields are still sealed).
+  before    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([batchId])
+  @@index([tenantId, crmLeadId])
+}
+
+/// An internal request for a person to act in the CRM (appointment, note, follow-up,
+/// escalation, buyer alert). It is NEVER a CRM record itself: OPEN means "asked", and
+/// STAFF_CONFIRMED means an employee says they did it — only CRM_VERIFIED is a read-back.
+model CrmWfWorkItem {
+  id String @id @default(cuid())
+
+  tenantId   String
+  locationId String
+  crmLeadId  String?
+  department CrmWfDepartment
+
+  /// APPOINTMENT_REQUEST | APPOINTMENT_RESCHEDULE | APPOINTMENT_CANCEL | APPOINTMENT_CONFIRM |
+  /// CRM_NOTE | FOLLOW_UP | ESCALATION | QUALIFIED_BUYER | SERVICE_REQUEST | PARTS_INQUIRY
+  kind             String
+  /// OPEN | IN_PROGRESS | STAFF_CONFIRMED | CRM_VERIFIED | DECLINED | CANCELLED
+  status           String    @default("OPEN")
+  /// LOW | NORMAL | HIGH | CRITICAL
+  urgency          String    @default("NORMAL")
+  title            String
+  /// Structured request (requested time, note text, instruction). Free text is redacted of
+  /// contact details before it is stored.
+  payload          Json
+  dueAt            DateTime?
+  /// CRM owner name the item is for, and/or the staff user who picked it up.
+  assigneeName     String?
+  assignedUserId   String?
+  /// Who asked: "agent:<key>" or a staff user id.
+  createdBy        String
+  /// What the employee recorded when closing it (e.g. the CRM appointment reference).
+  resolution       Json?
+  resolvedByUserId String?
+  resolvedAt       DateTime?
+  dedupeKey        String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, locationId, status, kind])
+  @@index([crmLeadId])
 }

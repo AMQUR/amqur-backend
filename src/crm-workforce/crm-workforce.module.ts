@@ -12,10 +12,12 @@ import { CrmWfEngineService } from './engine.service';
 import { CrmWfFactsService } from './facts.service';
 import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
+import { CrmWfPrivacyService } from './privacy.service';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfReadService } from './read.service';
 import { CrmWfSupervisorService } from './supervisor.service';
 import { CrmWfSuppressionService } from './suppression.service';
+import { CrmWfVaultService } from './vault.service';
 
 /**
  * AMQUR CRM Workforce — an additive division of the AMQUR platform (docs/CRM_WORKFORCE.md).
@@ -27,6 +29,8 @@ import { CrmWfSuppressionService } from './suppression.service';
   imports: [PrismaModule, IntegrationsModule, ChatModule],
   controllers: [CrmWorkforceController],
   providers: [
+    CrmWfVaultService,
+    CrmWfPrivacyService,
     CrmAdapterRegistry,
     CrmWfControlService,
     CrmWfSuppressionService,

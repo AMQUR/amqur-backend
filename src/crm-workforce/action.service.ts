@@ -21,6 +21,7 @@ import { Actor } from './control.service';
 import { Channel, WorkflowKey } from './crm-workforce.types';
 import { CrmWfFactsService } from './facts.service';
 import { evaluateCompliance } from './policy/compliance.engine';
+import { auditSafe, CrmWfVaultService } from './vault.service';
 
 type Scope = { tenantId: string; locationId: string | null };
 
@@ -45,6 +46,7 @@ export class CrmWfActionService {
     private readonly complianceFacts: CrmWfComplianceFactsService,
     private readonly facts: CrmWfFactsService,
     private readonly lock: TurnLockService,
+    private readonly vault: CrmWfVaultService,
   ) {}
 
   private async load(scope: Scope, id: string) {
@@ -84,11 +86,11 @@ export class CrmWfActionService {
         action,
         resource: 'CrmWfAction',
         resourceId: a.id,
-        metadata: {
+        metadata: auditSafe({
           actionType: a.actionType,
           crmLeadId: a.crmLeadId,
           ...metadata,
-        },
+        }),
       },
     });
   }
@@ -102,11 +104,12 @@ export class CrmWfActionService {
       throw new ConflictException(`not_awaiting_approval:${a.status}`);
     let payload = a.payload as Record<string, unknown>;
     if (editedBody !== undefined && editedBody.trim() !== payload.body) {
-      const lead = await this.prisma.crmWfLead.findFirst({
+      const leadRow = await this.prisma.crmWfLead.findFirst({
         where: { id: a.crmLeadId!, tenantId: a.tenantId },
         include: { messages: true },
       });
-      if (!lead) throw new NotFoundException('lead_not_found');
+      if (!leadRow) throw new NotFoundException('lead_not_found');
+      const lead = this.vault.withMessages(leadRow);
       const { facts, appointmentConfirmed } = await this.facts.forLead(lead);
       const prior = lead.messages
         .filter((m) => m.authorType === 'AGENT')
@@ -210,7 +213,7 @@ export class CrmWfActionService {
       return current();
     };
 
-    const lead = a.crmLeadId
+    const leadRow = a.crmLeadId
       ? await this.prisma.crmWfLead.findFirst({
           where: {
             id: a.crmLeadId,
@@ -220,6 +223,7 @@ export class CrmWfActionService {
           include: { messages: true },
         })
       : null;
+    const lead = leadRow ? this.vault.withMessages(leadRow) : null;
     // Target verification: dealership, customer, channel, current state.
     if (!lead) return block('target_lead_not_in_action_rooftop');
     if (lead.adapterKey !== a.adapterKey) return block('adapter_mismatch');
@@ -445,7 +449,7 @@ export class CrmWfActionService {
             direction: 'OUTBOUND',
             channel: a.channel ?? 'SMS',
             authorType,
-            body,
+            bodyEnc: this.vault.seal(body) ?? '',
             sourceRecordId: `crmwf:${a.id}`,
             occurredAt: at,
           },

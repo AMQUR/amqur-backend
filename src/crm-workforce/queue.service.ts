@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { CrmWfTask, CrmWfTaskStatus, Prisma } from '@prisma/client';
 import { hostname } from 'os';
+import { redactForLog } from '../common/security/sensitive-data';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const CRMWF_WORKER_ID = `crmwf-${hostname()}-${process.pid}`;
@@ -160,7 +161,7 @@ export class CrmWfQueueService {
       data: {
         status: dead ? 'DEAD' : 'PENDING',
         attempts: next,
-        lastError: error.slice(0, 500),
+        lastError: redactForLog(error).slice(0, 500),
         nextAttemptAt: new Date(Date.now() + crmWfBackoffMs(next)),
         leaseExpiresAt: null,
         claimedBy: null,

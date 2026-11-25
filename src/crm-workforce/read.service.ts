@@ -6,6 +6,7 @@ import { PLAYBOOKS, playbookChecksum } from './agents/playbooks';
 import { CrmWfControlService } from './control.service';
 import { CRM_WORKFORCE_FLAG, DEPARTMENTS, envOn } from './crm-workforce.types';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
+import { CrmWfVaultService } from './vault.service';
 
 type Scope = { tenantId: string; locationId: string | null };
 const HEARTBEAT_STALE_MS = 90_000;
@@ -23,7 +24,14 @@ export class CrmWfReadService {
     private readonly adapters: CrmAdapterRegistry,
     private readonly controls: CrmWfControlService,
     private readonly flags: FeatureFlagsService,
+    private readonly vault: CrmWfVaultService,
   ) {}
+
+  /** List rows show an initial for the last name and never the sealed value. */
+  private lite<T extends { lastNameEnc: string | null }>(l: T) {
+    const { lastNameEnc, ...rest } = l;
+    return { ...rest, lastName: mask(this.vault.open(lastNameEnc)) };
+  }
 
   private w(s: Scope) {
     return {
@@ -160,7 +168,9 @@ export class CrmWfReadService {
       select: {
         id: true,
         firstName: true,
-        lastName: true,
+        lastNameEnc: true,
+        phoneLast4: true,
+        duplicateOfId: true,
         leadSource: true,
         crmStatus: true,
         assignedTo: true,
@@ -176,7 +186,7 @@ export class CrmWfReadService {
     const byId = new Map(leads.map((l) => [l.id, l]));
     return rows.map((t) => {
       const l = byId.get(t.crmLeadId);
-      return { ...t, lead: l ? { ...l, lastName: mask(l.lastName) } : null };
+      return { ...t, lead: l ? this.lite(l) : null };
     });
   }
 
@@ -197,7 +207,9 @@ export class CrmWfReadService {
       select: {
         id: true,
         firstName: true,
-        lastName: true,
+        lastNameEnc: true,
+        phoneLast4: true,
+        duplicateOfId: true,
         assignedTo: true,
         synthetic: true,
         vehicleInterest: true,
@@ -206,16 +218,27 @@ export class CrmWfReadService {
     const byId = new Map(leads.map((l) => [l.id, l]));
     return rows.map((a) => {
       const l = byId.get(a.crmLeadId ?? '');
-      return { ...a, lead: l ? { ...l, lastName: mask(l.lastName) } : null };
+      return { ...a, lead: l ? this.lite(l) : null };
     });
   }
 
   /** One lead's full conversation + work history for the review pane (staff-only). */
   async lead(s: Scope, id: string) {
-    const lead = await this.prisma.crmWfLead.findFirst({
+    const row = await this.prisma.crmWfLead.findFirst({
       where: { id, ...this.w(s) },
       include: { messages: { orderBy: { occurredAt: 'asc' }, take: 200 } },
     });
+    // Staff see the conversation and the last four digits; the full phone and email stay sealed
+    // (the employee already has them in the CRM, which remains the system of record).
+    const lead = row
+      ? (() => {
+          const v = this.vault.withMessages(row);
+          const { phone, email, phoneHash, emailHash, ...rest } = v;
+          void phoneHash;
+          void emailHash;
+          return { ...rest, hasPhone: !!phone, hasEmail: !!email };
+        })()
+      : null;
     if (!lead) return null;
     const [tasks, actions] = await Promise.all([
       this.prisma.crmWfTask.findMany({

@@ -43,6 +43,7 @@ import { Actor, CrmWfControlService } from './control.service';
 import { CRM_WORKFORCE_FLAG, DEPARTMENTS } from './crm-workforce.types';
 import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
+import { CrmWfPrivacyService } from './privacy.service';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfReadService } from './read.service';
 import { CrmWfSuppressionService } from './suppression.service';
@@ -116,6 +117,11 @@ class PolicyDto {
   legalApproval?: LegalApprovalDto;
   @IsString() @MinLength(3) @MaxLength(500) reason!: string;
 }
+class PrivacyDto {
+  @IsOptional() @IsString() @MaxLength(40) phone?: string;
+  @IsOptional() @IsString() @MaxLength(200) email?: string;
+  @IsString() @MinLength(3) @MaxLength(300) reason!: string;
+}
 class ReasonDto {
   @IsString() @MinLength(3) @MaxLength(300) reason!: string;
 }
@@ -182,6 +188,7 @@ export class CrmWorkforceController {
     private readonly suppression: CrmWfSuppressionService,
     private readonly flags: FeatureFlagsService,
     private readonly prisma: PrismaService,
+    private readonly privacy: CrmWfPrivacyService,
   ) {}
 
   private scope(u: AuthUser, tenantId?: string, locationId?: string) {
@@ -322,13 +329,11 @@ export class CrmWorkforceController {
     @Query('tenantId') t?: string,
   ) {
     const rows = await this.suppression.list(this.scope(u, t).tenantId);
-    // Endpoints are masked in the list; the full value never leaves the server here.
-    return rows.map((r) => ({
-      ...r,
-      endpoint: r.endpoint.includes('@')
-        ? r.endpoint.replace(/^(.).*(@.*)$/, '$1…$2')
-        : `…${r.endpoint.slice(-4)}`,
-    }));
+    // Only the masked hint is returned; the hash is not useful to a browser.
+    return rows.map(({ endpointHash, hint, ...r }) => {
+      void endpointHash;
+      return { ...r, endpoint: hint };
+    });
   }
 
   /**
@@ -650,6 +655,43 @@ export class CrmWorkforceController {
     if (!out) throw new NotFoundException('suppression_not_found');
     if ('refused' in out) throw new ForbiddenException(out.refused);
     return out;
+  }
+
+  // ── customer data rights ─────────────────────────────────────────────────
+  @Roles(...ADMINS)
+  @Get('privacy/retention')
+  retention(@CurrentUser() u: AuthUser, @Query('tenantId') t?: string) {
+    return this.privacy.retention(this.scope(u, t).tenantId);
+  }
+  /** Authorized copy of what the workforce holds about one customer. Audited. */
+  @Roles(...ADMINS)
+  @Post('privacy/export')
+  privacyExport(
+    @CurrentUser() u: AuthUser,
+    @Body() dto: PrivacyDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.privacy.export(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      dto,
+      dto.reason,
+    );
+  }
+  /** Erase one customer from the mirror. Suppressions are kept. Audited. */
+  @Roles(...ADMINS)
+  @Post('privacy/erase')
+  privacyErase(
+    @CurrentUser() u: AuthUser,
+    @Body() dto: PrivacyDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.privacy.erase(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      dto,
+      dto.reason,
+    );
   }
 
   // ── queue operations ─────────────────────────────────────────────────────

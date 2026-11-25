@@ -6,6 +6,7 @@ import { AdapterBlockedError } from './adapters/crm-adapter';
 import { CrmWfControlService } from './control.service';
 import { envOn } from './crm-workforce.types';
 import { CrmWfIntakeService } from './intake.service';
+import { CrmWfPrivacyService } from './privacy.service';
 import { CRMWF_WORKER_ID, CrmWfQueueService } from './queue.service';
 import { CrmWfSupervisorService } from './supervisor.service';
 
@@ -36,7 +37,10 @@ export class CrmWfEngineService {
     private readonly queue: CrmWfQueueService,
     private readonly supervisor: CrmWfSupervisorService,
     private readonly breaker: CircuitBreakerService,
+    private readonly privacy: CrmWfPrivacyService,
   ) {}
+
+  private lastPurgeDay = '';
 
   private async beat(state: string, detail: object = {}) {
     // Heartbeats of processes that no longer exist are dropped after a day.
@@ -75,6 +79,12 @@ export class CrmWfEngineService {
       ) {
         await this.beat('HALTED');
         return { ...report, state: 'HALTED' };
+      }
+      // Retention purge: once per day per process, cheap when nothing is due.
+      const day = now.toISOString().slice(0, 10);
+      if (this.lastPurgeDay !== day) {
+        this.lastPurgeDay = day;
+        await this.privacy.purgeExpired(now).catch(() => undefined);
       }
       report.synced = await this.syncConnectors(now);
       const batch = Math.max(

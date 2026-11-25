@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { auditSafe } from './vault.service';
 import { CrmAdapterRegistry } from './adapters/adapter.registry';
 import { Actor } from './control.service';
 import { Department } from './crm-workforce.types';
@@ -53,7 +54,7 @@ export class CrmWfLeadControlService {
           action: 'crmwf.lead.takeover',
           resource: 'CrmWfLead',
           resourceId: leadId,
-          metadata: { reason },
+          metadata: auditSafe({ reason }),
         },
       });
       return row;
@@ -166,11 +167,11 @@ export class CrmWfLeadControlService {
           action: 'crmwf.identity.changed',
           resource: 'CrmWfAgentProfile',
           resourceId: row.id,
-          metadata: {
+          metadata: auditSafe({
             department: p.department,
             displayName: name,
             version: row.version,
-          },
+          }),
         },
       });
       return row;
@@ -254,11 +255,11 @@ export class CrmWfLeadControlService {
           action: 'crmwf.connector.changed',
           resource: 'CrmWfConnector',
           resourceId: row.id,
-          metadata: {
+          metadata: auditSafe({
             adapterKey: p.adapterKey,
             enabled: p.enabled,
             authorizationRef: row.authorizationRef,
-          },
+          }),
         },
       });
       return row;
