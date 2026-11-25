@@ -22,7 +22,13 @@ import {
   scopeKeys,
 } from './policy/controls';
 
-export type Actor = { userId: string; role: string; tenantId: string };
+export type Actor = {
+  userId: string;
+  role: string;
+  tenantId: string;
+  /** Set when acting in another dealership through a group membership. */
+  groupActing?: boolean;
+};
 
 export type SetControlInput = {
   scope: ControlRow['scope'];

@@ -66,7 +66,8 @@ export function CrmWorkforce({ locationId: homeLocationId }: { locationId: strin
   const home = !tenantId || tenantId === mine.data?.homeTenantId;
   const dealer = mine.data?.dealerships.find((d) => d.tenantId === tenantId);
   // Acting in another group dealership: its role comes from the group membership.
-  const role = home ? session.user?.role ?? 'STAFF' : mine.data?.groupRole === 'GROUP_ADMIN' ? 'ADMIN' : 'MANAGER';
+  const homeRole = session.user?.role ?? 'STAFF';
+  const role = home ? homeRole : mine.data?.groupRole === 'GROUP_ADMIN' && homeRole === 'ADMIN' ? 'ADMIN' : 'MANAGER';
   const isManager = role !== 'STAFF';
   const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
   const readOnlyGroup = !home && mine.data?.groupRole === 'GROUP_VIEWER';
@@ -123,7 +124,7 @@ export function CrmWorkforce({ locationId: homeLocationId }: { locationId: strin
       </div>
       <div key={tenantId || 'home'}>
       {tab === 'team' && mine.data && <GroupStopCard mine={mine.data} />}
-      {tab === 'team' && <TeamTab isAdmin={isAdmin} actingRole={role} locations={mine.data?.dealerships.find((d) => d.tenantId === (home ? mine.data?.homeTenantId : tenantId))?.locations ?? []} />}
+      {tab === 'team' && <TeamTab isAdmin={isAdmin} actingRole={role} crossDealership={!home} locations={mine.data?.dealerships.find((d) => d.tenantId === (home ? mine.data?.homeTenantId : tenantId))?.locations ?? []} />}
       {tab === 'team' && <CostLimitsCard isAdmin={isAdmin} />}
       {tab === 'team' && <PolicyCard />}
       {tab === 'workspace' && <WorkspaceTab locationId={locationId} isManager={isManager} />}

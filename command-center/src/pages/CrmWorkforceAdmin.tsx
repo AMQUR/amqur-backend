@@ -55,13 +55,14 @@ type StaffRow = { id: string; email: string; firstName: string; lastName: string
 type Loc = { id: string; name: string };
 
 /** Team: invitations, password resets, deactivation and role changes for one dealership. */
-export function TeamTab({ isAdmin, actingRole, locations }: { isAdmin: boolean; actingRole: string; locations: Loc[] }) {
+export function TeamTab({ isAdmin, actingRole, locations, crossDealership = false }: { isAdmin: boolean; actingRole: string; locations: Loc[]; crossDealership?: boolean }) {
   const list = useAsync(() => api<StaffRow[]>(`${BASE}/admin/staff`), []);
   const a = useAct(() => void list.reload());
   const [link, setLink] = useState<{ who: string; url: string; expiresAt: string } | null>(null);
   const [form, setForm] = useState({ email: '', firstName: '', lastName: '', role: 'STAFF', locationId: locations.length === 1 ? locations[0].id : '', reason: '' });
   const me = session.user?.id;
-  const grantable = ROLES.filter((r) => RANK[r] <= (RANK[actingRole] ?? 0));
+  // In another group dealership, administrators are managed only by that dealership.
+  const grantable = ROLES.filter((r) => RANK[r] <= (RANK[actingRole] ?? 0) && !(crossDealership && r === 'ADMIN'));
   const show = (who: string, r: { link: string; expiresAt: string }) => setLink({ who, url: `${window.location.origin}${r.link}`, expiresAt: r.expiresAt });
 
   return (
@@ -79,7 +80,7 @@ export function TeamTab({ isAdmin, actingRole, locations }: { isAdmin: boolean; 
       {a.note}
       {isAdmin && (
         <Card title="Invite a person">
-          <p className="muted small">The account stays switched off until the person opens the link and sets a password. Granting Admin needs a written reason, which is kept in the audit ledger. You cannot grant a role above your own.</p>
+          <p className="muted small">The account stays switched off until the person opens the link and sets a password. Granting Admin needs a written reason, which is kept in the audit ledger. You cannot grant a role above your own.{crossDealership && ' In another group dealership you manage staff and managers only; its administrators are managed there.'}</p>
           <form
             className="row wrap"
             onSubmit={(e) => {
@@ -114,7 +115,7 @@ export function TeamTab({ isAdmin, actingRole, locations }: { isAdmin: boolean; 
             <thead><tr><th>Person</th><th>Role</th><th>Store</th><th>Status</th><th>Sign-in security</th>{isAdmin && <th>Actions</th>}</tr></thead>
             <tbody>{list.data.map((p) => {
               const self = p.id === me;
-              const higher = (RANK[p.role] ?? 0) > (RANK[actingRole] ?? 0);
+              const higher = (RANK[p.role] ?? 0) > (RANK[actingRole] ?? 0) || (crossDealership && (RANK[p.role] ?? 0) >= RANK.ADMIN);
               const can = isAdmin && !self && !higher;
               return (
                 <tr key={p.id}>

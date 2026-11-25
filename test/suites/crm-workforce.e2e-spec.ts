@@ -3297,6 +3297,87 @@ describe('CRM Workforce (e2e)', () => {
       await api('nissan', 'staff').get(`status?${ch}`).expect(403);
     });
 
+    it("a group administrator cannot take over another dealership's administrators or exceed their home role", async () => {
+      await ctx.prisma.dealerGroupMembership.create({
+        data: {
+          dealerGroupId: groupId,
+          userId: await nissanAdminId(),
+          role: 'GROUP_ADMIN',
+        },
+      });
+      const ch = `tenantId=${ids.chevy.tenantId}`;
+      const chevyAdmin = await ctx.prisma.user.findFirstOrThrow({
+        where: { tenantId: ids.chevy.tenantId, role: 'ADMIN' },
+      });
+      const chevyStaff = await ctx.prisma.user.findFirstOrThrow({
+        where: { tenantId: ids.chevy.tenantId, role: 'STAFF' },
+      });
+      // No reset link, deactivation or role change for the other dealership's administrator.
+      await api('nissan')
+        .post(`admin/staff/${chevyAdmin.id}/reset?${ch}`)
+        .expect(403);
+      await api('nissan')
+        .post(`admin/staff/${chevyAdmin.id}/deactivate?${ch}`)
+        .expect(403);
+      await api('nissan')
+        .post(`admin/staff/${chevyAdmin.id}/role?${ch}`, {
+          role: 'MANAGER',
+          locationId: ids.chevy.locationId,
+        })
+        .expect(403);
+      // No new administrators there either.
+      await api('nissan')
+        .post(`admin/staff/invite?${ch}`, {
+          email: 'invited-x@example.invalid',
+          firstName: 'X',
+          lastName: 'Y',
+          role: 'ADMIN',
+          reason: 'trying to add an admin',
+        })
+        .expect(403);
+      await api('nissan')
+        .post(`admin/staff/${chevyStaff.id}/role?${ch}`, {
+          role: 'ADMIN',
+          reason: 'trying to promote someone',
+        })
+        .expect(403);
+      // Lower roles can be managed.
+      await api('nissan')
+        .post(`admin/staff/invite?${ch}`, {
+          email: 'invited-y@example.invalid',
+          firstName: 'Y',
+          lastName: 'Z',
+          role: 'STAFF',
+          locationId: ids.chevy.locationId,
+        })
+        .expect(201);
+      // A manager at home with a GROUP_ADMIN membership acts only as a manager elsewhere.
+      const mgr = await ctx.prisma.user.findFirstOrThrow({
+        where: { tenantId: ids.nissan.tenantId, role: 'MANAGER' },
+      });
+      await ctx.prisma.dealerGroupMembership.create({
+        data: { dealerGroupId: groupId, userId: mgr.id, role: 'GROUP_ADMIN' },
+      });
+      await api('nissan', 'manager').get(`admin/staff?${ch}`).expect(200);
+      await api('nissan', 'manager')
+        .post(`admin/staff/invite?${ch}`, {
+          email: 'invited-z@example.invalid',
+          firstName: 'Z',
+          lastName: 'Q',
+          role: 'STAFF',
+          locationId: ids.chevy.locationId,
+        })
+        .expect(403);
+      // A STAFF account at home gets nothing elsewhere, whatever its membership.
+      const st = await ctx.prisma.user.findFirstOrThrow({
+        where: { tenantId: ids.nissan.tenantId, role: 'STAFF' },
+      });
+      await ctx.prisma.dealerGroupMembership.create({
+        data: { dealerGroupId: groupId, userId: st.id, role: 'GROUP_ADMIN' },
+      });
+      await api('nissan', 'staff').get(`status?${ch}`).expect(403);
+    });
+
     it('group stop halts every dealership in the group and needs a group administrator', async () => {
       await api('nissan')
         .post('admin/group-stop', { halted: true, reason: 'test' })

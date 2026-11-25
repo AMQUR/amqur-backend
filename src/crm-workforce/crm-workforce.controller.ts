@@ -312,7 +312,14 @@ export class CrmWorkforceController {
     };
   }
   private actor(u: AuthUser): Actor {
-    return { userId: u.sub, role: u.role, tenantId: u.tenantId };
+    const groupActing = !!(u as AuthUser & { groupActing?: object })
+      .groupActing;
+    return {
+      userId: u.sub,
+      role: u.role,
+      tenantId: u.tenantId,
+      ...(groupActing ? { groupActing } : {}),
+    };
   }
   private async requireEnabled(tenantId: string, locationId?: string | null) {
     const f = await this.flags.resolve(tenantId, locationId ?? undefined);

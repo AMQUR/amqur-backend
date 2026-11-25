@@ -33,6 +33,9 @@ export type StaffRole = 'STAFF' | 'MANAGER' | 'ADMIN';
  *  - A reset signs the person out everywhere and issues a fresh one-time link.
  *  - Nobody can grant a role above their own, change their own role, or switch themselves off.
  *    Granting ADMIN needs a written reason and is audited.
+ *  - Someone acting in another dealership through a group membership manages only roles below
+ *    ADMIN there: they cannot invite, reset, switch off or change an administrator, because a
+ *    reset link would hand them that administrator's full account.
  *  - Links are shown once to the administrator, who passes them on. No email is sent: the
  *    platform has no approved staff-email channel.
  */
@@ -118,6 +121,10 @@ export class CrmWfStaffService {
   private checkGrant(actor: Actor, role: StaffRole, reason?: string) {
     if (ROLE_RANK[role] > ROLE_RANK[actor.role])
       throw new ForbiddenException('cannot_grant_a_role_above_your_own');
+    if (actor.groupActing && ROLE_RANK[role] >= ROLE_RANK.ADMIN)
+      throw new ForbiddenException(
+        'administrators_are_managed_by_their_own_dealership',
+      );
     if (role === 'ADMIN' && (reason ?? '').trim().length < 10)
       throw new BadRequestException(
         'granting_admin_needs_a_reason_of_10_or_more_characters',
@@ -190,6 +197,10 @@ export class CrmWfStaffService {
     if (!u) throw new NotFoundException('staff_member_not_found');
     if (ROLE_RANK[u.role] > ROLE_RANK[actor.role])
       throw new ForbiddenException('cannot_manage_a_higher_role');
+    if (actor.groupActing && ROLE_RANK[u.role] >= ROLE_RANK.ADMIN)
+      throw new ForbiddenException(
+        'administrators_are_managed_by_their_own_dealership',
+      );
     return u;
   }
 

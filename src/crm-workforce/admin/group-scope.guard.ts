@@ -12,9 +12,12 @@ import { PrismaService } from '../../prisma/prisma.service';
  * A request may name another dealership with `?tenantId=`. Normally only a platform operator
  * may do that. This guard also allows it when the signed-in person has an explicit
  * DealerGroupMembership in a group that contains BOTH their own dealership and the requested
- * one. The request then runs as that dealership with the membership's authority:
- *   GROUP_ADMIN  → acts as ADMIN of the target dealership
+ * one. The request then runs as that dealership with the membership's authority, never more
+ * than the person holds at home (a home STAFF account gets no cross-dealership access):
+ *   GROUP_ADMIN  → acts as ADMIN of the target dealership (MANAGER if a manager at home)
  *   GROUP_VIEWER → acts as MANAGER, and only reads (GET); every write is refused
+ * Acting in another dealership never reaches its administrator accounts: staff management
+ * there is limited to roles below ADMIN (see CrmWfStaffService).
  * Without a membership, or for a dealership outside the group, the request is refused here.
  * Memberships are granted by the platform operator, never by this module.
  *
@@ -68,12 +71,17 @@ export class CrmWfGroupScopeGuard implements CanActivate {
     if (!m || !dest) throw new ForbiddenException('Cross-tenant access denied');
     if (m.role === 'GROUP_VIEWER' && req.method !== 'GET')
       throw new ForbiddenException('group_viewer_is_read_only');
+    // Never more authority elsewhere than at home.
+    if (u.role !== 'ADMIN' && u.role !== 'MANAGER')
+      throw new ForbiddenException('Cross-tenant access denied');
+    const role =
+      m.role === 'GROUP_ADMIN' && u.role === 'ADMIN' ? 'ADMIN' : 'MANAGER';
 
     // Act as the target dealership, tenant-wide. `sub` stays the real person for the audit log.
     req.user = {
       ...u,
       tenantId: dest.id,
-      role: m.role === 'GROUP_ADMIN' ? 'ADMIN' : 'MANAGER',
+      role,
       locationId: null,
       groupActing: { homeTenantId: u.tenantId, membership: m.role },
     };
