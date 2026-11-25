@@ -26,6 +26,8 @@ import { LeadDeliveryRouteService } from './adf/lead-delivery-route.service';
 import { LeadDeliveryOpsController } from './adf/lead-delivery-ops.controller';
 import { SandboxSinkTransport } from './adf/transports/sandbox-sink.transport';
 import { SmtpLeadTransport } from './adf/transports/smtp.transport';
+import { ResendLeadTransport } from './adf/transports/resend.transport';
+import { ResendDeliveryMonitorService } from './adf/resend-delivery-monitor.service';
 
 @Module({
   imports: [
@@ -56,6 +58,8 @@ import { SmtpLeadTransport } from './adf/transports/smtp.transport';
     TekionCrmWritebackService,
     SandboxSinkTransport,
     SmtpLeadTransport,
+    ResendLeadTransport,
+    ResendDeliveryMonitorService,
     LeadDeliveryRouteService,
     LeadDeliveryService,
     LeadAppointmentUpdateService,

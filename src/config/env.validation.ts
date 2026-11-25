@@ -271,9 +271,20 @@ export const envValidationSchema = Joi.object({
     .optional()
     .default('sink'),
   /** SMTP relay. Outside fully-gated live mode only a loopback host is accepted. */
+  /**
+   * Resend HTTPS API key for live lead mail. A secret: set only on the services that send
+   * (API + worker), never in the widget, a browser, Postgres or Redis.
+   */
+  RESEND_API_KEY: Joi.string().min(8).optional().allow(''),
+  /** Live transport. Default: `resend` when RESEND_API_KEY is set, else `smtp`. */
+  ADF_LIVE_TRANSPORT: Joi.string().valid('smtp', 'resend').optional().allow(''),
   ADF_SMTP_HOST: Joi.when('LEAD_DELIVERY_MODE', {
     is: 'live',
-    then: Joi.string().hostname().required(),
+    then: Joi.when('RESEND_API_KEY', {
+      is: Joi.string().min(8).required(),
+      then: Joi.string().optional().allow('').default('127.0.0.1'),
+      otherwise: Joi.string().hostname().required(),
+    }),
     otherwise: Joi.string().optional().allow('').default('127.0.0.1'),
   }),
   ADF_SMTP_PORT: Joi.number().port().optional().default(11025),

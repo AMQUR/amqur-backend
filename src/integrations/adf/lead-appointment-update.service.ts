@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import {
@@ -53,6 +53,7 @@ import {
 } from './transports/lead-delivery-transport';
 import { SandboxSinkTransport } from './transports/sandbox-sink.transport';
 import { SmtpLeadTransport } from './transports/smtp.transport';
+import { ResendLeadTransport } from './transports/resend.transport';
 
 /** Distinct from the lead topic on purpose: code that predates R8 has no handler for it. */
 export const LEAD_APPOINTMENT_UPDATE_TOPIC =
@@ -142,6 +143,7 @@ export class LeadAppointmentUpdateService implements OnModuleInit {
     private readonly metrics: MetricsService,
     private readonly sink: SandboxSinkTransport,
     private readonly smtp: SmtpLeadTransport,
+    @Optional() private readonly resend?: ResendLeadTransport,
   ) {}
 
   onModuleInit() {
@@ -757,7 +759,11 @@ export class LeadAppointmentUpdateService implements OnModuleInit {
     const sent = { id: u.id, tenantId: u.tenantId, status: 'SENT' as const };
 
     const transport: LeadDeliveryTransport =
-      gate.transport === 'smtp' ? this.smtp : this.sink;
+      gate.transport === 'resend'
+        ? (this.resend ?? new ResendLeadTransport())
+        : gate.transport === 'smtp'
+          ? this.smtp
+          : this.sink;
     let receipt: AcceptedReceipt;
     try {
       const r = await this.deliveries.sendWithinDeadline(

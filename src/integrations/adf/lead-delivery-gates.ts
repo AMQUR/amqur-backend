@@ -27,6 +27,10 @@ export type LeadDeliveryEnv = {
     user: string | null;
     pass: string | null;
   };
+  /** Live mail transport: the Resend HTTPS API when a key is configured, else SMTP. */
+  liveTransport: 'smtp' | 'resend';
+  /** RESEND_API_KEY. Server-side only; never logged, stored or returned. */
+  resendApiKey: string | null;
   fromAddress: string;
   providerName: string;
   maxBytes: number;
@@ -71,6 +75,13 @@ export function readLeadDeliveryEnv(
       user: str(env.ADF_SMTP_USER),
       pass: str(env.ADF_SMTP_PASS),
     },
+    liveTransport:
+      env.ADF_LIVE_TRANSPORT === 'smtp'
+        ? 'smtp'
+        : env.ADF_LIVE_TRANSPORT === 'resend' || str(env.RESEND_API_KEY)
+          ? 'resend'
+          : 'smtp',
+    resendApiKey: str(env.RESEND_API_KEY),
     fromAddress: str(env.ADF_FROM_ADDRESS) ?? ADF_SANDBOX_FROM,
     providerName: str(env.ADF_PROVIDER_NAME) ?? 'AMQUR AI',
     maxBytes: num(env.ADF_MAX_BYTES, ADF_DEFAULT_MAX_BYTES, 1024, 1024 * 1024),
@@ -151,7 +162,11 @@ export type BlockReason =
   | 'production_route_in_sandbox';
 
 export type GateDecision =
-  | { open: true; mode: 'sandbox' | 'live'; transport: 'sink' | 'smtp' }
+  | {
+      open: true;
+      mode: 'sandbox' | 'live';
+      transport: 'sink' | 'smtp' | 'resend';
+    }
   | { open: false; reason: BlockReason };
 
 /** Every gate is fail-closed; the first closed gate names the operator-visible reason. */
@@ -175,7 +190,7 @@ export function evaluateSendGates(i: GateInput): GateDecision {
       return { open: false, reason: 'route_not_production_environment' };
     if (r.productionEnabled !== true)
       return { open: false, reason: 'route_not_production_enabled' };
-    return { open: true, mode, transport: 'smtp' };
+    return { open: true, mode, transport: i.env.liveTransport };
   }
   // Production never uses a sandbox transport: a real lead "accepted" by the sink would look
   // delivered and would never be sent once live is switched on.
@@ -239,7 +254,7 @@ export type DestinationBlockReason =
  */
 export function checkDestinationForMode(p: {
   mode: 'sandbox' | 'live';
-  transport: 'sink' | 'smtp';
+  transport: 'sink' | 'smtp' | 'resend';
   destination: string;
   smtpHost: string;
   /** Hosted staging: a reserved test recipient is required whatever the sandbox transport. */

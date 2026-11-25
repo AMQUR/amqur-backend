@@ -606,3 +606,27 @@ Limits:
 | Route administration over HTTP | Not built on purpose | A release gate for who may verify and production-enable a route |
 | Appointment updates (R8) | No destination has confirmed how its CRM treats a follow-up for a lead it already holds; `appointmentUpdates` is `NONE` on every route | The store's CRM admin confirms the behaviour of a test follow-up in writing; then `setAppointmentUpdates` with that evidence |
 | Live send | Never exercised | All of the above, then a per-store canary |
+
+## Resend HTTPS transport (added 2026-11-25)
+
+Live mail can go over the Resend HTTPS API instead of SMTP (no outbound SMTP port needed).
+
+- `RESEND_API_KEY` (secret; API and worker services only) selects it. `ADF_LIVE_TRANSPORT=smtp|resend`
+  overrides. `ADF_FROM_ADDRESS` is the sender. With a key set, `ADF_SMTP_HOST` is not required.
+- `transports/resend.transport.ts`: `POST https://api.resend.com/emails`, plain-text body holding the
+  ADF document (no HTML part) or a base64 `lead.adf.xml` attachment for `XML_ATTACHMENT` routes,
+  one recipient, no CC/BCC. Live only, PRODUCTION routes only.
+- Idempotency: `Idempotency-Key: lead-delivery/<deliveryId>/<sha256(xml)[:32]>` (Resend de-duplicates
+  for 24 h), on top of the one-delivery-row-per-(lead, channel, route) key.
+- Receipt: `providerName=resend`, `providerMessageId` stays the durable Message-ID, and the Resend
+  email id is kept in `providerRawStatus` as `email_id=<uuid>`.
+- `resend-delivery-monitor.service.ts`: every 5 minutes, for live deliveries ACCEPTED by Resend in
+  the last 72 h, reads the email's `last_event`. `delivered` moves the row to `DELIVERED`;
+  `bounced`, `failed`, `suppressed`, `canceled` move it to `DEAD` (`provider_bounce`) and log an
+  operator warning. Needs a key that can read emails; a send-only key sends but is not monitored.
+- `DELIVERED` means the recipient's mail server took the message. It is not CRM evidence:
+  `CRM_MATCHED` still needs an explicit reconciliation with a CRM record reference.
+- Public lead collection (`leadCapture` capability) is refused in production unless live sending is
+  on, the store's `adfLeadDelivery` flag is on and its SALES route is PRODUCTION, enabled, verified
+  and production-enabled (`CapabilityService.leadDeliveryReady`).
+

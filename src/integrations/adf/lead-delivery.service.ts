@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
   OnModuleInit,
+  Optional,
 } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -59,6 +60,7 @@ import { LeadDeliveryRouteService } from './lead-delivery-route.service';
 import {
   LeadDeliveryTransport,
   LeadTransportError,
+  sanitizeProviderStatus,
   SEND_DEADLINE_CODE,
   TransportReceipt,
 } from './transports/lead-delivery-transport';
@@ -66,6 +68,7 @@ import { HANDSET_CONSENT_SOURCES } from '../../messaging/handset-opt-out';
 import { SandboxSinkTransport } from './transports/sandbox-sink.transport';
 import { redactForLog } from '../../common/security/sensitive-data';
 import { SmtpLeadTransport } from './transports/smtp.transport';
+import { ResendLeadTransport } from './transports/resend.transport';
 
 export const LEAD_DELIVERY_TOPIC = 'lead.delivery.adf';
 /**
@@ -178,6 +181,7 @@ export class LeadDeliveryService implements OnModuleInit {
     private readonly metrics: MetricsService,
     private readonly sink: SandboxSinkTransport,
     private readonly smtp: SmtpLeadTransport,
+    @Optional() private readonly resend?: ResendLeadTransport,
   ) {}
 
   onModuleInit() {
@@ -832,7 +836,11 @@ export class LeadDeliveryService implements OnModuleInit {
 
     const live = gate.mode === 'live';
     const transport: LeadDeliveryTransport =
-      gate.transport === 'smtp' ? this.smtp : this.sink;
+      gate.transport === 'resend'
+        ? (this.resend ?? new ResendLeadTransport())
+        : gate.transport === 'smtp'
+          ? this.smtp
+          : this.sink;
     let receipt: AcceptedReceipt;
     try {
       const r = await this.sendWithinDeadline(env.sendDeadlineMs, () =>
@@ -1268,6 +1276,44 @@ export class LeadDeliveryService implements OnModuleInit {
       );
     }
     return requeued;
+  }
+
+  /**
+   * Record what the mail provider later reported for an ACCEPTED delivery: delivered to the
+   * recipient's mail server, or bounced/failed. Neither says anything about the CRM. Returns
+   * false when the row had already moved on.
+   */
+  async recordProviderOutcome(
+    d: Pick<LeadDelivery, 'id' | 'tenantId' | 'status'>,
+    outcome: 'delivered' | 'bounced',
+    providerEventId: string,
+    rawStatus: string,
+  ): Promise<boolean> {
+    const moved =
+      outcome === 'delivered'
+        ? await this.apply(
+            this.prisma,
+            d,
+            'DELIVERED',
+            { kind: 'provider_delivery_callback', providerEventId },
+            { data: { providerRawStatus: sanitizeProviderStatus(rawStatus) } },
+          )
+        : await this.apply(
+            this.prisma,
+            d,
+            'DEAD',
+            { kind: 'provider_bounce', providerEventId },
+            {
+              reasonCode: 'provider_bounce',
+              data: {
+                providerRawStatus: sanitizeProviderStatus(rawStatus),
+                lastErrorCode: 'provider_bounce',
+                lastErrorAt: new Date(),
+              },
+            },
+          );
+    if (moved) this.metrics.increment(`adf.delivery.provider_${outcome}`);
+    return moved;
   }
 
   @Cron(CronExpression.EVERY_5_MINUTES)
