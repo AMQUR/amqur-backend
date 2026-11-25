@@ -169,3 +169,34 @@ export function duration(seconds: number | null | undefined): string {
   if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
   return `${(seconds / 3600).toFixed(1)} h`;
 }
+
+export function eligibilityTone(status: string): Tone {
+  if (status === 'ELIGIBLE') return 'ok';
+  if (status === 'NEEDS_CONSENT_REVIEW' || status === 'PAUSED' || status === 'DUPLICATE') return 'warn';
+  return 'bad';
+}
+
+const ITEM_LABEL: Record<string, string> = {
+  APPOINTMENT_REQUEST: 'Appointment request',
+  APPOINTMENT_RESCHEDULE: 'Appointment change',
+  APPOINTMENT_CANCEL: 'Appointment cancellation',
+  APPOINTMENT_CONFIRM: 'Appointment to confirm',
+  CRM_NOTE: 'Note for the CRM',
+  FOLLOW_UP: 'Follow-up',
+  ESCALATION: 'Customer needs a person',
+  QUALIFIED_BUYER: 'Ready buyer',
+  SERVICE_REQUEST: 'Service request',
+  PARTS_INQUIRY: 'Parts inquiry',
+};
+export const itemLabel = (kind: string) => ITEM_LABEL[kind] ?? kind.replace(/_/g, ' ').toLowerCase();
+
+/** An item an employee closed is their statement — never shown as confirmed by the CRM. */
+const ITEM_STATUS: Record<string, string> = {
+  OPEN: 'requested',
+  IN_PROGRESS: 'being handled',
+  STAFF_CONFIRMED: 'done in CRM (employee)',
+  CRM_VERIFIED: 'confirmed by CRM',
+  DECLINED: 'not needed',
+  CANCELLED: 'cancelled',
+};
+export const itemStatusLabel = (status: string) => ITEM_STATUS[status] ?? status.replace(/_/g, ' ').toLowerCase();

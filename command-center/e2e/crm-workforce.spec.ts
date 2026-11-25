@@ -22,14 +22,48 @@ test('CRM Workforce shows honest states, blocked connectors, and a working kill 
   await expect(page.getByText('DEMO DATA — synthetic records')).toBeVisible();
   await expect(page.getByText('Customer sending: OFF')).toBeVisible();
 
-  // Drafts explain in plain words why the system cannot send them.
-  await page.getByRole('tab', { name: 'Draft approvals' }).click();
-  await expect(page.getByText('The system cannot send this.').first()).toBeVisible();
-  await expect(page.getByText('Communication policy has not been approved by counsel').first()).toBeVisible();
+  // Today: the employee's queue opens first, most urgent queue first.
+  await expect(page.getByRole('button', { name: /Unanswered customer messages/ })).toBeVisible();
+  const customers = page.getByRole('list', { name: 'Customers' });
+  await expect(customers).toBeVisible();
+  await customers.getByRole('button').first().click();
+  await expect(page.getByRole('heading', { name: 'Conversation' })).toBeVisible();
+  await expect(page.getByText('Nothing is sent from here.')).toBeVisible();
+  // No phone number or email is ever shown, only the last four digits.
   await expect(page.locator('main')).not.toContainText(/@example\.invalid|\+1312555/);
 
-  // Queues: escalations and consent review are visible.
-  await page.getByRole('tab', { name: 'Conversations and queues' }).click();
+  // An appointment is a request for staff, and says so.
+  const when = new Date(Date.now() + 3 * 86_400_000);
+  when.setHours(11, 0, 0, 0);
+  const local = new Date(when.getTime() - when.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+  await page.getByLabel('Requested time').fill(local);
+  await page.getByRole('button', { name: 'Request appointment' }).click();
+  await expect(page.getByText('Appointment request created.')).toBeVisible();
+  await page.getByRole('tab', { name: 'Appointments and follow-ups' }).click();
+  const item = page.locator('tr', { hasText: 'Appointment request' }).first();
+  await expect(item).toContainText('requested');
+  await expect(item).not.toContainText(/confirmed|booked/i);
+  // "Done in the CRM" needs the CRM's own reference.
+  await expect(item.getByRole('button', { name: 'Done in the CRM' })).toBeDisabled();
+
+  // Lead recovery: every row says whether anything forbids contact.
+  await page.getByRole('tab', { name: 'Lead recovery' }).click();
+  await page.getByRole('button', { name: /90–119 days old/ }).click();
+  await expect(page.getByRole('table')).toContainText(/needs consent review|suppressed|eligible/);
+
+  // Imports are gated on a recorded authorisation.
+  await page.getByRole('tab', { name: 'Data imports' }).click();
+  await expect(page.getByText(/CRM export connection is not switched on/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Preview' })).toBeDisabled();
+
+  // Roster: eighteen roles, none shown as running while the engine is off.
+  await page.getByRole('tab', { name: 'AI workforce' }).click();
+  await expect(page.getByText('Group AI Operations Director')).toBeVisible();
+  await expect(page.locator('section.card', { hasText: 'Workforce roster' }).locator('tbody tr')).toHaveCount(18);
+  await expect(page.locator('section.card', { hasText: 'Workforce roster' })).not.toContainText(/\brunning\b/);
+
+  // Automation queue: escalations and consent review are visible.
+  await page.getByRole('tab', { name: 'Automation queue' }).click();
   await page.getByRole('button', { name: 'Human handoffs' }).click();
   await expect(page.getByRole('table')).toContainText(/escalated/);
   await page.getByRole('button', { name: 'Consent review' }).click();

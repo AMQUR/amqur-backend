@@ -62,8 +62,6 @@ export class CrmWfLeadControlService {
   }
 
   async resume(actor: Actor, scope: Scope, leadId: string) {
-    if (!['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(actor.role))
-      throw new ForbiddenException('resume_requires_manager');
     const lead = await this.prisma.crmWfLead.findFirst({
       where: {
         id: leadId,
@@ -72,6 +70,13 @@ export class CrmWfLeadControlService {
       },
     });
     if (!lead) throw new NotFoundException('lead_not_found');
+    // The employee who took the conversation can hand it back; anyone else needs a manager.
+    // A lead paused by an escalation (no person took it) always needs a manager.
+    const isManager = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(actor.role);
+    if (!isManager && lead.pausedByUserId !== actor.userId)
+      throw new ForbiddenException(
+        'only_the_owner_or_a_manager_can_return_this',
+      );
     return this.prisma.$transaction(async (tx) => {
       // Clearing lastProcessedHash lets the next sync re-plan the lead from its current state.
       const row = await tx.crmWfLead.update({

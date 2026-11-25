@@ -150,7 +150,7 @@ export type WorkflowAuthorization = {
   documentRef: string;
   authorizedBy: string;
   authorizedAt: string;
-  /** CRM account / sender identity the workflow may act as. */
+  /** The CRM connection the workflow may act through (the connector's adapter key). */
   account: string;
   department: 'SALES' | 'SERVICE' | 'PARTS';
   /** The single operation allowed, e.g. "message.sms.send". */

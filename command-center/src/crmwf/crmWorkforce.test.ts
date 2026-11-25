@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { actionLabel, actionTone, blockText, capabilityTone, countTasks, duration, sendingState, usd, workforceState, type Status } from './crmWorkforce';
+import { actionLabel, actionTone, blockText, capabilityTone, countTasks, duration, eligibilityTone, itemLabel, itemStatusLabel, sendingState, usd, workforceState, type Status } from './crmWorkforce';
 
 const base: Status = { featureFlag: true, processEnabled: true, externalSendEnv: false, emergencyStopEnv: false, globalHalted: false, controls: [], workers: [{ workerId: 'w', role: 'worker', state: 'RUNNING', lastBeatAt: '', startedAt: '' }], connectors: [] };
 const loc = (p: object) => ({ id: 'c', scope: 'LOCATION', scopeKey: 'L', tenantId: 't', locationId: 'l1', department: null, subjectKey: null, halted: false, mode: 'SUPERVISED' as const, externalSendEnabled: true, reason: null, updatedAt: '', ...p });
@@ -60,5 +60,20 @@ describe('CRM Workforce view logic', () => {
     expect(duration(45)).toBe('45s');
     expect(duration(600)).toBe('10 min');
     expect(countTasks(null, () => true)).toBe(0);
+  });
+
+  it('an appointment an employee booked is never shown as confirmed by the CRM', () => {
+    expect(itemStatusLabel('OPEN')).toBe('requested');
+    expect(itemStatusLabel('STAFF_CONFIRMED')).toBe('done in CRM (employee)');
+    expect(itemStatusLabel('STAFF_CONFIRMED')).not.toMatch(/confirmed/);
+    expect(itemStatusLabel('CRM_VERIFIED')).toBe('confirmed by CRM');
+    expect(itemLabel('APPOINTMENT_REQUEST')).toBe('Appointment request');
+    expect(itemLabel('SOMETHING_NEW')).toBe('something new');
+  });
+
+  it('only a lead with nothing against it is shown as eligible', () => {
+    expect(eligibilityTone('ELIGIBLE')).toBe('ok');
+    expect(eligibilityTone('NEEDS_CONSENT_REVIEW')).toBe('warn');
+    for (const s of ['SUPPRESSED', 'DO_NOT_CONTACT', 'NO_CONTACT_DETAILS']) expect(eligibilityTone(s)).toBe('bad');
   });
 });

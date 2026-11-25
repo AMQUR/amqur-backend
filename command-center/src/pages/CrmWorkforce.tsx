@@ -2,20 +2,25 @@ import { useState, type ReactNode } from 'react';
 import { api, session } from '../api';
 import { ago, fmtDate, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, Stat } from '../ui';
+import { DirectorCard, ImportsTab, MiningTab, PrivacyCard, ReportsCard, RosterCard, WorkItemsTab, WorkspaceTab } from './CrmWorkforceOps';
 import {
   BASE, MODES, OPEN_TASK, QUEUES, actionLabel, actionTone, blockText, capabilityTone, countTasks, duration, inQueue, leadName, modeLabel,
   priorityLabel, sendingState, usd, vehicleText, workforceState,
   type Action, type Mode, type Overview, type QueueId, type Status, type Task,
 } from '../crmwf/crmWorkforce';
 
-type Tab = 'overview' | 'queues' | 'drafts' | 'workforce' | 'controls' | 'compliance' | 'connections' | 'training' | 'performance' | 'audit';
+type Tab = 'workspace' | 'items' | 'mining' | 'imports' | 'overview' | 'queues' | 'drafts' | 'workforce' | 'controls' | 'compliance' | 'connections' | 'training' | 'performance' | 'audit';
 const TABS: Array<{ id: Tab; label: string; managers?: boolean }> = [
+  { id: 'workspace', label: 'Today' },
+  { id: 'items', label: 'Appointments and follow-ups' },
+  { id: 'mining', label: 'Lead recovery' },
   { id: 'overview', label: 'Overview' },
-  { id: 'queues', label: 'Conversations and queues' },
+  { id: 'queues', label: 'Automation queue' },
   { id: 'drafts', label: 'Draft approvals' },
   { id: 'workforce', label: 'AI workforce' },
   { id: 'controls', label: 'Modes and kill switches' },
   { id: 'compliance', label: 'Compliance', managers: true },
+  { id: 'imports', label: 'Data imports', managers: true },
   { id: 'connections', label: 'CRM connections and workers' },
   { id: 'training', label: 'Agent training', managers: true },
   { id: 'performance', label: 'Performance and costs', managers: true },
@@ -56,7 +61,7 @@ export function CrmWorkforce({ locationId }: { locationId: string }) {
   const role = session.user?.role ?? 'STAFF';
   const isManager = role !== 'STAFF';
   const isAdmin = role === 'ADMIN' || role === 'SUPER_ADMIN';
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>('workspace');
   const status = useAsync(() => api<Status>(`${BASE}/status?${qs(locationId)}`), [locationId]);
   const overview = useAsync(() => api<Overview>(`${BASE}/overview?${qs(locationId)}`), [locationId]);
   const reload = () => {
@@ -101,14 +106,22 @@ export function CrmWorkforce({ locationId }: { locationId: string }) {
           <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'btn' : 'btn btn--ghost'} onClick={() => setTab(t.id)}>{t.label}</button>
         ))}
       </div>
+      {tab === 'workspace' && <WorkspaceTab locationId={locationId} isManager={isManager} />}
+      {tab === 'items' && <WorkItemsTab locationId={locationId} />}
+      {tab === 'mining' && <MiningTab locationId={locationId} />}
+      {tab === 'imports' && <ImportsTab locationId={locationId} connected={!!s?.connectors.find((c) => c.adapterKey === 'export_import')?.connections.some((x) => x.locationId === locationId && x.enabled)} />}
+      {tab === 'overview' && isManager && <DirectorCard locationId={locationId} />}
       {tab === 'overview' && <OverviewTab overview={overview.data} status={s} go={setTab} isManager={isManager} />}
       {tab === 'queues' && <QueuesTab locationId={locationId} />}
       {tab === 'drafts' && <DraftsTab locationId={locationId} isManager={isManager} />}
+      {tab === 'workforce' && <RosterCard locationId={locationId} />}
       {tab === 'workforce' && <WorkforceTab locationId={locationId} isAdmin={isAdmin} />}
       {tab === 'controls' && s && <ControlsTab status={s} locationId={locationId} isManager={isManager} isAdmin={isAdmin} reload={reload} />}
       {tab === 'compliance' && <ComplianceTab isAdmin={isAdmin} />}
-      {tab === 'connections' && s && <ConnectionsTab status={s} locationId={locationId} isAdmin={isAdmin} isManager={isManager} reload={reload} />}
+      {tab === 'compliance' && isAdmin && <PrivacyCard />}
+      {tab === 'connections' && s && <ConnectionsTab status={s} locationId={locationId} isAdmin={isAdmin} reload={reload} />}
       {tab === 'training' && <TrainingTab locationId={locationId} />}
+      {tab === 'performance' && <ReportsCard locationId={locationId} />}
       {tab === 'performance' && <PerformanceTab locationId={locationId} />}
       {tab === 'audit' && <AuditTab locationId={locationId} />}
     </div>
@@ -417,12 +430,9 @@ function ComplianceTab({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
-function ConnectionsTab({ status: s, locationId, isAdmin, isManager, reload }: { status: Status; locationId: string; isAdmin: boolean; isManager: boolean; reload: () => void }) {
+function ConnectionsTab({ status: s, locationId, isAdmin, reload }: { status: Status; locationId: string; isAdmin: boolean; reload: () => void }) {
   const a = useAct(reload);
   const [ref, setRef] = useState('');
-  const [csv, setCsv] = useState('');
-  const [exportedAt, setExportedAt] = useState('');
-  const [result, setResult] = useState<string | null>(null);
   return (
     <div className="stack">
       {a.note}
@@ -454,18 +464,7 @@ function ConnectionsTab({ status: s, locationId, isAdmin, isManager, reload }: {
                 <button className="btn btn--ghost" disabled={a.busy || (!conn?.enabled && c.requiresAuthorization && ref.trim().length < 3)} onClick={() => void a.act(() => post('connectors', { locationId, adapterKey: c.adapterKey, enabled: !conn?.enabled, authorizationRef: ref.trim() || undefined }), conn?.enabled ? 'Disconnected.' : 'Connected.')}>{conn?.enabled ? 'Disconnect' : 'Connect'}</button>
               </span>
             )}
-            {c.adapterKey === 'export_import' && conn?.enabled && isManager && locationId && (
-              <div className="stack">
-                <p className="small">Import a lead export from the CRM (CSV). Files containing Social Security, licence, date-of-birth, credit, income or bank columns are refused.</p>
-                <label className="small">Export file<input type="file" accept=".csv,text/csv" onChange={(e) => { const f = e.target.files?.[0]; if (f) void f.text().then(setCsv); }} /></label>
-                <label className="small">When was it exported?<input type="datetime-local" value={exportedAt} onChange={(e) => setExportedAt(e.target.value)} /></label>
-                <button className="btn" disabled={a.busy || !csv || !exportedAt} onClick={() => void a.act(async () => {
-                  const r = await post<{ summary: { received: number; created: number; updated: number; unchanged: number; tasksQueued: number; suppressed: number }; rejectedRows: unknown[] }>('import', { locationId, csv, exportedAt: new Date(exportedAt).toISOString(), authorizationRef: conn.authorizationRef ?? 'on record' });
-                  setResult(`${r.summary.received} rows read: ${r.summary.created} new, ${r.summary.updated} updated, ${r.summary.unchanged} unchanged, ${r.summary.suppressed} suppressed, ${r.summary.tasksQueued} queued for work, ${r.rejectedRows.length} rejected.`);
-                }, 'Import finished.')}>Import</button>
-                {result && <p role="status">{result}</p>}
-              </div>
-            )}
+            {c.adapterKey === 'export_import' && conn?.enabled && <p className="muted small">Upload exports under Data imports.</p>}
           </Card>
         );
       })}

@@ -29,7 +29,11 @@ import { prioritize } from './intelligence/prioritization';
 import { evaluateCompliance } from './policy/compliance.engine';
 import { escalationFor, standingOptOuts } from './policy/inbound-signals';
 import { CrmWfSuppressionService } from './suppression.service';
-import { auditSafe, CrmWfVaultService } from './vault.service';
+import {
+  auditSafe,
+  CrmWfVaultService,
+  STAFF_ENTERED_PREFIX,
+} from './vault.service';
 import { CrmWfWorkItemService } from './work-item.service';
 
 type Scope = { tenantId: string; locationId: string | null };
@@ -178,10 +182,18 @@ export class CrmWfAssistService {
       },
     });
     if (!lead) throw new NotFoundException('lead_not_found');
+    // Same gate as entering a lead: the rooftop must have the workforce on.
+    const flags = await this.flags.resolve(lead.tenantId, lead.locationId);
+    if (!flags[CRM_WORKFORCE_FLAG])
+      throw new ForbiddenException(
+        'crm_workforce_not_enabled_for_this_rooftop',
+      );
     const text = p.text.trim().slice(0, 2000);
     if (!text) throw new BadRequestException('message_text_required');
     const at = new Date();
-    const sourceRecordId = `staff:${actor.userId}:${at.getTime()}`;
+    // The prefix records that an employee typed this in. Such a message can inform a draft,
+    // but it is never evidence enough for the system to send on its own.
+    const sourceRecordId = `${STAFF_ENTERED_PREFIX}${actor.userId}:${at.getTime()}`;
     await this.prisma.$transaction(async (tx) => {
       await tx.crmWfMessage.create({
         data: {

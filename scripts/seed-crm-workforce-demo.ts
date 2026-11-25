@@ -179,7 +179,7 @@ async function main() {
       scopeKey: `L:${tenant.id}:${loc.id}`,
       tenantId: tenant.id,
       locationId: loc.id,
-      mode: 'SUPERVISED',
+      mode: 'ASSIST',
       externalSendEnabled: false,
       reason: 'demo seed',
     },
@@ -200,6 +200,15 @@ async function main() {
       enabled: true,
       status: 'READY',
       statusReason: 'synthetic_data',
+    },
+  });
+  await prisma.crmWfConnector.create({
+    data: {
+      ...scope,
+      adapterKey: 'manual_assist',
+      enabled: true,
+      status: 'READY',
+      statusReason: 'no_system_connection',
     },
   });
 

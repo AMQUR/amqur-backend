@@ -710,7 +710,7 @@ export class CrmWorkforceController {
   ) {
     return this.leads.pause(this.actor(u), this.scope(u, t), id, dto.reason);
   }
-  @Roles(...MANAGERS)
+  @Roles(...STAFF)
   @Post('leads/:id/resume')
   resume(
     @CurrentUser() u: AuthUser,

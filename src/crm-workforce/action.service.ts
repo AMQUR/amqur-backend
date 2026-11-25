@@ -22,7 +22,11 @@ import { Channel, WorkflowKey } from './crm-workforce.types';
 import { CrmWfFactsService } from './facts.service';
 import { evaluateCompliance, localMinutes } from './policy/compliance.engine';
 import { hhmmToMin, isCompleteAuthorization } from './policy/controls';
-import { auditSafe, CrmWfVaultService } from './vault.service';
+import {
+  auditSafe,
+  CrmWfVaultService,
+  STAFF_ENTERED_PREFIX,
+} from './vault.service';
 
 type Scope = { tenantId: string; locationId: string | null };
 
@@ -280,40 +284,77 @@ export class CrmWfActionService {
         mins >= hhmmToMin(permit.window.end)
       )
         return block('permit_outside_operating_window');
-      const auto = {
-        tenantId: a.tenantId,
-        locationId: a.locationId,
-        approvedByUserId: null,
-        sideEffect: 'EXTERNAL' as const,
-        id: { not: a.id },
-        status: {
-          in: [
-            'SENT_UNVERIFIED',
-            'UNCERTAIN',
-            'VERIFIED',
-          ] as CrmWfActionStatus[],
-        },
-        payload: { path: ['workflow'], equals: payload.workflow ?? '' },
-      };
-      const [today, thisCustomer] = await Promise.all([
-        this.prisma.crmWfAction.count({
+      // The permit names the connection it may act through and the consent it relies on.
+      if (permit.account !== a.adapterKey)
+        return block('permit_account_mismatch');
+      if (
+        !input.consent.allowed ||
+        (input.consent.purpose !== permit.consentRequired &&
+          input.consent.purpose !== 'MARKETING')
+      )
+        return block('permit_consent_requirement_not_met');
+      // A message an employee typed in is not CRM evidence: the system does not send on it
+      // without a person's approval, and a hand-entered lead is never worked autonomously.
+      const lastInbound = lead.messages
+        .filter((m) => m.direction === 'INBOUND')
+        .sort((x, y) => y.occurredAt.getTime() - x.occurredAt.getTime())[0];
+      if (
+        lead.adapterKey === 'manual_assist' ||
+        lastInbound?.sourceRecordId.startsWith(STAFF_ENTERED_PREFIX)
+      )
+        return block('permit_requires_crm_sourced_conversation');
+      // Volume limits are reserved atomically: one advisory lock per rooftop + workflow, and
+      // actions that are mid-send count, so two workers cannot both take the last slot.
+      const lockKey = `crmwf-permit:${a.locationId}:${payload.workflow ?? ''}`;
+      const over = await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`;
+        const auto = {
+          tenantId: a.tenantId,
+          locationId: a.locationId,
+          approvedByUserId: null,
+          sideEffect: 'EXTERNAL' as const,
+          id: { not: a.id },
+          status: {
+            in: [
+              'EXECUTING',
+              'SENT_UNVERIFIED',
+              'UNCERTAIN',
+              'VERIFIED',
+            ] as CrmWfActionStatus[],
+          },
+          payload: { path: ['workflow'], equals: payload.workflow ?? '' },
+        };
+        const today = await tx.crmWfAction.count({
           where: {
             ...auto,
             updatedAt: { gte: new Date(now.getTime() - 86_400_000) },
           },
-        }),
-        this.prisma.crmWfAction.count({
+        });
+        const thisCustomer = await tx.crmWfAction.count({
           where: {
             ...auto,
             crmLeadId: lead.id,
             updatedAt: { gte: new Date(now.getTime() - 7 * 86_400_000) },
           },
-        }),
-      ]);
-      if (today >= permit.dailyLimit)
-        return block('permit_daily_limit_reached');
-      if (thisCustomer >= permit.maxPerCustomerPerWeek)
-        return block('permit_customer_weekly_limit_reached');
+        });
+        const reason =
+          today >= permit.dailyLimit
+            ? 'permit_daily_limit_reached'
+            : thisCustomer >= permit.maxPerCustomerPerWeek
+              ? 'permit_customer_weekly_limit_reached'
+              : null;
+        // Leaving EXECUTING inside the lock is what frees the slot for the next caller.
+        if (reason)
+          await tx.crmWfAction.updateMany({
+            where: { id: a.id, status: 'EXECUTING' },
+            data: { status: 'BLOCKED', statusReason: reason },
+          });
+        return reason;
+      });
+      if (over) {
+        await this.audit(a, 'crmwf.action.blocked', null, { reason: over });
+        return current();
+      }
     }
 
     const req: WriteRequest = {

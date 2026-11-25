@@ -2652,7 +2652,7 @@ describe('CRM Workforce (e2e)', () => {
       documentRef: 'TEST-PERMIT-1',
       authorizedBy: 'test-gm',
       authorizedAt: new Date(Date.now() - 3_600_000).toISOString(),
-      account: 'fixture-service-account',
+      account: 'fixture',
       department: 'SALES',
       operation: 'message.sms.send',
       audience: 'customers who wrote in, with SMS consent',
@@ -2722,7 +2722,7 @@ describe('CRM Workforce (e2e)', () => {
     });
 
     it("sends within a complete permit, verifies it, and stops at the permit's daily limit", async () => {
-      (await setup()).status === 201 || fail('permit not accepted');
+      expect((await setup()).status).toBe(201);
       await inbound();
       const r1 = await tick();
       expect(r1.outcomes.sent_autonomously).toBe(1);
@@ -2737,6 +2737,91 @@ describe('CRM Workforce (e2e)', () => {
         status: 'BLOCKED',
         statusReason: 'permit_daily_limit_reached',
       });
+      expect(adapters.fixture.executeCalls).toBe(1);
+    });
+
+    it.each([
+      [
+        'another connection',
+        { account: 'tekion_browser' },
+        'permit_account_mismatch',
+      ],
+      [
+        'a different consent type',
+        { consentRequired: 'TRANSACTIONAL' },
+        'permit_consent_requirement_not_met',
+      ],
+    ])(
+      'a permit naming %s does not cover this send',
+      async (_n, over, reason) => {
+        await setup(over);
+        await inbound();
+        await tick();
+        expect((await actionsOf('nissan'))[0]).toMatchObject({
+          status: 'BLOCKED',
+          statusReason: reason,
+        });
+        expect(adapters.fixture.executeCalls).toBe(0);
+      },
+    );
+
+    it('a customer message typed in by an employee never triggers an autonomous send', async () => {
+      await setup();
+      const r = rec({ outboundHoursAgo: 5 });
+      await grant('nissan', r.phone!);
+      await intake.ingest(scope('nissan'), 'fixture', [r]);
+      const lead = await ctx.prisma.crmWfLead.findFirstOrThrow({
+        where: { tenantId: ids.nissan.tenantId },
+      });
+      await api('nissan', 'staff')
+        .post(`leads/${lead.id}/messages`, {
+          direction: 'INBOUND',
+          text: 'hi, any update?',
+        })
+        .expect(201);
+      await tick();
+      expect((await actionsOf('nissan'))[0]).toMatchObject({
+        status: 'BLOCKED',
+        statusReason: 'permit_requires_crm_sourced_conversation',
+      });
+      expect(adapters.fixture.executeCalls).toBe(0);
+    });
+
+    it('two workers racing for the last permit slot send exactly one message', async () => {
+      await setup({ dailyLimit: 1, maxPerCustomerPerWeek: 1 });
+      await api('nissan')
+        .post('controls', {
+          scope: 'LOCATION',
+          locationId: ids.nissan.locationId,
+          mode: 'SUPERVISED',
+          reason: 'draft only',
+        })
+        .expect(201);
+      await inbound();
+      await inbound();
+      await tick();
+      await api('nissan')
+        .post('controls', {
+          scope: 'LOCATION',
+          locationId: ids.nissan.locationId,
+          mode: 'CONTROLLED_AUTONOMOUS',
+          reason: 'back',
+        })
+        .expect(201);
+      const pending = await actionsOf('nissan');
+      expect(pending.map((x) => x.status)).toEqual([
+        'PENDING_APPROVAL',
+        'PENDING_APPROVAL',
+      ]);
+      await ctx.prisma.crmWfAction.updateMany({
+        where: { tenantId: ids.nissan.tenantId },
+        data: { status: 'APPROVED' },
+      });
+      await Promise.all(pending.map((x) => actions.execute(x.id)));
+      expect((await actionsOf('nissan')).map((x) => x.status).sort()).toEqual([
+        'BLOCKED',
+        'VERIFIED',
+      ]);
       expect(adapters.fixture.executeCalls).toBe(1);
     });
 

@@ -156,6 +156,9 @@ export class CrmWfVaultService {
   }
 }
 
+/** Source id prefix of a message an employee typed in (not read from the CRM). */
+export const STAFF_ENTERED_PREFIX = 'staff:';
+
 /** Is this contact a reserved test value that cannot belong to a real person? */
 export function isReservedTestContact(c: {
   phone?: string | null;
