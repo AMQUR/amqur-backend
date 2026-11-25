@@ -14,7 +14,7 @@ import { Throttle } from '@nestjs/throttler';
 import { randomUUID } from 'crypto';
 import type { Response } from 'express';
 import { ChatService } from './chat.service';
-import { ChatDto } from './dto/chat.dto';
+import { ChatDto, HandoffClickDto } from './dto/chat.dto';
 import { ConversationIdService } from './conversation-id.service';
 import { RawResponse } from '../common/decorators/raw-response.decorator';
 import { MetricsService } from '../observability/metrics.service';
@@ -37,6 +37,7 @@ import {
 import { rateLimit } from '../common/rate-limits';
 import { createHash } from 'crypto';
 import { ConfigCacheService } from '../cache/config-cache.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 /** Widget turns allowed per client address. Env-tunable; the test profile is effectively open. */
 export function visitorTurnCaps(env: NodeJS.ProcessEnv = process.env): {
@@ -84,6 +85,7 @@ export class ChatController {
     private readonly conversationIds: ConversationIdService,
     private readonly metrics: MetricsService,
     private readonly cache: ConfigCacheService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -177,6 +179,41 @@ export class ChatController {
       conversationId: isWidget ? conversationKey : undefined,
       conversationIdIssued: !!issued,
     };
+  }
+
+  /**
+   * Conversion analytics from the widget: a click on a dealership card button (inventory,
+   * service, finance, trade, directions, call). Widget tokens only, tenant taken from the
+   * token, values from fixed vocabularies, nothing personal. Always answers 204.
+   */
+  @Throttle({ default: { limit: rateLimit(60, 10_000), ttl: 60_000 } })
+  @Post('event')
+  @HttpCode(204)
+  async event(
+    @Req() req: ChatRequest,
+    @Body() body: HandoffClickDto,
+  ): Promise<void> {
+    const user = req.user;
+    if (!user?.tenantId || user.role !== 'widget')
+      throw new UnauthorizedException();
+    const conversationKey = this.conversationIds.verify(
+      user.tenantId,
+      body.conversationId,
+    )
+      ? body.conversationId!
+      : null;
+    void this.analytics.trackEvent(
+      user.tenantId,
+      user.locationId ?? null,
+      'handoff_click',
+      {
+        storeId: body.storeId,
+        linkKey: body.linkKey,
+        call: body.linkKey.startsWith('call'),
+      },
+      conversationKey,
+    );
+    this.metrics.increment(`chat.handoff_click.${body.linkKey}`);
   }
 
   @Throttle(CHAT_THROTTLE)

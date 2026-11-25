@@ -224,3 +224,40 @@ export class ChatDto {
   @Type(() => AppointmentSelectionDto)
   appointment?: AppointmentSelectionDto;
 }
+
+/**
+ * A shopper clicked a button on a dealership card. No free text and no personal data: a store
+ * id and a link key from fixed vocabularies.
+ */
+export class HandoffClickDto {
+  @IsIn(['handoff_click'])
+  type: string;
+
+  @IsString()
+  @Matches(/^[a-z0-9-]{1,30}$/)
+  storeId: string;
+
+  @IsIn([
+    'home',
+    'newInventory',
+    'usedInventory',
+    'certifiedInventory',
+    'specials',
+    'serviceDepartment',
+    'scheduleService',
+    'parts',
+    'finance',
+    'tradeValue',
+    'contact',
+    'directions',
+    'callSales',
+    'callService',
+    'callParts',
+  ])
+  linkKey: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  conversationId?: string;
+}

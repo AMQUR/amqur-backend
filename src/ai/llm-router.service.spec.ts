@@ -176,6 +176,82 @@ describe('LlmRouterService', () => {
     expect((await r.status()).budgetExhausted).toBe(true);
   });
 
+  describe('per-website token limit with a shared global limit', () => {
+    const make = (env: Record<string, string>) => {
+      const a = provider('anthropic', async () => ({ text: 'ok' }));
+      (a.generate as jest.Mock).mockImplementation(async () => ({
+        text: 'ok',
+        provider: 'anthropic',
+        model: 'm',
+        latencyMs: 1,
+        inputTokens: 600,
+        outputTokens: 400,
+      }));
+      const o = provider('openai', async () => ({ text: 'ok' }), false);
+      return new LlmRouterService(
+        a as never,
+        o as never,
+        metrics as never,
+        memCache() as never,
+        {
+          get: (k: string) =>
+            k === 'LLM_PRIMARY_PROVIDER' ? 'anthropic' : env[k],
+        } as never,
+      );
+    };
+    const call = (r: LlmRouterService, tenantId?: string) =>
+      r.route({ messages: [{ role: 'user', content: 'hi' }], tenantId });
+
+    it('stops one website at its own limit while the others keep answering', async () => {
+      const r = make({
+        LLM_DAILY_TOKEN_BUDGET: '100000',
+        LLM_TENANT_DAILY_TOKEN_BUDGET: '2000',
+      });
+      // 1,000 tokens per call: the third call would start at 2,000 used
+      expect((await call(r, 'jeep')).ok).toBe(true);
+      expect((await call(r, 'jeep')).ok).toBe(true);
+      expect(await call(r, 'jeep')).toMatchObject({
+        ok: false,
+        reason: 'budget_exhausted',
+      });
+      // another website is unaffected
+      expect((await call(r, 'nissan')).ok).toBe(true);
+      // and the shared limit is not reported as exhausted
+      expect((await r.status()).budgetExhausted).toBe(false);
+    });
+
+    it('the shared limit stops every website, even one under its own limit', async () => {
+      const r = make({
+        LLM_DAILY_TOKEN_BUDGET: '3000',
+        LLM_TENANT_DAILY_TOKEN_BUDGET: '2000',
+      });
+      expect((await call(r, 'jeep')).ok).toBe(true);
+      expect((await call(r, 'jeep')).ok).toBe(true);
+      expect((await call(r, 'nissan')).ok).toBe(true); // 3,000 used in total
+      expect(await call(r, 'infiniti')).toMatchObject({
+        ok: false,
+        reason: 'budget_exhausted',
+      });
+      expect((await r.status()).budgetExhausted).toBe(true);
+    });
+
+    it('with no per-website limit set, only the shared limit applies', async () => {
+      const r = make({ LLM_DAILY_TOKEN_BUDGET: '2500' });
+      expect((await call(r, 'jeep')).ok).toBe(true);
+      expect((await call(r, 'jeep')).ok).toBe(true);
+      expect((await call(r, 'jeep')).ok).toBe(true); // 3,000 used
+      expect((await call(r, 'jeep')).ok).toBe(false);
+    });
+
+    it('calls with no tenant count against the shared limit only', async () => {
+      const r = make({
+        LLM_DAILY_TOKEN_BUDGET: '100000',
+        LLM_TENANT_DAILY_TOKEN_BUDGET: '1000',
+      });
+      for (let i = 0; i < 4; i += 1) expect((await call(r)).ok).toBe(true);
+    });
+  });
+
   it('defaults to a finite budget when unset (spend is never unbounded)', async () => {
     const off = provider('openai', async () => ({ text: 'x' }), false);
     const r = new LlmRouterService(

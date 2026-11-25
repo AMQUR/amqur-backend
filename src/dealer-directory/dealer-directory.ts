@@ -223,6 +223,48 @@ export function dealerDirectoryFor(
   return null;
 }
 
+const STORE_WORDS: Array<{ ids: string[]; re: RegExp }> = [
+  { ids: ['chevy'], re: /\bchev(?:y|rolet)\b/i },
+  { ids: ['nissan'], re: /\bnissan\b/i },
+  { ids: ['infiniti'], re: /\binfiniti\b/i },
+  {
+    ids: ['cdjr-north'],
+    re: /\bjeep of chicago\b|\bnorth(?:\s+side)?\b[^.?!\n]{0,24}\b(?:jeep|cdjr|store|dealer)|\b(?:jeep|cdjr|store)\b[^.?!\n]{0,24}\bnorth\b|\b5950\b/i,
+  },
+  {
+    ids: ['cdjr-south'],
+    re: /\bdial (?:cdjr|jeep|chrysler)\b|\bsouth(?:\s+side)?\b[^.?!\n]{0,24}\b(?:jeep|cdjr|store|dealer)|\b(?:jeep|cdjr|store)\b[^.?!\n]{0,24}\bsouth\b|\b7340\b/i,
+  },
+  // A brand sold at both Chrysler Dodge Jeep Ram stores names both; never one of them.
+  {
+    ids: ['cdjr-north', 'cdjr-south'],
+    re: /\b(?:jeep|ram|dodge|chrysler|cdjr)\b/i,
+  },
+];
+
+/**
+ * The stores a message names, in directory order. A specific store ("Jeep of Chicago", "the
+ * South Side CDJR") wins over a shared brand word; "Jeep" alone returns both Jeep stores.
+ * Empty when the message names none.
+ */
+export function storesNamedIn(
+  message: string,
+  stores: readonly DealerStore[],
+): DealerStore[] {
+  const hit = new Set<string>();
+  let specificCdjr = false;
+  for (const w of STORE_WORDS) {
+    if (!w.re.test(message)) continue;
+    if (w.ids.length === 1) {
+      hit.add(w.ids[0]);
+      if (w.ids[0].startsWith('cdjr-')) specificCdjr = true;
+    } else if (!specificCdjr) {
+      for (const id of w.ids) hit.add(id);
+    }
+  }
+  return stores.filter((d) => hit.has(d.sourceRecordId));
+}
+
 export type DealerFocus =
   | 'new'
   | 'used'

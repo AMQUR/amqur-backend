@@ -68,6 +68,7 @@ import {
   DEALER_DIRECTORY_PHONE_DIGITS,
   buildDealershipCard,
   dealerDirectoryFor,
+  storesNamedIn,
   type DealerFocus,
   type DealerStore,
   type DealershipCard,
@@ -790,6 +791,13 @@ export class ChatOrchestrator {
           asOf: new Date().toISOString(),
         };
         this.metrics.increment('chat.page_vehicle.received');
+        void this.analytics.trackEvent(
+          tenantId,
+          s.locationId,
+          'vehicle_page_context',
+          { condition: v.condition ?? null, make: v.make ?? null },
+          s.externalKey,
+        );
       } else if (pc.pageType) {
         st.pageVehicle = undefined;
       }
@@ -1420,14 +1428,27 @@ export class ChatOrchestrator {
 
     const lang = t.lang === 'es' ? 'es' : 'en';
     t.cards = t.cards.filter((c) => c.kind !== 'dealership');
-    for (const d of directory.stores)
-      t.cards.push(buildDealershipCard(d, 'visit', lang));
+    // "A person at the Nissan store": only that store's card. No store named: every store
+    // this conversation can show.
+    const named = storesNamedIn(t.message, directory.stores);
+    const shown = named.length ? named : directory.stores;
+    for (const d of shown) t.cards.push(buildDealershipCard(d, 'visit', lang));
+    void this.analytics.trackEvent(
+      t.tenantId,
+      t.locationId,
+      'direct_contact_shown',
+      {
+        stores: shown.map((d) => d.sourceRecordId),
+        typedContact: flags.typedContact,
+      },
+      t.s.externalKey,
+    );
     t.sources.add('dealer_directory');
     t.handled.add('HUMAN_HANDOFF');
     t.handled.add('PROVIDE_CONTACT');
     t.lockReply = true;
     this.metrics.increment('chat.direct_contact_instead');
-    const one = directory.stores.length === 1;
+    const one = shown.length === 1;
     const reply = flags.typedContact
       ? tr(
           t.lang,
@@ -1551,6 +1572,14 @@ export class ChatOrchestrator {
           t.cards.push(buildDealershipCard(p, focus, lang));
         t.sources.add('dealer_directory');
         this.metrics.increment('chat.dealer_directory.cards', picked.length);
+        // Conversion analytics: which store handoffs were put in front of the shopper.
+        void this.analytics.trackEvent(
+          t.tenantId,
+          t.locationId,
+          'handoff_cards_shown',
+          { stores: picked.map((p) => p.sourceRecordId), focus },
+          t.s.externalKey,
+        );
         return Promise.resolve(
           JSON.stringify({
             shown: picked.map((p) => ({

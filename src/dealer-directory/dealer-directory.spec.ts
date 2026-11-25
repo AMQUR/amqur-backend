@@ -3,6 +3,7 @@ import {
   DEALER_FOCUSES,
   buildDealershipCard,
   dealerDirectoryFor,
+  storesNamedIn,
 } from './dealer-directory';
 
 describe('dealer directory', () => {
@@ -90,5 +91,28 @@ describe('dealer directory', () => {
     expect(
       buildDealershipCard(chevy, 'certified', 'en').links.map((l) => l.key),
     ).not.toContain('certifiedInventory');
+  });
+
+  it('finds the stores a message names, keeping the Jeep stores apart', () => {
+    const ids = (m: string) =>
+      storesNamedIn(m, group.group).map((d) => d.sourceRecordId);
+    expect(ids('Can I talk to a person at the Nissan store?')).toEqual([
+      'nissan',
+    ]);
+    expect(ids('someone from Dial Chevy please')).toEqual(['chevy']);
+    expect(ids('call me from INFINITI')).toEqual(['infiniti']);
+    expect(ids('I want the Jeep of Chicago team')).toEqual(['cdjr-north']);
+    expect(ids('the south side Jeep store')).toEqual(['cdjr-south']);
+    expect(ids('a person at the North Side CDJR')).toEqual(['cdjr-north']);
+    // a shared brand names both stores, never one of them
+    expect(ids('I need a Jeep salesperson')).toEqual([
+      'cdjr-south',
+      'cdjr-north',
+    ]);
+    expect(ids('who do I call about a Ram?')).toEqual([
+      'cdjr-south',
+      'cdjr-north',
+    ]);
+    expect(ids('I want to speak with a salesperson')).toEqual([]);
   });
 });
