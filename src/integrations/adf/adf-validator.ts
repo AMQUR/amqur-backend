@@ -14,6 +14,7 @@ export type AdfParsedSummary = {
   lastName: string | null;
   email: string | null;
   phone: string | null;
+  postalCode: string | null;
   comments: string | null;
   vehicleCount: number;
 };
@@ -155,6 +156,10 @@ export function validateAdfXml(
       lastName: namePart('last'),
       email: text(asArray(contact.email)[0]),
       phone: text(asArray(contact.phone)[0]),
+      postalCode: text(
+        (asArray(contact.address)[0] as Record<string, any> | undefined)
+          ?.postalcode,
+      ),
       comments: text(customer.comments),
       vehicleCount: vehicles.length,
     },
@@ -188,6 +193,7 @@ export function validateAdfRoundTrip(
     !same(want.lastName, got.lastName) ||
     !same(want.email, got.email) ||
     !same(want.phone, got.phone) ||
+    !same(want.postalCode, got.postalCode) ||
     !same(want.comments, got.comments)
   )
     return { ok: false, code: 'adf_round_trip_mismatch' };

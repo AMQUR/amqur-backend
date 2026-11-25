@@ -12,6 +12,7 @@ export type MapperLead = {
   lastName: string | null;
   email: string | null;
   phone: string | null;
+  zipCode?: string | null;
   interestedVin: string | null;
   interestedStock: string | null;
   preferredContact: string | null;
@@ -146,6 +147,7 @@ export function mapLeadToAdf(p: {
       phone: lead.phone ?? undefined,
       // Never label a number textable when the customer's standing for text is not an opt-in.
       phoneType: standing.text === true ? 'cellphone' : 'voice',
+      postalCode: lead.zipCode ?? undefined,
     },
     comments: {
       department: p.department,

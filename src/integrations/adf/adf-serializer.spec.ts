@@ -536,4 +536,28 @@ describe('ADF comments — customer text cannot forge server-asserted segments',
     expect(comments.match(/Appointment: /g)).toHaveLength(1);
     expect(comments.match(/Consent: /g)).toHaveLength(1);
   });
+
+  describe('ZIP code', () => {
+    const base = fixtureDto(0);
+    it('is written as address/postalcode and survives the round trip', () => {
+      const dto = {
+        ...base,
+        customer: { ...base.customer, postalCode: '60659' },
+      };
+      const xml = serializeAdf(dto);
+      expect(xml).toContain('<postalcode>60659</postalcode>');
+      expect(xml.indexOf('<address>')).toBeGreaterThan(
+        xml.indexOf('<contact>'),
+      );
+      expect(xml.indexOf('</address>')).toBeLessThan(xml.indexOf('</contact>'));
+      const res = validateAdfRoundTrip(dto, xml);
+      expect(res.ok && res.summary.postalCode).toBe('60659');
+    });
+    it('is omitted when missing or not a US ZIP', () => {
+      for (const postalCode of [undefined, '', 'abc', '6065', '<x>60659'])
+        expect(
+          serializeAdf({ ...base, customer: { ...base.customer, postalCode } }),
+        ).not.toContain('<address>');
+    });
+  });
 });

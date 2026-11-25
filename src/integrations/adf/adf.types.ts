@@ -29,6 +29,8 @@ export type AdfCustomer = {
   email?: string;
   phone?: string;
   phoneType?: AdfPhoneType;
+  /** US ZIP (5 digits or ZIP+4), written as `<address><postalcode>`. Omitted when unknown. */
+  postalCode?: string;
 };
 
 /**

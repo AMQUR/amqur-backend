@@ -103,6 +103,12 @@ export function sanitizePhone(value: unknown): string {
   return s.trim().slice(0, MAX.phone);
 }
 
+/** US ZIP code: `60659` or `60659-1234`. Anything else is omitted, never guessed. */
+export function sanitizePostalCode(value: unknown): string {
+  const s = sanitizeAdfText(value, 16).trim();
+  return /^\d{5}(?:-\d{4})?$/.test(s) ? s : '';
+}
+
 function sanitizeVin(value: unknown): string {
   const s = sanitizeAdfText(value, 32).toUpperCase();
   return /^[A-Z0-9]{11,17}$/.test(s) ? s : '';
@@ -239,6 +245,7 @@ export function normalizedAdfFields(dto: AdfLeadDto) {
     lastName: sanitizeAdfText(dto.customer.lastName, MAX.name),
     email: sanitizeEmail(dto.customer.email),
     phone: sanitizePhone(dto.customer.phone),
+    postalCode: sanitizePostalCode(dto.customer.postalCode),
     comments: buildAdfComments(dto.comments),
   };
 }
@@ -290,6 +297,12 @@ export function serializeAdf(
     const type = dto.customer.phoneType === 'cellphone' ? 'cellphone' : 'voice';
     lines.push(el('        ', 'phone', f.phone, ` type="${type}"`));
   }
+  if (f.postalCode)
+    lines.push(
+      '        <address>',
+      el('          ', 'postalcode', f.postalCode),
+      '        </address>',
+    );
   lines.push('      </contact>');
   lines.push(el('      ', 'comments', f.comments));
   lines.push(
