@@ -122,20 +122,35 @@ export function guardDraft(i: GuardInput): GuardViolation[] {
  * (a subject of several words) was still rejected; a determiner plus up to three words is
  * now allowed as the subject.
  */
+/** Words that cannot be part of a vehicle noun phrase ("that works for you", "this suits you"). */
+const NOT_NOUN =
+  /^(?:i|you|we|they|he|she|it|me|us|them|is|are|was|were|be|been|do|does|did|works?|suits?|likes?|wants?|needs?|comes?|goes?|sounds?|helps?|for|to|with|by|of|at|on|in|and|or|if|whether|not|no|so)$/i;
+
 function claimsAvailability(text: string): boolean {
   const re = new RegExp(AVAILABILITY.source, 'gi');
   for (let m = re.exec(text); m; m = re.exec(text)) {
     const before =
       text
-        .slice(Math.max(0, m.index - 30), m.index)
+        .slice(Math.max(0, m.index - 40), m.index)
         .split(/[.!?;,]|\b(?:and|but|so|or|then)\b/i)
         .pop() ?? '';
-    // The matched phrase itself may start with "it's"/"is"; what precedes must END in if/whether
-    // (optionally followed by "it"/"we"/"they").
-    if (
-      /\b(?:if|whether)\s+(?:(?:it'?s|it is|it|we|they|(?:the|that|this|your)(?:\s+[\w-]+){1,3})\s+)?$/i.test(
+    // 1. "if"/"whether" directly, optionally with it/we/they: "check if it's still available".
+    if (/\b(?:if|whether)\s+(?:(?:it'?s|it is|it|we|they)\s+)?$/i.test(before))
+      continue;
+    // 2. "if"/"whether" + a short noun phrase + "is/are": "whether the white Rogue is still
+    //    here". The subject must be nouns/adjectives only (no pronoun or verb), and the claim
+    //    must begin with the copula — so "if that works for you it's available" stays a claim.
+    const np =
+      /\b(?:if|whether)\s+(?:the|that|this|your)((?:\s+[\w-]+){1,3})\s+$/i.exec(
         before,
-      )
+      );
+    if (
+      np &&
+      /^(?:is|are)\b/i.test(m[0]) &&
+      np[1]
+        .trim()
+        .split(/\s+/)
+        .every((w) => !NOT_NOUN.test(w))
     )
       continue;
     return true;

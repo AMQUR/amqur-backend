@@ -135,6 +135,10 @@ describe('draft output guard', () => {
       "If you like, it's still available and ready.",
       'I checked and it is still available.',
       "If you like it's still available.",
+      "If that works for you it's still available.",
+      'If that works for you it is still available.',
+      'If this suits you we have it.',
+      'If the timing works for you it is still here.',
       'Whether you buy or not the white Rogue is still available.',
     ])
       expect(g(bad)).toContain('unsourced_availability');
