@@ -112,23 +112,27 @@ export function guardDraft(i: GuardInput): GuardViolation[] {
 }
 
 /**
- * An availability CLAIM, not an availability QUESTION. "I'll check whether it's still
- * available" or "let me see if we still have it" is the right answer when stock is unverified,
- * so a match preceded by if / whether / check / confirm / see in the same clause is not a claim.
+ * An availability CLAIM, not an availability QUESTION. Only a match introduced directly by
+ * "if" or "whether" — "I'll check if it's still available", "whether we still have it" — is
+ * exempt. Anything else ("I can confirm it is still available", "Whether you come today or
+ * tomorrow, it's available") is a claim. Commas and conjunctions end the clause, so an earlier
+ * "whether" cannot reach across them. Fails closed.
  * Found in the staging rehearsal: the strict form rejected the reply to the most common
  * customer question.
  */
 function claimsAvailability(text: string): boolean {
   const re = new RegExp(AVAILABILITY.source, 'gi');
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    const clause =
+    const before =
       text
-        .slice(Math.max(0, m.index - 40), m.index)
-        .split(/[.!?;]/)
+        .slice(Math.max(0, m.index - 30), m.index)
+        .split(/[.!?;,]|\b(?:and|but|so|or|then)\b/i)
         .pop() ?? '';
+    // The matched phrase itself may start with "it's"/"is"; what precedes must END in if/whether
+    // (optionally followed by "it"/"we"/"they").
     if (
-      /\b(if|whether|check|checking|confirm|confirming|verify|see|find out|look into|ask)\b/i.test(
-        clause,
+      /\b(?:if|whether)\s+(?:(?:it'?s|it is|it|we|they|the \w+)\s+)?$/i.test(
+        before,
       )
     )
       continue;

@@ -118,15 +118,20 @@ describe('draft output guard', () => {
   it('an offer to check availability is not a claim of availability', () => {
     for (const ok of [
       "I'll check whether it's still available and get back to you.",
-      'Let me confirm it is still available for you.',
-      "I'll have the team see if we still have it on the lot.",
-      'I can find out if it is currently in stock.',
+      "I'll have the team see if it is still available.",
+      'I can find out if we have it on the lot.',
+      "Let me check if it's currently in stock.",
     ])
       expect(g(ok)).not.toContain('unsourced_availability');
     for (const bad of [
       'Yes, it is still available.',
       "Good news, it's available. Come see it.",
       'We have it on the lot today.',
+      'I can confirm it is still available.',
+      'Let me confirm it is still available for you.',
+      "Whether you come today or tomorrow, it's available.",
+      "If you like, it's still available and ready.",
+      'I checked and it is still available.',
     ])
       expect(g(bad)).toContain('unsourced_availability');
   });
