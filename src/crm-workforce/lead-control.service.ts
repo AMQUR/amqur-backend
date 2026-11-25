@@ -32,14 +32,20 @@ export class CrmWfLeadControlService {
       },
     });
     if (!lead) throw new NotFoundException('lead_not_found');
+    const escalated =
+      lead.agentPaused && (lead.pausedReason ?? '').startsWith('escalated:');
     return this.prisma.$transaction(async (tx) => {
       const row = await tx.crmWfLead.update({
         where: { id: leadId },
-        data: {
-          agentPaused: true,
-          pausedReason: reason.slice(0, 200),
-          pausedByUserId: actor.userId,
-        },
+        // An escalation marker is never overwritten by a later takeover: a lead that was
+        // paused because it needs a manager's decision stays that way until a manager returns it.
+        data: escalated
+          ? { agentPaused: true }
+          : {
+              agentPaused: true,
+              pausedReason: reason.slice(0, 200),
+              pausedByUserId: actor.userId,
+            },
       });
       await this.suppression.cancelOpenWork(
         tx,
@@ -73,7 +79,8 @@ export class CrmWfLeadControlService {
     // The employee who took the conversation can hand it back; anyone else needs a manager.
     // A lead paused by an escalation (no person took it) always needs a manager.
     const isManager = ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(actor.role);
-    if (!isManager && lead.pausedByUserId !== actor.userId)
+    const escalated = (lead.pausedReason ?? '').startsWith('escalated:');
+    if (!isManager && (escalated || lead.pausedByUserId !== actor.userId))
       throw new ForbiddenException(
         'only_the_owner_or_a_manager_can_return_this',
       );

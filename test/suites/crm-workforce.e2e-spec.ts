@@ -917,6 +917,44 @@ describe('CRM Workforce (e2e)', () => {
       expect(await actionsOf('nissan')).toHaveLength(1);
     });
 
+    it('the employee who took a customer can hand it back; an escalated customer needs a manager', async () => {
+      await openGates('nissan', 'ASSIST');
+      await intake.ingest(scope('nissan'), 'fixture', [
+        rec({
+          sourceRecordId: 'TAKE-1',
+          inbound: 'any update?',
+          outboundHoursAgo: 5,
+        }),
+        rec({
+          sourceRecordId: 'ESC-1',
+          inbound: 'This is a scam and I am filing a complaint',
+          outboundHoursAgo: 5,
+        }),
+      ]);
+      await tick();
+      const lead = (id: string) =>
+        ctx.prisma.crmWfLead.findFirstOrThrow({
+          where: { tenantId: ids.nissan.tenantId, sourceRecordId: id },
+        });
+      const take = await lead('TAKE-1');
+      await api('nissan', 'staff')
+        .post(`leads/${take.id}/takeover`, { reason: 'mine' })
+        .expect(201);
+      await api('nissan', 'staff').post(`leads/${take.id}/resume`).expect(201);
+      expect((await lead('TAKE-1')).agentPaused).toBe(false);
+      // Escalated: taking it over does not let staff clear the escalation by handing it back.
+      const esc = await lead('ESC-1');
+      expect(esc.pausedReason).toContain('escalated:');
+      await api('nissan', 'staff').post(`leads/${esc.id}/resume`).expect(403);
+      await api('nissan', 'staff')
+        .post(`leads/${esc.id}/takeover`, { reason: 'I will call them' })
+        .expect(201);
+      expect((await lead('ESC-1')).pausedReason).toContain('escalated:');
+      await api('nissan', 'staff').post(`leads/${esc.id}/resume`).expect(403);
+      await api('nissan', 'manager').post(`leads/${esc.id}/resume`).expect(201);
+      expect((await lead('ESC-1')).agentPaused).toBe(false);
+    });
+
     it('an active human conversation is not interrupted', async () => {
       await openGates('nissan');
       const r = rec({

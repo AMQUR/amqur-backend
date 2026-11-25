@@ -2,24 +2,28 @@
 
 An additive division of the AMQUR backend that works CRM leads for a dealership: it reads leads through a CRM adapter, decides which need attention, drafts short replies through the existing model gateway, and — only where every gate allows — sends them. It does not replace or touch the Dial Concierge.
 
-**Status as of 2026-11-25:** implemented and tested locally on branch `feat/crm-workforce`. Not deployed. No CRM is connected. No customer has been contacted. Customer sending cannot be turned on by this code alone (see [What must be true before a message is sent](#what-must-be-true-before-a-message-is-sent)).
+**Status as of 2026-11-25:** implemented and tested locally on branch `feat/crm-workforce` (pull request AMQUR/amqur-backend#56, draft). Not deployed. No CRM is connected. No customer has been contacted. Customer sending cannot be turned on by this code alone (see [What must be true before a message is sent](#what-must-be-true-before-a-message-is-sent)).
+
+Related documents in `docs/crm-workforce/`: `TEKION_CAPABILITY_MAP.md`, `RELEASE_PLAN.md`, `APPROVAL_REGISTER.md`, `IMPLEMENTATION_LEDGER.md`, `NISSAN_PILOT.md`.
 
 ## What is on and what is off
 
 | Capability | Status | Why |
 |---|---|---|
-| Policy core, queue, supervisor, action pipeline, Command Center screens | DEMO | Proven by tests against the synthetic fixture CRM only |
-| Dealership CRM export import (CSV, read-only) | NOT TESTED | Implemented; never run on a real export |
-| Employee-assisted workflow (staff sends in the CRM, confirms here) | NOT TESTED | Implemented; never used by staff |
-| Tekion APC (authorized API) | BLOCKED | No spec, scopes, sandbox or credentials issued; the adapter has no HTTP client |
-| Tekion CRM browser operations | BLOCKED | No written automation permission on record; the adapter has no browser driver and no selectors |
-| Customer SMS / email sending | BLOCKED | No approved channel provider, no counsel-approved policy, no authorization |
-| Appointment booking | BLOCKED | No scheduling provider; agents may only pass a requested time to staff |
+| Policy core, queue, supervisor, action pipeline, Command Center | DEMO | Proven by tests against synthetic data only |
+| Employee-assisted workspace (Mode A) | DEMO | Built and tested; no employee has used it |
+| CRM export import (Mode B) | DEMO | Tested on synthetic files; never run on a real export; real files refused until a rooftop is authorized |
+| Appointment / follow-up / note requests | DEMO | Internal requests for staff; nothing is written to the CRM |
+| Lead-mining queues, roster, reports | DEMO | Deterministic queries over the mirror |
+| Tekion APC (authorized API) | BLOCKED | No spec, scopes, sandbox or credentials; the adapter has no HTTP client |
+| Tekion browser operations (Mode C) | BLOCKED | No written automation permission; a contract exists, no driver or selectors |
+| System SMS / email sending | BLOCKED | No sending connector, no counsel-approved policy |
+| Appointment booking and availability | BLOCKED | No scheduling source; requests only |
 
 ## How it is kept apart from the concierge
 
 - New code lives in `src/crm-workforce/`. The only edits to existing files are: one import in `app.module.ts`, one default-off flag in `feature-flags.service.ts`, one env-gated interval in `worker.ts`, one nav entry in the Command Center.
-- Twelve new tables, all prefixed `CrmWf`. The migration (`20261125090000_crm_workforce`) creates tables, enums and indexes only; it alters no existing table.
+- Fifteen new tables, all prefixed `CrmWf`. The migration (`20261125090000_crm_workforce`) creates tables, enums and indexes only; it alters no existing table.
 - It registers no handler in the existing outbox, adds no public endpoint, and changes no widget or chat route.
 - Reused, not duplicated: model gateway (`LlmRouterService`), consent ledger (`ConsentService`), store hours, inventory feed, feature flags, turn locks, circuit breaker, staff auth and roles, `AuditLog`, Command Center.
 
@@ -30,6 +34,9 @@ All default off. Read at decision time, so a change takes effect on the next che
 | Switch | Where | Effect |
 |---|---|---|
 | `crmWorkforce` | Tenant / Location feature flag | Lets a rooftop be configured and worked |
+| `crmWorkforceRealImports` | Tenant / Location feature flag | Lets a rooftop import exports containing real customer contacts |
+| `CRM_WORKFORCE_DATA_KEY` | API + worker env | Key for sealing contact data (falls back to the platform integration key) |
+| `CRM_WORKFORCE_DAILY_DRAFT_LIMIT`, `CRM_WORKFORCE_DAILY_BUDGET_MICRO_USD` | API + worker env | Model calls (default 500) and model spend (default off) per rooftop per day |
 | `CRM_WORKFORCE_ENABLED=true` | Worker env | Starts the engine loop in the worker process |
 | `CRM_WORKFORCE_EXTERNAL_SEND_ENABLED=true` | API + worker env | Deployment-level permission to send; nothing sends without it |
 | `CRM_WORKFORCE_EMERGENCY_STOP=true` | Env | Halts everything, no database needed |
@@ -63,6 +70,24 @@ An opt-out (STOP, unsubscribe, "stop texting me", wrong number) anywhere in the 
 ## Message statuses
 
 `DRAFT`, `PENDING_APPROVAL`, `APPROVED`, `EXECUTING`, `SENT_UNVERIFIED`, `UNCERTAIN`, `VERIFIED`, `STAFF_CONFIRMED`, `BLOCKED`, `FAILED`, `REJECTED`, `CANCELLED` are different things. Only `VERIFIED` (the adapter re-read the CRM and found the message) is shown as sent. `STAFF_CONFIRMED` is an employee's statement. An unknown result is `UNCERTAIN`; it is reconciled against the CRM before any retry, and a retry reuses the same idempotency key.
+
+## Customer data
+
+- Phone, email, last name and message text are sealed with AES-256-GCM before they are stored. Lookups, duplicate detection and suppression use a keyed hash, so no contact value appears in a query or an index. Without a key nothing can be stored.
+- Lists show a first name, a last initial and the last four digits of the phone. The full phone and email are never returned to the browser; employees already have them in the CRM.
+- The model receives first name, vehicle, department and the conversation — never phone, email, last name or another customer's data. Customer text has links removed and instruction-like lines neutralized first.
+- Export and erase for one customer are admin-only and audited. Erase keeps the suppression (a hash), so an opt-out outlives the data. A daily purge removes mirror rows older than `Tenant.dataRetentionDays` unless `legalHold` is set.
+- Audit entries and stored error text have contact details removed.
+- Imports refuse files with Social Security, licence, date-of-birth, credit, income or bank columns.
+- Not done: production backup/restore drill (existing blocker B-11); key rotation; inclusion of these tables in the platform-wide privacy export.
+
+## Employee-assisted operation (Mode A)
+
+An employee enters the minimum context for a customer (or picks one from an imported queue), asks for a reply, edits it, sends it from the CRM as themselves, and records that they did. The draft is written in the employee's voice and never calls itself a virtual assistant. Anything the system could not confirm (no consent on record, no contact details) is shown as a warning; an opt-out, a CRM do-not-contact or a paused lead is a refusal. A message an employee typed in can inform a draft but is never enough for the system to send on its own.
+
+## Work items
+
+Appointments, follow-ups, CRM notes, escalations and buyer alerts are requests for a person. `OPEN` → `IN_PROGRESS` → `STAFF_CONFIRMED` (the employee's statement; an appointment needs the CRM's own reference). `CRM_VERIFIED` exists for a future connector read-back; nothing can set it today. A requested time is checked against verified store hours; slot availability is unknown to this system.
 
 ## Agents
 

@@ -468,7 +468,11 @@ export class CrmWfSupervisorService {
     await this.prisma.$transaction(async (tx) => {
       await tx.crmWfLead.update({
         where: { id: leadId },
-        data: { agentPaused: true, pausedReason: `escalated:${reason}` },
+        data: {
+          agentPaused: true,
+          pausedReason: `escalated:${reason}`,
+          pausedByUserId: null,
+        },
       });
       await tx.crmWfAction.updateMany({
         where: {
