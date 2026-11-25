@@ -1219,6 +1219,16 @@ describe('CRM Workforce (e2e)', () => {
       expect(claimed.map((t) => t.priority)).toEqual([0, 1, 2, 7]);
     });
 
+    it('a task stamped slightly ahead of the database clock is still claimed; a deferred one is not', async () => {
+      await intake.ingest(scope('nissan'), 'fixture', [rec(), rec()]);
+      const [soon, later] = await tasksOf('nissan');
+      // App clock ahead of DB clock by 2s (the skew that made fresh tasks invisible to claim).
+      await ctx.prisma.crmWfTask.update({ where: { id: soon.id }, data: { nextAttemptAt: new Date(Date.now() + 2_000) } });
+      await ctx.prisma.crmWfTask.update({ where: { id: later.id }, data: { nextAttemptAt: new Date(Date.now() + 120_000) } });
+      const claimed = await queue.claim(10, 'w-skew', 120_000, [ids.nissan.tenantId]);
+      expect(claimed.map((t) => t.id)).toEqual([soon.id]);
+    });
+
     it('two workers never claim the same task', async () => {
       await intake.ingest(
         scope('nissan'),

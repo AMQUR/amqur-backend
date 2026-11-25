@@ -6,6 +6,14 @@ import { PrismaService } from '../prisma/prisma.service';
 export const CRMWF_WORKER_ID = `crmwf-${hostname()}-${process.pid}`;
 export const CRMWF_LEASE_MS = 120_000;
 export const CRMWF_MAX_ATTEMPTS = 5;
+/**
+ * `nextAttemptAt` is stamped by the application clock (Prisma fills `@default(now())` and
+ * every backoff client-side) but compared against the DATABASE clock in `claim`. When the
+ * two differ by even a few milliseconds a task that was just enqueued is "not due yet" and is
+ * silently skipped until a later tick. Measured locally: 2,951 of 3,000 fresh tasks were not
+ * claimable in the same instant. Same tolerance, for the same reason, as the platform outbox.
+ */
+export const CRMWF_CLOCK_SKEW_TOLERANCE_S = 5;
 
 export function crmWfBackoffMs(attempts: number): number {
   const base = Math.min(2 ** attempts * 30_000, 3_600_000);
@@ -70,7 +78,7 @@ export class CrmWfQueueService {
              "updatedAt" = NOW()
        WHERE t."id" IN (
          SELECT "id" FROM "CrmWfTask"
-          WHERE (("status" = 'PENDING'::"CrmWfTaskStatus" AND "nextAttemptAt" <= NOW())
+          WHERE (("status" = 'PENDING'::"CrmWfTaskStatus" AND "nextAttemptAt" <= NOW() + make_interval(secs => ${CRMWF_CLOCK_SKEW_TOLERANCE_S}::double precision))
               OR ("status" = 'CLAIMED'::"CrmWfTaskStatus" AND "leaseExpiresAt" < NOW()))
             ${tenantFilter}
           ORDER BY "priority" ASC, "createdAt" ASC
