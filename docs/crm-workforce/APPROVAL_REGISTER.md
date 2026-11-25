@@ -18,3 +18,5 @@ One row per approval that only a person outside engineering can give. Nothing be
 | R12 | Per-workflow autonomy permit | GM + counsel, per rooftop and workflow | The fourteen fields in the permit (account, department, operation, audience, channel, consent, limits, window, escalation, expiry ≤ 90 days) | Level 3 for that one workflow | Not requested |
 | R13 | Virtual identities | GMs | Confirm Alex / Sarah / Victoria / James / Ryan and titles | System sends under that name | Not requested |
 | R14 | Internal notification channel for reports and alerts | Owner | Which existing channel (email list / chat) may receive internal reports | Scheduled report delivery | Not requested |
+| R15 | Release 2: administration screens (migration `20261126090000`, additive) | AMQUR owner | "Approve both" (2026-11-25) | Staff management, dealership switching, cost limits, group stop in production | **Done** — `a08e49e` live 2026-11-25 |
+| R16 | Owner group administration | AMQUR owner | "Approve both" (2026-11-25) | GROUP_ADMIN membership for the owner's Nissan ADMIN account in Dial Auto Group; audited as `crmwf.group_membership.granted` | **Done** 2026-11-25 |
