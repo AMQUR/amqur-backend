@@ -114,4 +114,20 @@ describe('draft output guard', () => {
       g('Details: https://www.dialnissan.com/vdp/N1234.', { facts: [inv] }),
     ).not.toContain('unapproved_link');
   });
+
+  it('an offer to check availability is not a claim of availability', () => {
+    for (const ok of [
+      "I'll check whether it's still available and get back to you.",
+      'Let me confirm it is still available for you.',
+      "I'll have the team see if we still have it on the lot.",
+      'I can find out if it is currently in stock.',
+    ])
+      expect(g(ok)).not.toContain('unsourced_availability');
+    for (const bad of [
+      'Yes, it is still available.',
+      "Good news, it's available. Come see it.",
+      'We have it on the lot today.',
+    ])
+      expect(g(bad)).toContain('unsourced_availability');
+  });
 });
