@@ -32,20 +32,33 @@ export class CrmWfLeadControlService {
       },
     });
     if (!lead) throw new NotFoundException('lead_not_found');
-    const escalated =
-      lead.agentPaused && (lead.pausedReason ?? '').startsWith('escalated:');
     return this.prisma.$transaction(async (tx) => {
-      const row = await tx.crmWfLead.update({
+      // An escalation marker is never overwritten by a takeover: a lead paused because it
+      // needs a manager's decision stays that way until a manager returns it. The check is
+      // part of the UPDATE itself, so an escalation written between our read and this write
+      // (by the supervisor, concurrently) cannot be lost.
+      await tx.crmWfLead.updateMany({
+        where: {
+          id: leadId,
+          tenantId: scope.tenantId,
+          OR: [
+            { pausedReason: null },
+            { NOT: { pausedReason: { startsWith: 'escalated:' } } },
+          ],
+        },
+        data: {
+          agentPaused: true,
+          pausedReason: reason.slice(0, 200),
+          pausedByUserId: actor.userId,
+        },
+      });
+      // Escalated (no row matched above) or not, the lead ends up paused.
+      await tx.crmWfLead.updateMany({
+        where: { id: leadId, tenantId: scope.tenantId },
+        data: { agentPaused: true },
+      });
+      const row = await tx.crmWfLead.findUniqueOrThrow({
         where: { id: leadId },
-        // An escalation marker is never overwritten by a later takeover: a lead that was
-        // paused because it needs a manager's decision stays that way until a manager returns it.
-        data: escalated
-          ? { agentPaused: true }
-          : {
-              agentPaused: true,
-              pausedReason: reason.slice(0, 200),
-              pausedByUserId: actor.userId,
-            },
       });
       await this.suppression.cancelOpenWork(
         tx,
