@@ -54,6 +54,7 @@ import { CrmWfWorkItemService } from './work-item.service';
 import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
 import { CrmWfPrivacyService } from './privacy.service';
+import { CrmWfKeyRotationService } from './key-rotation.service';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfReadService } from './read.service';
 import { CrmWfSuppressionService } from './suppression.service';
@@ -295,6 +296,7 @@ export class CrmWorkforceController {
     private readonly flags: FeatureFlagsService,
     private readonly prisma: PrismaService,
     private readonly privacy: CrmWfPrivacyService,
+    private readonly keys: CrmWfKeyRotationService,
     private readonly importer: CrmWfImportService,
     private readonly assist: CrmWfAssistService,
     private readonly items: CrmWfWorkItemService,
@@ -1161,6 +1163,25 @@ export class CrmWorkforceController {
       dto.halted,
       dto.reason,
     );
+  }
+
+  // ── data key rotation (platform operator) ────────────────────────────────
+  /** Counts of sealed values per key id. No customer data. */
+  @Roles('SUPER_ADMIN')
+  @Get('privacy/key-status')
+  keyStatus(@CurrentUser() u: AuthUser) {
+    return this.keys.status(this.actor(u));
+  }
+  /** Re-seal values under the current data key; repeat until `remaining` is 0. */
+  @Roles('SUPER_ADMIN')
+  @Post('privacy/rotate-keys')
+  rotateKeys(
+    @CurrentUser() u: AuthUser,
+    @Query('limit') limit?: string,
+    @Query('dryRun') dryRun?: string,
+  ) {
+    const n = Math.min(Math.max(Number(limit) || 2000, 1), 20000);
+    return this.keys.reseal(this.actor(u), n, dryRun === 'true');
   }
 
   // ── customer data rights ─────────────────────────────────────────────────

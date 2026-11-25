@@ -118,7 +118,9 @@ export function guardDraft(i: GuardInput): GuardViolation[] {
  * tomorrow, it's available") is a claim. Commas and conjunctions end the clause, so an earlier
  * "whether" cannot reach across them. Fails closed.
  * Found in the staging rehearsal: the strict form rejected the reply to the most common
- * customer question.
+ * customer question. The golden set later found "whether the white Rogue is still here"
+ * (a subject of several words) was still rejected; a determiner plus up to three words is
+ * now allowed as the subject.
  */
 function claimsAvailability(text: string): boolean {
   const re = new RegExp(AVAILABILITY.source, 'gi');
@@ -131,7 +133,7 @@ function claimsAvailability(text: string): boolean {
     // The matched phrase itself may start with "it's"/"is"; what precedes must END in if/whether
     // (optionally followed by "it"/"we"/"they").
     if (
-      /\b(?:if|whether)\s+(?:(?:it'?s|it is|it|we|they|the \w+)\s+)?$/i.test(
+      /\b(?:if|whether)\s+(?:(?:it'?s|it is|it|we|they|(?:the|that|this|your)(?:\s+[\w-]+){1,3})\s+)?$/i.test(
         before,
       )
     )

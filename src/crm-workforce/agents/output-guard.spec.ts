@@ -119,6 +119,8 @@ describe('draft output guard', () => {
     for (const ok of [
       "I'll check whether it's still available and get back to you.",
       "I'll have the team see if it is still available.",
+      'I will check whether the white Rogue is still here and get back to you.',
+      'Let me find out if that 2021 Wrangler is still available.',
       'I can find out if we have it on the lot.',
       "Let me check if it's currently in stock.",
     ])
@@ -132,6 +134,8 @@ describe('draft output guard', () => {
       "Whether you come today or tomorrow, it's available.",
       "If you like, it's still available and ready.",
       'I checked and it is still available.',
+      "If you like it's still available.",
+      'Whether you buy or not the white Rogue is still available.',
     ])
       expect(g(bad)).toContain('unsourced_availability');
   });

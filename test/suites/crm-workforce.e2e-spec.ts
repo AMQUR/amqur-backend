@@ -14,6 +14,7 @@ import { CrmWfActionService } from '../../src/crm-workforce/action.service';
 import { CrmWfEngineService } from '../../src/crm-workforce/engine.service';
 import { CrmWfIntakeService } from '../../src/crm-workforce/intake.service';
 import { CrmWfPrivacyService } from '../../src/crm-workforce/privacy.service';
+import { CrmWfKeyRotationService } from '../../src/crm-workforce/key-rotation.service';
 import { CrmWfQueueService } from '../../src/crm-workforce/queue.service';
 import { CrmWfVaultService } from '../../src/crm-workforce/vault.service';
 import { ConsentService } from '../../src/messaging/consent.service';
@@ -2915,6 +2916,92 @@ describe('CRM Workforce (e2e)', () => {
       expect(r.outcomes.deferred_halted).toBe(1);
       expect(adapters.fixture.executeCalls).toBe(0);
       expect(await actionsOf('nissan')).toHaveLength(0);
+    });
+  });
+
+  describe('data key rotation', () => {
+    const saved = { ...process.env };
+    afterEach(() => {
+      for (const k of [
+        'CRM_WORKFORCE_DATA_KEY',
+        'CRM_WORKFORCE_DATA_KEY_PREVIOUS',
+        'CRM_WORKFORCE_HASH_KEY',
+      ])
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+    });
+    it('re-seals every value under the new key, keeps hashes and data intact, and is operator-only', async () => {
+      const rot = ctx.app.get(CrmWfKeyRotationService);
+      const vault = ctx.app.get(CrmWfVaultService);
+      const op = {
+        userId: (
+          await ctx.prisma.user.findFirstOrThrow({
+            where: { tenantId: ids.chevy.tenantId, role: 'ADMIN' },
+          })
+        ).id,
+        role: 'SUPER_ADMIN',
+        tenantId: ids.chevy.tenantId,
+      };
+      await intake.ingest(scope('chevy'), 'fixture', [
+        rec({ inbound: 'Rotation check message', outboundHoursAgo: 5 }),
+      ]);
+      const before = await ctx.prisma.crmWfLead.findFirstOrThrow({
+        where: { tenantId: ids.chevy.tenantId },
+        orderBy: { createdAt: 'desc' },
+        include: { messages: true },
+      });
+      const plainBefore = vault.withMessages(before);
+      const OLD =
+        process.env.CRM_WORKFORCE_DATA_KEY ||
+        process.env.INTEGRATION_ENCRYPTION_KEY!;
+      // Rotation without pinning the hash key is refused.
+      process.env.CRM_WORKFORCE_DATA_KEY =
+        'rotated-data-key-for-e2e-0123456789abcdef';
+      process.env.CRM_WORKFORCE_DATA_KEY_PREVIOUS = OLD;
+      await expect(rot.reseal(op)).rejects.toThrow(
+        /pin_CRM_WORKFORCE_HASH_KEY/,
+      );
+      process.env.CRM_WORKFORCE_HASH_KEY = OLD;
+      await expect(rot.status({ ...op, role: 'ADMIN' })).rejects.toThrow(
+        /platform_operator/,
+      );
+      await api('chevy').get('privacy/key-status').expect(403);
+      const st = await rot.status(op);
+      expect(st.needsReseal).toBeGreaterThan(0);
+      expect(JSON.stringify(st)).not.toMatch(/Rotation check|555/);
+      const dry = await rot.reseal(op, 20000, true);
+      expect(dry.resealed).toBe(st.needsReseal);
+      expect((await rot.status(op)).needsReseal).toBe(st.needsReseal); // dry run wrote nothing
+      const r = await rot.reseal(op, 20000);
+      expect(r.remaining).toBe(0);
+      const after = await ctx.prisma.crmWfLead.findUniqueOrThrow({
+        where: { id: before.id },
+        include: { messages: true },
+      });
+      expect(after.phoneHash).toBe(before.phoneHash);
+      expect(vault.keyIdOf(after.messages[0].bodyEnc)).toBe(
+        vault.currentKeyId(),
+      );
+      // Retire the old key: everything still opens, unchanged.
+      delete process.env.CRM_WORKFORCE_DATA_KEY_PREVIOUS;
+      const plainAfter = vault.withMessages(after);
+      expect(plainAfter.phone).toBe(plainBefore.phone);
+      expect(plainAfter.lastName).toBe(plainBefore.lastName);
+      expect(plainAfter.messages.map((m) => m.body)).toEqual(
+        plainBefore.messages.map((m) => m.body),
+      );
+      expect(
+        await ctx.prisma.auditLog.count({
+          where: { action: 'crmwf.keys.resealed' },
+        }),
+      ).toBeGreaterThan(0);
+      // Put every value back under the suite's key for the tests that follow.
+      process.env.CRM_WORKFORCE_DATA_KEY_PREVIOUS =
+        process.env.CRM_WORKFORCE_DATA_KEY;
+      if (saved.CRM_WORKFORCE_DATA_KEY === undefined)
+        delete process.env.CRM_WORKFORCE_DATA_KEY;
+      else process.env.CRM_WORKFORCE_DATA_KEY = saved.CRM_WORKFORCE_DATA_KEY;
+      expect((await rot.reseal(op, 20000)).remaining).toBe(0);
     });
   });
 

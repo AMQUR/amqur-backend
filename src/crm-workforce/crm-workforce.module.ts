@@ -15,6 +15,7 @@ import { CrmWfImportService } from './import.service';
 import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
 import { CrmWfPrivacyService } from './privacy.service';
+import { CrmWfKeyRotationService } from './key-rotation.service';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfReadService } from './read.service';
 import { CrmWfSupervisorService } from './supervisor.service';
@@ -42,6 +43,7 @@ import { CrmWfDirectorService } from './director.service';
     CrmWfStaffService,
     CrmWfGroupScopeGuard,
     CrmWfPrivacyService,
+    CrmWfKeyRotationService,
     CrmWfImportService,
     CrmWfWorkItemService,
     CrmWfAssistService,

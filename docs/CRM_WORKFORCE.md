@@ -18,7 +18,8 @@ Related documents in `docs/crm-workforce/`: `TEKION_CAPABILITY_MAP.md`, `RELEASE
 | Tekion APC (authorized API) | BLOCKED | No spec, scopes, sandbox or credentials; the adapter has no HTTP client |
 | Tekion browser operations (Mode C) | BLOCKED | No written automation permission; a contract exists, no driver or selectors |
 | System SMS / email sending | BLOCKED | No sending connector, no counsel-approved policy |
-| Appointment booking and availability | BLOCKED | No scheduling source; requests only |
+| Appointment booking and availability | BLOCKED | No scheduling source; requests only. Contract and rules ready (`adapters/appointment-availability.contract.ts`) |
+| Automatic reply detection | BLOCKED | No authorized conversation read; employees record replies. Contract and rules ready (`adapters/reply-detection.contract.ts`) |
 
 ## How it is kept apart from the concierge
 
@@ -79,7 +80,8 @@ An opt-out (STOP, unsubscribe, "stop texting me", wrong number) anywhere in the 
 - Export and erase for one customer are admin-only and audited. Erase keeps the suppression (a hash), so an opt-out outlives the data. A daily purge removes mirror rows older than `Tenant.dataRetentionDays` unless `legalHold` is set.
 - Audit entries and stored error text have contact details removed.
 - Imports refuse files with Social Security, licence, date-of-birth, credit, income or bank columns.
-- Not done: production backup/restore drill (existing blocker B-11); key rotation; inclusion of these tables in the platform-wide privacy export.
+- Key rotation: values are written as `v2.<key id>.…`; retired keys go in `CRM_WORKFORCE_DATA_KEY_PREVIOUS` (open only); `CRM_WORKFORCE_HASH_KEY` pins the lookup-hash key so opt-outs of erased customers survive a rotation. The platform operator re-seals with `POST /api/ops/crm-workforce/privacy/rotate-keys` (dry run available) until `GET privacy/key-status` shows nothing left; the re-seal refuses to run unless the hash key is pinned. Not yet exercised in production. **Rollback note:** releases before this one cannot read `v2` values, so a rollback past it needs a forward fix rather than a plain redeploy once new data has been written.
+- Not done: inclusion of these tables in the platform-wide privacy export.
 
 ## Employee-assisted operation (Mode A)
 
@@ -105,6 +107,10 @@ P0 customer waiting on a reply · P1 new lead, no response · P2 appointment cha
 - **People.** Invite (account created switched off, unusable password), reset (signs the person out everywhere), deactivate, reactivate and role change. Links are single-use, expire (72 h invite, 24 h reset), and only their SHA-256 is stored (`CrmWfStaffToken`, migration `20261126090000`). Nobody can change their own account, grant a role above their own, or grant ADMIN without a written reason. Every change is audited.
 - **Model cost limits** per dealership, only ever tighter than the platform environment limits; the drafter enforces the effective limit.
 - **Group emergency stop** sets the TENANT kill switch on every dealership in the group (group administrators only); resuming restores each previous mode.
+
+## Evaluation
+
+`npm run eval:crm-workforce` runs the golden set (`src/crm-workforce/evaluation/golden.ts`): 42 inbound cases (English and Spanish; opt-outs, people-only topics, hostile input, ordinary questions) and 21 reply cases (unsourced price, availability, booking, diagnosis, impersonation, disclosure, tone). Critical cases gate a release. `scoreReply()` scores real model output against the same rules. The set found one false positive in the output guard (a multi-word subject in "check whether the white Rogue is still here"), fixed with regression tests.
 
 ## API and screens
 

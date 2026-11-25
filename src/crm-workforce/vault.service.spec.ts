@@ -147,3 +147,64 @@ describe('CRM Workforce vault', () => {
     expect(fileIsSynthetic('', [])).toBe(true);
   });
 });
+
+describe('CRM Workforce vault key rotation', () => {
+  const v = new CrmWfVaultService();
+  const OLD = 'old-data-key-0123456789-abcdefghijklmnop';
+  const NEW = 'new-data-key-0123456789-abcdefghijklmnop';
+  const saved = { ...process.env };
+  afterEach(() => {
+    for (const k of [
+      'CRM_WORKFORCE_DATA_KEY',
+      'CRM_WORKFORCE_DATA_KEY_PREVIOUS',
+      'CRM_WORKFORCE_HASH_KEY',
+      'INTEGRATION_ENCRYPTION_KEY',
+    ])
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+  });
+
+  it('opens values sealed with a retired key and writes new ones with the current key', () => {
+    process.env.CRM_WORKFORCE_DATA_KEY = OLD;
+    const before = v.seal('Shopper')!;
+    const oldKid = v.currentKeyId();
+    expect(before.startsWith(`v2.${oldKid}.`)).toBe(true);
+    process.env.CRM_WORKFORCE_DATA_KEY = NEW;
+    process.env.CRM_WORKFORCE_DATA_KEY_PREVIOUS = OLD;
+    expect(v.open(before)).toBe('Shopper');
+    expect(v.isCurrent(before)).toBe(false);
+    const after = v.seal('Shopper')!;
+    expect(v.keyIdOf(after)).toBe(v.currentKeyId());
+    expect(v.currentKeyId()).not.toBe(oldKid);
+    // Once the old key is removed, an old value fails loudly instead of returning garbage.
+    delete process.env.CRM_WORKFORCE_DATA_KEY_PREVIOUS;
+    expect(() => v.open(before)).toThrow(CrmWfVaultKeyError);
+    expect(v.open(after)).toBe('Shopper');
+  });
+
+  it('still opens legacy v1 values (no key id) with the current or a previous key', () => {
+    process.env.CRM_WORKFORCE_DATA_KEY = OLD;
+    const { createCipheriv, createHash, randomBytes } =
+      jest.requireActual<typeof import('crypto')>('crypto');
+    const k = createHash('sha256').update(`crmwf:seal:${OLD}`).digest();
+    const iv = randomBytes(12);
+    const c = createCipheriv('aes-256-gcm', k, iv);
+    const ct = Buffer.concat([c.update('legacy', 'utf8'), c.final()]);
+    const v1 = `v1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${ct.toString('base64url')}`;
+    expect(v.open(v1)).toBe('legacy');
+    process.env.CRM_WORKFORCE_DATA_KEY = NEW;
+    process.env.CRM_WORKFORCE_DATA_KEY_PREVIOUS = OLD;
+    expect(v.open(v1)).toBe('legacy');
+    expect(v.keyIdOf(v1)).toBe('v1');
+  });
+
+  it('keeps lookup hashes unchanged across a rotation when the hash key is pinned', () => {
+    process.env.CRM_WORKFORCE_DATA_KEY = OLD;
+    const h1 = v.hash('+13125550142');
+    process.env.CRM_WORKFORCE_DATA_KEY = NEW;
+    process.env.CRM_WORKFORCE_HASH_KEY = OLD;
+    expect(v.hash('+13125550142')).toBe(h1);
+    delete process.env.CRM_WORKFORCE_HASH_KEY;
+    expect(v.hash('+13125550142')).not.toBe(h1); // why the pin is required
+  });
+});

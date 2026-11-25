@@ -55,7 +55,8 @@
     "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",
     "ai:check": "ts-node --transpile-only scripts/ai-check.ts",
     "eval:live-model": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=live-model",
-    "diagnose:vauto-sftp": "AMQUR_SFTP_DIAGNOSTIC=1 node scripts/diagnose-vauto-sftp-readonly.mjs"
+    "diagnose:vauto-sftp": "AMQUR_SFTP_DIAGNOSTIC=1 node scripts/diagnose-vauto-sftp-readonly.mjs",
+    "eval:crm-workforce": "jest src/crm-workforce/evaluation --verbose"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

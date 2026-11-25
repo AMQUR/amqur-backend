@@ -22,6 +22,13 @@ export class CrmWfVaultKeyError extends Error {
   }
 }
 
+/** Short public identifier of a sealing key, stored with each value so the right key opens it. */
+const kidOf = (raw: string) =>
+  createHash('sha256').update(`crmwf:kid:${raw}`).digest('hex').slice(0, 8);
+const derive = (label: string, raw: string) =>
+  createHash('sha256').update(`crmwf:${label}:${raw}`).digest();
+type SealKey = { kid: string; enc: Buffer };
+
 /**
  * Field-level protection for customer data held by the CRM Workforce.
  *
@@ -31,61 +38,126 @@ export class CrmWfVaultKeyError extends Error {
  *     number suppressed?" never needs the number in a WHERE clause or an index;
  *   - without a key the vault fails closed: nothing can be stored or read.
  *
- * Key: CRM_WORKFORCE_DATA_KEY (≥32 chars), else the platform's INTEGRATION_ENCRYPTION_KEY.
- * Separate sub-keys are derived for sealing and for hashing. Rotating the key requires a
- * re-seal job (not built yet); `v1.` prefixes every sealed value so one can be added.
+ * Keys
+ *   CRM_WORKFORCE_DATA_KEY            current sealing key (≥32 chars); falls back to the
+ *                                     platform's INTEGRATION_ENCRYPTION_KEY
+ *   CRM_WORKFORCE_DATA_KEY_PREVIOUS   retired sealing keys, comma-separated; open only
+ *   CRM_WORKFORCE_HASH_KEY            key for lookup hashes; defaults to the sealing key
+ *
+ * Rotation re-seals values under the new key (CrmWfKeyRotationService) and never changes the
+ * lookup hashes: an erased customer's opt-out survives only as a hash, so changing the hash key
+ * would silently forget it. Before rotating, pin CRM_WORKFORCE_HASH_KEY to the key the hashes
+ * were made with. New values are written as `v2.<kid>.…`; older `v1.…` values carry no key id
+ * and are opened by trying the current key, then each previous key.
  */
 @Injectable()
 export class CrmWfVaultService {
-  private keys(): { enc: Buffer; mac: Buffer } {
+  private current(): string {
     const raw =
       process.env.CRM_WORKFORCE_DATA_KEY ||
       process.env.INTEGRATION_ENCRYPTION_KEY ||
       '';
     if (raw.length < 32) throw new CrmWfVaultKeyError();
-    const d = (label: string) =>
-      createHash('sha256').update(`crmwf:${label}:${raw}`).digest();
-    return { enc: d('seal'), mac: d('hash') };
+    return raw;
+  }
+
+  /** Current key first, then retired keys usable only for opening. */
+  private sealKeys(): SealKey[] {
+    const raws = [
+      this.current(),
+      ...(process.env.CRM_WORKFORCE_DATA_KEY_PREVIOUS ?? '')
+        .split(',')
+        .map((k) => k.trim())
+        .filter((k) => k.length >= 32),
+    ];
+    const seen = new Set<string>();
+    return raws
+      .map((r) => ({ kid: kidOf(r), enc: derive('seal', r) }))
+      .filter((k) => !seen.has(k.kid) && !!seen.add(k.kid));
+  }
+
+  private macKey(): Buffer {
+    const h = process.env.CRM_WORKFORCE_HASH_KEY;
+    if (h !== undefined && h !== '' && h.length < 32)
+      throw new CrmWfVaultKeyError();
+    return derive('hash', h || this.current());
   }
 
   isReady(): boolean {
     try {
-      this.keys();
+      this.sealKeys();
+      this.macKey();
       return true;
     } catch {
       return false;
     }
   }
 
+  /** Id of the key new values are sealed with (safe to show; reveals nothing about the key). */
+  currentKeyId(): string {
+    return this.sealKeys()[0].kid;
+  }
+
+  /** Which key a stored value was sealed with: a key id, 'v1' (no id recorded) or null. */
+  keyIdOf(sealed: string | null | undefined): string | null {
+    if (!sealed) return null;
+    const parts = sealed.split('.');
+    if (parts[0] === 'v2') return parts[1] ?? null;
+    if (parts[0] === 'v1') return 'v1';
+    return null;
+  }
+
+  /** True when the value is already sealed with the current key and needs no re-seal. */
+  isCurrent(sealed: string | null | undefined): boolean {
+    return !sealed || this.keyIdOf(sealed) === this.currentKeyId();
+  }
+
   seal(plain: string | null | undefined): string | null {
     if (plain === null || plain === undefined || plain === '') return null;
+    const k = this.sealKeys()[0];
     const iv = randomBytes(12);
-    const c = createCipheriv('aes-256-gcm', this.keys().enc, iv);
+    const c = createCipheriv('aes-256-gcm', k.enc, iv);
     const ct = Buffer.concat([c.update(plain, 'utf8'), c.final()]);
-    return `v1.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${ct.toString('base64url')}`;
+    return `v2.${k.kid}.${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${ct.toString('base64url')}`;
   }
 
   open(sealed: string | null | undefined): string | null {
     if (!sealed) return null;
-    const [v, iv, tag, ct] = sealed.split('.');
-    if (v !== 'v1' || !iv || !tag || ct === undefined) return null;
-    const d = createDecipheriv(
-      'aes-256-gcm',
-      this.keys().enc,
-      Buffer.from(iv, 'base64url'),
-    );
-    d.setAuthTag(Buffer.from(tag, 'base64url'));
-    return Buffer.concat([
-      d.update(Buffer.from(ct, 'base64url')),
-      d.final(),
-    ]).toString('utf8');
+    const parts = sealed.split('.');
+    let candidates: SealKey[];
+    let iv: string, tag: string, ct: string;
+    if (parts[0] === 'v2' && parts.length === 5) {
+      [, , iv, tag, ct] = parts;
+      const k = this.sealKeys().find((x) => x.kid === parts[1]);
+      // Sealed with a key that is no longer configured: fail loudly, never return garbage.
+      if (!k) throw new CrmWfVaultKeyError();
+      candidates = [k];
+    } else if (parts[0] === 'v1' && parts.length === 4) {
+      [, iv, tag, ct] = parts;
+      candidates = this.sealKeys();
+    } else return null;
+    for (const k of candidates) {
+      try {
+        const d = createDecipheriv(
+          'aes-256-gcm',
+          k.enc,
+          Buffer.from(iv, 'base64url'),
+        );
+        d.setAuthTag(Buffer.from(tag, 'base64url'));
+        return Buffer.concat([
+          d.update(Buffer.from(ct, 'base64url')),
+          d.final(),
+        ]).toString('utf8');
+      } catch {
+        /* wrong key for a v1 value: try the next one */
+      }
+    }
+    throw new CrmWfVaultKeyError();
   }
 
   /** Keyed hash of a NORMALIZED endpoint. Same value for a phone whether SMS or CALL. */
   hash(normalized: string): string {
-    return createHmac('sha256', this.keys().mac)
-      .update(normalized)
-      .digest('hex');
+    return createHmac('sha256', this.macKey()).update(normalized).digest('hex');
   }
 
   /** Normalize + hash a raw phone / email. Null when the value is not a usable endpoint. */
