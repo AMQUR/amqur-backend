@@ -16,14 +16,14 @@ Approval types: **Owner** · **Dealer principal** · **GM** (per store) · **Pri
 | R15 | Release 2 (administration, migration `20261126090000`) | Owner | 2026-11-25 | `a08e49e` live |
 | R16 | Owner GROUP_ADMIN membership | Owner | 2026-11-25 | Granted, audited |
 | R17 | Release 3 (key rotation, evaluation set, contracts) | Owner | 2026-11-25 | `89e598d` live |
+| R18 | Release 4 (shared knowledge, inventory lookup, offboarding, privacy coverage, report scheduling; migration `20261127090000`) | Owner | 2026-11-26 | `b8cc6fa` live |
+| K2 | Dedicated data and hash keys | Owner | 2026-11-26 | Set in Railway (API + worker), never displayed |
 
 ## Open — needed now (internal, no third party)
 
 | ID | Exact permission requested | Responsible | Store | System / operation | Money | Limits / expiry | Risk | Rollback | Unlocks |
 |---|---|---|---|---|---|---|---|---|---|
-| **R18** | Deploy the Release 4 candidate (the commit named in the approval request) to production API + worker, applying additive migration `20261127090000` | Owner | all five | Railway `backend-production`, `worker-production` | none new | one release | low: additive table, all features gated | redeploy `89e598d` (table unused) | Knowledge screen, inventory lookup, department hours, offboarding, access log, privacy coverage, report preview |
-| **K2** | Set dedicated keys: `CRM_WORKFORCE_HASH_KEY` = Railway reference to the existing integration key; new random `CRM_WORKFORCE_DATA_KEY` generated straight into Railway | Owner | all | Railway variables (API + worker) | none | permanent | very low: production holds 0 sealed values | unset both variables | Workforce data sealed with its own key; integration-key compromise no longer exposes it |
-| **K1** | Move the backup passphrase into your password manager, then delete `.local-secrets/prod-db-backup-20261125.key` | Owner (you) | — | your vault | none | — | losing the only copy makes backups unreadable | — | Safe key custody |
+| **K1** | Keep copies of the keys outside Railway: (a) move the backup passphrase into your password manager and delete `.local-secrets/prod-db-backup-20261125.key`; (b) from the Railway dashboard, copy `CRM_WORKFORCE_DATA_KEY` and `CRM_WORKFORCE_HASH_KEY` (backend-production) into the same vault | Owner (you) | — | your vault | none | — | losing the only copy makes backups unreadable | — | Safe key custody |
 | **G1** | Merge PR #56 into `integration/amqur-unified-sandbox` after review | Owner (reviewer) | — | GitHub | none | — | none (no deploy trigger) | revert merge | Integration branch = production lineage |
 | **G3** | Change `deploy.yml` to target `backend-production`/`worker-production`, add the lineage guard, protect `main` | Owner | — | GitHub Actions | none | — | low | revert workflow | A reviewed deploy path that cannot drop live code |
 | **G2** | After G3: review and merge PR #55 (`integration` → `main`) | Owner (reviewer) | — | GitHub, then reviewed deploy | none | — | medium: first reviewed deploy; guard enforces lineage | revert; redeploy prior tag | Production built from `main` again |
