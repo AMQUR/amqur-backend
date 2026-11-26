@@ -1141,7 +1141,9 @@ export class ChatOrchestrator {
     // introduction ("Hi, I'm Alex") is conversation: remember the name, ask for nothing.
     const contact = u.entities.contact;
     const awaitingContact =
-      st.pending === 'contact_name' || st.pending === 'contact_method';
+      st.pending === 'contact_name' ||
+      st.pending === 'contact_last_name' ||
+      st.pending === 'contact_method';
     const sharesLogin =
       /\b(?:pass(?:word|code|w0rd)|pwd|log[- ]?in|username)\b/i.test(t.message);
     // A store's own published number quoted back is a question about the store, not a
@@ -1488,6 +1490,40 @@ export class ChatOrchestrator {
     const viaGroupSite = !view.self || !!t.linkedConversationIds?.length;
     const stores = viaGroupSite ? view.group : view.self ? [view.self] : [];
     return stores.length ? { stores } : null;
+  }
+
+  /**
+   * Dealer stores this turn can point to when nobody on staff would be notified: no escalation
+   * channel is configured, and this tenant has a verified store directory. Null otherwise
+   * (an escalation channel exists, or a tenant without a directory keeps its own wording).
+   */
+  private async storesWhenStaffUnreachable(
+    t: Turn,
+  ): Promise<DealerStore[] | null> {
+    if (process.env.CRM_WEBHOOK_URL?.trim()) return null;
+    const directory = await this.dealerDirectory(t);
+    if (!directory) return null;
+    const named = storesNamedIn(t.message ?? '', directory.stores);
+    return named.length ? named : directory.stores;
+  }
+
+  /** Show the stores' own phone and contact cards instead of asking for contact details. */
+  private showStoreContactCards(
+    t: Turn,
+    stores: DealerStore[],
+    focus: 'visit' | 'service',
+  ) {
+    const lang = t.lang === 'es' ? 'es' : 'en';
+    t.cards = t.cards.filter((c) => c.kind !== 'dealership');
+    for (const d of stores) t.cards.push(buildDealershipCard(d, focus, lang));
+    t.sources.add('dealer_directory');
+    void this.analytics.trackEvent(
+      t.tenantId,
+      t.locationId,
+      'direct_contact_shown',
+      { stores: stores.map((d) => d.sourceRecordId), typedContact: false },
+      t.s.externalKey,
+    );
   }
 
   /** True when this conversation has at least one working action tool (booking or leads). */
@@ -2556,6 +2592,15 @@ export class ChatOrchestrator {
 
   private async handleHandoff(t: Turn, why: 'complaint' | 'request') {
     if (await this.capBlocked(t, 'handoff')) return;
+    if (why === 'request' && (await this.cap(t, 'leadCapture')).allowed)
+      this.wantSpecialist(
+        t,
+        /\b(?:call|text|reach) me\b|\bcall ?back\b|\bll[aá]m(?:e|en)me\b/i.test(
+          t.message,
+        )
+          ? 'callback'
+          : 'salesperson',
+      );
     t.toolCount += 1;
     t.urgent = true;
     const st = t.st;
@@ -2617,6 +2662,8 @@ export class ChatOrchestrator {
           'Registré esto para el equipo con todo lo que me dijo, y la notificación se está reintentando.',
         ),
       );
+    } else if (st.specialist && !st.specialist.promised) {
+      // Delivered as a lead once the contact details are in; nothing to claim yet.
     } else {
       t.narration.push(
         tr(
@@ -2631,6 +2678,28 @@ export class ChatOrchestrator {
       state: notified ? 'notified' : queued ? 'queued' : 'recorded',
       escalationId: escalation.id,
     });
+    // Nobody would receive a number typed here: point to the store's own phone instead.
+    const unreachable =
+      !notified && !queued && !st.specialist
+        ? await this.storesWhenStaffUnreachable(t)
+        : null;
+    if (unreachable) {
+      this.showStoreContactCards(
+        t,
+        unreachable,
+        st.department === 'service' ? 'service' : 'visit',
+      );
+      t.narration.push(
+        tr(
+          t.lang,
+          'This chat cannot notify the team yet, so please call the store directly using the button below.',
+          'Este chat todavía no puede avisar al equipo, así que llame directamente a la agencia con el botón de abajo.',
+        ),
+      );
+      return;
+    }
+    // A specialist request collects the name first (outstandingQuestion asks in order).
+    if (st.specialist && !st.specialist.promised) return;
     if (!st.contact.phone && !st.contact.email) {
       this.ask(
         t,
@@ -2643,6 +2712,14 @@ export class ChatOrchestrator {
         1,
       );
     }
+  }
+
+  /** Remember that this shopper wants a specialist; never downgrades an earlier reason. */
+  private wantSpecialist(t: Turn, reason: 'otd' | 'callback' | 'salesperson') {
+    if (t.st.specialist) return;
+    t.st.specialist = { reason };
+    this.signal(t, 'handoff_requested');
+    this.metrics.increment(`chat.specialist_request.${reason}`);
   }
 
   /**
@@ -2831,6 +2908,21 @@ export class ChatOrchestrator {
       !st.contact.phone &&
       !st.contact.email
     ) {
+      const unreachable = !recorded.channelConfigured
+        ? await this.storesWhenStaffUnreachable(t)
+        : null;
+      if (unreachable) {
+        this.showStoreContactCards(t, unreachable, 'visit');
+        const last = t.answers.length - 1;
+        const more = tr(
+          t.lang,
+          "To reach a manager who wasn't involved, call the store directly using the button below.",
+          'Para hablar con un gerente que no estuvo involucrado, llame directamente a la agencia con el botón de abajo.',
+        );
+        if (last >= 0) t.answers[last] = `${t.answers[last]} ${more}`;
+        else t.answers.push(more);
+        return;
+      }
       this.ask(
         t,
         'contact_method',
@@ -4411,7 +4503,21 @@ export class ChatOrchestrator {
       const ref = await this.resolveVehicleReference(t);
       v = ref.v ?? null;
     }
+    if (!v && st.pageVehicle && (await this.cap(t, 'leadCapture')).allowed) {
+      // On a vehicle page with no verified inventory record: a specialist prepares the number.
+      this.wantSpecialist(t, 'otd');
+      t.answers.push(
+        tr(
+          t.lang,
+          `An out-the-door number includes taxes, title and fees that a specialist has to work up for you, so I'll pass this ${[st.pageVehicle.year, st.pageVehicle.make, st.pageVehicle.model].filter(Boolean).join(' ') || 'vehicle'} to the sales team.`,
+          `Un precio final incluye impuestos, título y cargos que un especialista tiene que preparar, así que pasaré este ${[st.pageVehicle.year, st.pageVehicle.make, st.pageVehicle.model].filter(Boolean).join(' ') || 'vehículo'} al equipo de ventas.`,
+        ),
+      );
+      return;
+    }
     if (!v) {
+      if ((await this.cap(t, 'leadCapture')).allowed)
+        this.wantSpecialist(t, 'otd');
       this.ask(
         t,
         'vehicle_choice',
@@ -4452,6 +4558,8 @@ export class ChatOrchestrator {
           ? 'FINANCE'
           : 'UNDECIDED');
     const label = vehicleLabel(v, true);
+    if ((await this.cap(t, 'leadCapture')).allowed)
+      this.wantSpecialist(t, 'otd');
     if (!(await this.cap(t, 'leadCapture')).allowed) {
       // Without lead capture we can still show a verified estimate, but can't route a request.
       if (!est.computable) {
@@ -6618,17 +6726,73 @@ export class ChatOrchestrator {
         },
       });
     }
+    const gotLast =
+      !!t.u.entities.contact?.lastName && !t.u.entities.contact?.firstName;
     const gotName = !!t.u.entities.contact?.firstName;
     const gotMethod = !!(
       t.u.entities.contact?.phone || t.u.entities.contact?.email
     );
-    if (gotMethod) {
+    if (gotMethod && st.specialist && !st.specialist.promised) {
+      // The lead is created (and the shopper told what happens next) in syncLead.
+    } else if (gotMethod) {
       t.narration.push(
         tr(
           t.lang,
           "Thanks — I've added that so the team can reach you.",
           'Gracias — lo agregué para que el equipo le contacte.',
         ),
+      );
+    } else if (
+      gotName &&
+      st.specialist &&
+      !st.specialist.promised &&
+      !st.contact.lastName &&
+      st.specialist.lastNameAskedTurn === undefined
+    ) {
+      st.specialist.lastNameAskedTurn = st.turnCount;
+      this.ask(
+        t,
+        'contact_last_name',
+        tr(
+          t.lang,
+          `Thanks, ${st.contact.firstName}. And your last name?`,
+          `Gracias, ${st.contact.firstName}. ¿Y su apellido?`,
+        ),
+        3,
+      );
+    } else if (
+      gotName &&
+      st.specialist &&
+      !st.specialist.promised &&
+      !st.contact.phone &&
+      !st.contact.email
+    ) {
+      this.ask(
+        t,
+        'contact_method',
+        tr(
+          t.lang,
+          `Thanks, ${st.contact.firstName}. What's the best phone number or email for the specialist to reach you?`,
+          `Gracias, ${st.contact.firstName}. ¿Cuál es el mejor teléfono o correo para que el especialista le contacte?`,
+        ),
+        3,
+      );
+    } else if (
+      gotLast &&
+      st.specialist &&
+      !st.specialist.promised &&
+      !st.contact.phone &&
+      !st.contact.email
+    ) {
+      this.ask(
+        t,
+        'contact_method',
+        tr(
+          t.lang,
+          "Thanks. What's the best phone number or email for the specialist to reach you?",
+          'Gracias. ¿Cuál es el mejor teléfono o correo para que el especialista le contacte?',
+        ),
+        3,
       );
     } else if (gotName && !st.contact.phone && !st.contact.email) {
       this.ask(
@@ -8350,7 +8514,11 @@ export class ChatOrchestrator {
     if (!(await this.salesDeskOn(t))) return;
     if (t.vehicles?.length) t.vehicles = await this.enrichVehicles(t);
     if (!q) return;
-    if (q.key === 'contact_name' || q.key === 'contact_method')
+    if (
+      q.key === 'contact_name' ||
+      q.key === 'contact_last_name' ||
+      q.key === 'contact_method'
+    )
       await this.attachLeadForm(t);
     else if (q.key === 'appointment_date' || q.key === 'appointment_time')
       await this.attachPicker(t);
@@ -8588,6 +8756,17 @@ export class ChatOrchestrator {
     )
       return;
     if (!(await this.cap(t, 'leadCapture')).allowed) return;
+    // A specialist request goes to the store complete: wait one turn for the last name we
+    // asked for (asked once; a shopper who skips it is not asked again).
+    const sp = st.specialist && !st.specialist.promised ? st.specialist : null;
+    if (
+      sp &&
+      hasContact &&
+      !st.contact.lastName &&
+      (sp.lastNameAskedTurn === undefined ||
+        sp.lastNameAskedTurn === st.turnCount)
+    )
+      return;
     const score = scoreJourney(st.signals, {
       hasAppointment: !!st.appointment && st.appointment.status !== 'CANCELLED',
       hasContact,
@@ -8602,7 +8781,9 @@ export class ChatOrchestrator {
       lastName: st.contact.lastName,
       phone: st.contact.phone,
       email: st.contact.email,
-      interestedVin: st.selectedVin,
+      zipCode: st.otd?.zip,
+      interestedVin: st.selectedVin ?? st.pageVehicle?.vin,
+      interestedStock: st.selectedVin ? undefined : st.pageVehicle?.stock,
       budget: st.criteria.maxPrice,
       desiredPayment: st.payment.maxMonthly,
       financingNeeded:
@@ -8670,6 +8851,35 @@ export class ChatOrchestrator {
       lead.id,
       isNewLead ? 'lead.created' : 'lead.updated',
     );
+    // The lead exists and leadCapture is allowed (in production: a verified, live route).
+    if (sp && hasContact) {
+      sp.promised = true;
+      const store = await this.prisma.tenant
+        .findUnique({ where: { id: t.tenantId }, select: { name: true } })
+        .catch(() => null);
+      const via = st.contact.phone
+        ? tr(t.lang, 'by phone', 'por teléfono')
+        : tr(t.lang, 'by email', 'por correo');
+      t.narration.push(
+        tr(
+          t.lang,
+          `Thanks, ${st.contact.firstName}. A specialist${store?.name ? ` from ${store.name}` : ''} will reach out shortly ${via}.`,
+          `Gracias, ${st.contact.firstName}. Un especialista${store?.name ? ` de ${store.name}` : ''} le contactará pronto ${via}.`,
+        ),
+      );
+      t.lockReply = true;
+      void this.analytics.trackEvent(
+        t.tenantId,
+        t.locationId,
+        'specialist_lead_created',
+        {
+          reason: sp.reason,
+          zip: !!st.otd?.zip,
+          vehicle: !!(st.selectedVin ?? st.pageVehicle),
+        },
+        t.s.externalKey,
+      );
+    }
   }
 
   // ───────────────────────────────────────── finish
@@ -8768,13 +8978,70 @@ export class ChatOrchestrator {
   /** Information still needed to act on something the customer already asked for. */
   private outstandingQuestion(t: Turn): Question | undefined {
     const st = t.st;
+    // An out-the-door request gathers its own inputs first (vehicle, ZIP, payment method);
+    // contact details come after, so an answer like "60614" is never read as a name.
+    const otdGathering =
+      st.specialist?.reason === 'otd' &&
+      ((!!st.otd?.requestId && !st.otd?.zip) ||
+        st.pending === 'payment_method' ||
+        st.pending === 'figure_meaning' ||
+        (st.pending === 'vehicle_choice' && !st.selectedVin));
     const needsContact =
       !st.incident?.withholdContact &&
       ((st.appointment &&
         ['REQUESTED', 'PENDING_CONFIRMATION'].includes(
           st.appointment.status,
         )) ||
-        !!st.handoff?.escalationId);
+        !!st.handoff?.escalationId ||
+        (!!st.specialist && !st.specialist.promised && !otdGathering));
+    const sp =
+      st.specialist && !st.specialist.promised && !otdGathering
+        ? st.specialist
+        : null;
+    if (sp && !st.contact.firstName)
+      return {
+        key: 'contact_name',
+        text:
+          sp.reason === 'otd'
+            ? tr(
+                t.lang,
+                'So a specialist can put that number together for you, may I have your first and last name?',
+                'Para que un especialista le prepare ese número, ¿me da su nombre y apellido?',
+              )
+            : tr(
+                t.lang,
+                'Happy to have a specialist reach out. May I have your first and last name?',
+                'Con gusto le contacta un especialista. ¿Me da su nombre y apellido?',
+              ),
+        priority: 10,
+      };
+    if (
+      sp &&
+      st.contact.firstName &&
+      !st.contact.lastName &&
+      sp.lastNameAskedTurn === undefined
+    ) {
+      sp.lastNameAskedTurn = st.turnCount;
+      return {
+        key: 'contact_last_name',
+        text: tr(
+          t.lang,
+          `Thanks, ${st.contact.firstName}. And your last name?`,
+          `Gracias, ${st.contact.firstName}. ¿Y su apellido?`,
+        ),
+        priority: 10,
+      };
+    }
+    if (sp && !st.contact.phone && !st.contact.email)
+      return {
+        key: 'contact_method',
+        text: tr(
+          t.lang,
+          "What's the best phone number or email for the specialist to reach you?",
+          '¿Cuál es el mejor teléfono o correo para que el especialista le contacte?',
+        ),
+        priority: 10,
+      };
     // After a topic change, say WHY we still need it instead of a bare "who should they ask for?".
     const offTopic =
       !!st.appointment &&

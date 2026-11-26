@@ -68,3 +68,26 @@ describe('resolveThrottleTracker', () => {
     );
   });
 });
+
+describe('clientIp behind the Railway edge', () => {
+  const req = (h: Record<string, unknown>, ips: string[] = ['10.0.0.9']) => ({
+    ip: '10.0.0.1',
+    ips,
+    headers: h,
+  });
+  it('uses X-Real-IP only when TRUST_X_REAL_IP=true', () => {
+    expect(
+      clientIp(req({ 'x-real-ip': '24.148.16.67' }), {
+        TRUST_X_REAL_IP: 'true',
+      }),
+    ).toBe('24.148.16.67');
+    expect(clientIp(req({ 'x-real-ip': '24.148.16.67' }), {})).toBe('10.0.0.9');
+  });
+  it('ignores a malformed X-Real-IP', () => {
+    expect(
+      clientIp(req({ 'x-real-ip': 'evil, 1.2.3.4' }), {
+        TRUST_X_REAL_IP: 'true',
+      }),
+    ).toBe('10.0.0.9');
+  });
+});
