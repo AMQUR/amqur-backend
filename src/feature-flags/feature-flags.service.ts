@@ -100,6 +100,18 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
    * instead of asking which store. Default off (ask which store; never guess a rooftop).
    */
   groupHandoffQueue: false,
+  /**
+   * AMQUR CRM Workforce (docs/CRM_WORKFORCE.md). Default off. Turning it on only lets a rooftop
+   * be configured and worked in OBSERVE mode; the engine also needs CRM_WORKFORCE_ENABLED, and
+   * any customer-facing send needs its own control row, env switch and authorization.
+   */
+  crmWorkforce: false,
+  /**
+   * Lets a rooftop import CRM exports that contain REAL customer contacts. Default off: with
+   * it off only files made entirely of reserved test contacts are accepted. Turn on per
+   * rooftop only after the import authorization and privacy checks are recorded.
+   */
+  crmWorkforceRealImports: false,
 };
 
 @Injectable()

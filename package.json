@@ -44,6 +44,7 @@
     "build:all": "npm run build && npm run build:cc",
     "credit:destination": "ts-node --transpile-only scripts/credit-destination.ts",
     "seed:local-demo": "ts-node --transpile-only scripts/seed-local-demo.ts",
+    "seed:crm-workforce-demo": "ts-node --transpile-only scripts/seed-crm-workforce-demo.ts",
     "adf:sandbox-demo": "ts-node --transpile-only scripts/adf-sandbox-demo.ts",
     "seed:local-demo:lead-route": "ts-node --transpile-only scripts/seed-local-demo-lead-route.ts",
     "seed:group-rooftops": "ts-node --transpile-only scripts/seed-group-rooftops.ts",
@@ -54,7 +55,8 @@
     "readiness:scorecard": "ts-node --transpile-only scripts/readiness-scorecard.ts",
     "ai:check": "ts-node --transpile-only scripts/ai-check.ts",
     "eval:live-model": "jest --config ./test/jest-e2e.json --runInBand --forceExit --testPathPatterns=live-model",
-    "diagnose:vauto-sftp": "AMQUR_SFTP_DIAGNOSTIC=1 node scripts/diagnose-vauto-sftp-readonly.mjs"
+    "diagnose:vauto-sftp": "AMQUR_SFTP_DIAGNOSTIC=1 node scripts/diagnose-vauto-sftp-readonly.mjs",
+    "eval:crm-workforce": "jest src/crm-workforce/evaluation --verbose"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.133.0",

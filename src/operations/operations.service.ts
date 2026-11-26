@@ -2166,8 +2166,25 @@ export class OperationsService {
       data.storeHours = patch.storeHours as Prisma.InputJsonValue;
       data.storeHoursVerifiedAt = null; // hours changed → must be re-verified
     }
-    if (patch.departmentHours !== undefined)
+    if (patch.departmentHours !== undefined) {
+      // { sales?: weekly, service?: weekly, parts?: weekly } — each validated like storeHours.
+      const dh = patch.departmentHours as Record<string, unknown> | null;
+      if (
+        dh !== null &&
+        (typeof dh !== 'object' ||
+          Array.isArray(dh) ||
+          Object.entries(dh).some(
+            ([k, v]) =>
+              !['sales', 'service', 'parts'].includes(k) ||
+              (v !== null && !parseWeekly(v)),
+          ))
+      )
+        throw new BadRequestException(
+          'departmentHours must be { sales|service|parts: { mon: { open: "09:00", close: "19:00" }, … } }',
+        );
       data.departmentHours = patch.departmentHours as Prisma.InputJsonValue;
+      data.storeHoursVerifiedAt = null; // hours changed → must be re-verified
+    }
     if (patch.holidayHours !== undefined) {
       if (
         !Array.isArray(patch.holidayHours) ||

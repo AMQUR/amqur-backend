@@ -7,6 +7,7 @@
 const CREDENTIAL_CONTROLLERS: ReadonlySet<string> = new Set([
   'AuthController',
   'CanaryAuthController',
+  'CrmWfStaffLinkController',
 ]);
 
 export function isCredentialController(name: string | undefined): boolean {

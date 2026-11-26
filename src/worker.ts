@@ -14,6 +14,8 @@ import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
 import { OutboxProcessorService } from './integrations/core/outbox-processor.service';
 import { MetaLeadsInboxProcessor } from './integrations/meta/meta-leads-inbox.processor';
+import { CrmWfEngineService } from './crm-workforce/engine.service';
+import { CrmWfReportSchedulerService } from './crm-workforce/report-scheduler.service';
 
 async function bootstrap() {
   process.env.PROCESS_ROLE = process.env.PROCESS_ROLE || 'worker';
@@ -66,6 +68,37 @@ async function bootstrap() {
     }
   };
 
+  // AMQUR CRM Workforce: started ONLY when CRM_WORKFORCE_ENABLED=true. With the switch off
+  // (the default) nothing below runs and the worker behaves exactly as before.
+  const crmWfOn = process.env.CRM_WORKFORCE_ENABLED === 'true';
+  const crmWfPollMs = Number(process.env.CRM_WORKFORCE_POLL_MS || 20_000);
+  const crmWfTick = async () => {
+    try {
+      await app.get(CrmWfEngineService).tick();
+    } catch (err: unknown) {
+      logger.error(
+        `CRM Workforce tick failed: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  };
+  const crmWfHandle = crmWfOn ? setInterval(crmWfTick, crmWfPollMs) : null;
+  if (crmWfOn) logger.log(`CRM Workforce engine on; poll ${crmWfPollMs}ms`);
+  // Internal management reports and critical alerts: only when CRM_WORKFORCE_REPORTS_ENABLED=true
+  // with an approved channel (approval R14). Each send is claimed once across processes.
+  const reportsOn = process.env.CRM_WORKFORCE_REPORTS_ENABLED === 'true';
+  const reportTick = async () => {
+    try {
+      const r = app.get(CrmWfReportSchedulerService);
+      await r.tick();
+      await r.alerts();
+    } catch (err: unknown) {
+      logger.error(
+        `CRM Workforce report tick failed: ${err instanceof Error ? err.message : 'unknown'}`,
+      );
+    }
+  };
+  const reportHandle = reportsOn ? setInterval(reportTick, 5 * 60_000) : null;
+
   await tick();
   if (metaLeadMaterializerOn) await metaTick();
   const handle = setInterval(tick, intervalMs);
@@ -77,6 +110,8 @@ async function bootstrap() {
     logger.log(`Received ${signal}; shutting down`);
     clearInterval(handle);
     if (metaHandle) clearInterval(metaHandle);
+    if (crmWfHandle) clearInterval(crmWfHandle);
+    if (reportHandle) clearInterval(reportHandle);
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await app.close();
     process.exit(0);
