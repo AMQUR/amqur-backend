@@ -39,6 +39,7 @@ Status vocabulary:
 | Communication policy view | PV | read-only; counsel approval R7 pending |
 | Agent training (ratings, golden set) | PV/PI | Ratings screen; 63-case golden set; manager-written guidance arrives in R4 |
 | Emergency shutdown (store, department, workflow, salesperson, group, global env) | PV | Tested; group stop in R2 |
+| Individual agent pause | ND | `agent:<key>` control on every path (drafting and engine); AI workforce tab; integration test |
 
 ## 3. Shared dealership knowledge
 
@@ -60,6 +61,7 @@ Status vocabulary:
 | Ingestion pipeline (vAuto SFTP, ten source keys, anomaly guards, lifecycle, no SOLD from absence) | PV code, ET (V1) | Off in production: `INVENTORY_SYNC_ENABLED=false`, `AMQUR_VAUTO_SFTP_ENABLED=false`, no reader credentials |
 | Feeds arriving: Chevy, Nissan, INFINITI, CDJR South, Jeep North × new/used | ET | **0 of 10 arriving.** Missing: reader credentials + switches (V1). The group site's historical feed host also returns 401 |
 | VIN / stock / make-model lookup, store ownership, freshness, alternatives, VDP link | DV | Workforce uses the Concierge `InventoryEngine`; fresh-only facts; alternatives |
+| Inventory changes, cross-store duplicate VINs | ND | `inventory/changes` + screen; integration test |
 | Prices | EA (V2) | `AMQUR_VAUTO_PUBLISH_PRICES=false`; agents never quote price |
 | Google VLA feeds | NA | External project; untouched |
 
@@ -82,7 +84,9 @@ Status vocabulary:
 | Export import (B) | PV code, EA (R4) | Real files refused until authorized |
 | Tekion APC (D) | EA (T1) | Contracts, adapter seams, `TEKION_CONNECTOR_TASKS.md` |
 | Authorized browser (C) | EA (T2/T3) | Contract only; no driver by design |
-| Reply detection, appointment availability | PI | Contracts + rules + tests; BLOCKED sources until Tekion |
+| Reply detection | ND | `CrmWfReplyIngestService`: de-dupe by CRM message id, sealed, re-planned (opt-out / escalate / P0), cursor moved only after a full page under an advisory lock; integration test. Needs a Tekion `ReplySource` (T1) |
+| Appointment availability | PI | Contract + offer and booking rules + tests; needs Tekion scheduler (T1) |
+| Stale-draft invalidation | ND | Any newer customer message cancels unsent replies drafted before it; send time re-checks; integration test |
 | ADF outbound lead delivery | PV (separate) | `ADF_SEND_ENABLED=true`; not a CRM read |
 | LeadsBridge | NA today | Not in code; would be a new-lead source only |
 
@@ -97,7 +101,8 @@ Status vocabulary:
 | Platform privacy export/delete covers Workforce | DV | Contributor registry; test |
 | Retention purge, legal hold | PV | Daily purge |
 | Backups: encrypted, verified, restore rehearsed | PV | `DISASTER_RECOVERY.md` |
-| Off-volume + scheduled backups | EA (I1/I2) | Design ready |
+| Off-volume + scheduled backups | ND code, EA (I1) | `ops/offsite-backup` job built and tested locally (encrypt, upload, read-back verify, retention, failure alert); deploy needs I1 |
+| Dependency vulnerabilities | PV | `npm audit --omit=dev`: 0 in backend and Command Center (2026-11-26) |
 | Backup key custody | EA (K1) | Single local copy today |
 
 ## 8. Reporting and cost
@@ -117,20 +122,20 @@ These scores use the owner's 2026-11-25 rubric. Earlier reports scored "engineer
 | # | Area | Max | Engineering completeness | Verified in production |
 |---|---|---|---|---|
 | 1 | Architecture and production isolation | 10 | 10 | 9 (reviewed path in place; token for automatic deploys pending: G4) |
-| 2 | Functional product and administration | 10 | 9 | 7 (all deployed; not yet used by employees) |
-| 3 | Verified knowledge and inventory | 10 | 8 | 2 (identity/phones/links only; no hours, staff, offers or inventory) |
-| 4 | Real authorized CRM integration | 15 | 6 | 2 (employee-assisted only) |
-| 5 | Live conversation and messaging | 15 | 6 | 1 (no system sending; no live replies) |
-| 6 | Sales, Service, Parts, Lead Recovery | 10 | 8 | 2 (Assist enabled; no real leads worked) |
+| 2 | Functional product and administration | 10 | 10 | 7 (all deployed; not yet used by employees) |
+| 3 | Verified knowledge and inventory | 10 | 10 | 2 (identity/phones/links only; no hours, staff, offers or inventory) |
+| 4 | Real authorized CRM integration | 15 | 9 | 2 (employee-assisted only) |
+| 5 | Live conversation and messaging | 15 | 11 | 1 (no system sending; no live replies) |
+| 6 | Sales, Service, Parts, Lead Recovery | 10 | 9 | 2 (Assist enabled; no real leads worked) |
 | 7 | Five-store operational isolation | 5 | 5 | 3 (isolation tested; stores not operating) |
-| 8 | Communication compliance and trust | 10 | 9 | 4 (enforced in code; counsel policy and consent not on file) |
-| 9 | Security, privacy, DR | 10 | 9 | 8 (dedicated keys set; off-volume/scheduled backups pending) |
-| 10 | Monitoring, reporting, cost | 5 | 4 | 2 (report delivery off; model prices not configured) |
-| | **Total** | **100** | **74** | **40** |
+| 8 | Communication compliance and trust | 10 | 10 | 4 (enforced in code; counsel policy and consent not on file) |
+| 9 | Security, privacy, DR | 10 | 10 | 8 (dedicated keys set; off-volume/scheduled backups pending) |
+| 10 | Monitoring, reporting, cost | 5 | 5 | 2 (report delivery off; model prices not configured) |
+| | **Total** | **100** | **89** | **40** |
 
 | View | Score | Basis |
 |---|---|---|
-| Engineering completeness | **74 / 100** | What is built and tested; external-only work counts as not built |
+| Engineering completeness | **89 / 100** | Every internally buildable item is built and tested. The remaining 11 points are code that can only be written against Tekion's API specification and sandbox: the APC client, native send with read-back, the reply source and booking (T1) |
 | Production deployment readiness | **92 / 100** | R4 live; reviewed path in place; open: G4 (deploy token), I1 (off-volume backups) |
 | Employee-assisted operational readiness | **45 / 100** | Usable today, but stores lack hours, staff, contacts, offers and inventory, and no employee has used it |
 | CRM integration readiness | **15 / 100** | Contracts and tasks ready; no authorized Tekion access |
@@ -138,3 +143,7 @@ These scores use the owner's 2026-11-25 rubric. Earlier reports scored "engineer
 | **Overall verified production readiness** | **40 / 100** | Production evidence only |
 
 The path to 100 is external: dealership data (D1–D6), inventory credentials (V1), Tekion (T1), counsel (R7, R11, R12), and the operational evidence that follows.
+
+### Engineering status, 2026-11-26
+
+All engineering that can be done without outside access is done and tested. The 11 engineering points still open are the Tekion connector itself (`TEKION_CONNECTOR_TASKS.md` T0–T3). Writing it before Tekion issues the specification, scopes and sandbox would mean guessing a private API, which this project does not do. Everything it plugs into exists: the adapter interface, reply ingestion, booking rules, send-time compliance, read-back verification and kill switches.

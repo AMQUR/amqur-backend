@@ -123,3 +123,85 @@ export async function feedStatusForStore(
   }
   return { feeds, syncEnabled, sftpEnabled, sftpCredentials, pricesPublished };
 }
+
+/**
+ * What changed in a store's inventory in the last `hours`: vehicles added, now missing from
+ * the feed, or removed (never "sold" without vendor evidence), plus VINs this store lists that
+ * another dealership also lists as available (a data problem to check before quoting either).
+ */
+export async function inventoryChanges(
+  prisma: PrismaService,
+  tenantId: string,
+  locationId: string,
+  hours = 24,
+  now = new Date(),
+) {
+  const since = new Date(
+    now.getTime() - Math.min(Math.max(hours, 1), 168) * 3_600_000,
+  );
+  const sel = {
+    vin: true,
+    stock: true,
+    year: true,
+    make: true,
+    model: true,
+    trim: true,
+    status: true,
+    lastSeenAt: true,
+    listingRemovedAt: true,
+    createdAt: true,
+  } as const;
+  const [added, missing, removed, mine] = await Promise.all([
+    prisma.vehicle.findMany({
+      where: { tenantId, locationId, createdAt: { gte: since } },
+      select: sel,
+      take: 100,
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.vehicle.findMany({
+      where: {
+        tenantId,
+        locationId,
+        status: { in: ['MISSING', 'PENDING_RECONCILIATION'] },
+        updatedAt: { gte: since },
+      },
+      select: sel,
+      take: 100,
+    }),
+    prisma.vehicle.findMany({
+      where: { tenantId, locationId, listingRemovedAt: { gte: since } },
+      select: sel,
+      take: 100,
+    }),
+    prisma.vehicle.findMany({
+      where: {
+        tenantId,
+        locationId,
+        status: { in: ['AVAILABLE', 'IN_TRANSIT'] },
+      },
+      select: { vin: true },
+      take: 5000,
+    }),
+  ]);
+  const dupes = mine.length
+    ? await prisma.vehicle.findMany({
+        where: {
+          vin: { in: mine.map((v) => v.vin) },
+          tenantId: { not: tenantId },
+          status: { in: ['AVAILABLE', 'IN_TRANSIT'] },
+        },
+        select: { vin: true, tenant: { select: { name: true } } },
+        take: 100,
+      })
+    : [];
+  return {
+    since,
+    added,
+    missing,
+    removed,
+    duplicateVinsElsewhere: dupes.map((d) => ({
+      vin: d.vin,
+      alsoListedBy: d.tenant.name,
+    })),
+  };
+}

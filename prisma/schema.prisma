@@ -2547,6 +2547,8 @@ model CrmWfConnector {
   lastHealthAt       DateTime?
   lastSyncAt         DateTime?
   lastError          String?
+  /// Reply-detection cursor from the CRM; moved forward only after a page is fully handled.
+  syncCursor         String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

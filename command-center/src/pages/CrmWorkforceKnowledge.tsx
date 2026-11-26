@@ -109,6 +109,7 @@ export function KnowledgeTab({ locationId, isManager, isAdmin }: { locationId: s
         )}
       </Card>
       <InventoryCard locationId={locationId} />
+      <InventoryChangesCard locationId={locationId} />
     </>
   );
 }
@@ -184,6 +185,27 @@ function InventoryCard({ locationId }: { locationId: string }) {
             <tr key={c.vin}><td>{c.year} {c.make} {c.model} {c.trim ?? ''}<div className="muted small">{[c.condition, c.color].filter(Boolean).join(' · ')}</div></td><td className="small">{c.stock ?? '—'}<div className="muted">{c.vin}</div></td><td><Badge tone={c.status === 'AVAILABLE' ? 'ok' : 'warn'}>{c.status.toLowerCase().replace('_', ' ')}</Badge></td><td className="small">{c.freshnessState.toLowerCase()} · {c.lastSeenAt ? ago(c.lastSeenAt) : 'never seen'}</td></tr>
           ))}</tbody>
         </table>
+      ))}
+    </Card>
+  );
+}
+
+type Change = { vin: string; stock: string | null; year: number; make: string; model: string; trim: string | null; status: string };
+/** Recent inventory movement: added, missing from the feed, removed; and VINs another store also lists. */
+function InventoryChangesCard({ locationId }: { locationId: string }) {
+  const c = useAsync(() => api<{ added: Change[]; missing: Change[]; removed: Change[]; duplicateVinsElsewhere: Array<{ vin: string; alsoListedBy: string }> }>(`${BASE}/inventory/changes?hours=24&${loc(locationId)}`), [locationId]);
+  const d = c.data;
+  const row = (v: Change) => <li key={v.vin} className="small">{v.year} {v.make} {v.model} {v.trim ?? ''} · stock {v.stock ?? '—'} · {v.status.toLowerCase().replace('_', ' ')}</li>;
+  return (
+    <Card title="Inventory changes (24 h)">
+      <ErrorNote error={c.error} />
+      {d && (!d.added.length && !d.missing.length && !d.removed.length && !d.duplicateVinsElsewhere.length ? <Empty>No inventory changes recorded in the last 24 hours.</Empty> : (
+        <div className="grid2">
+          <div><strong>Added ({d.added.length})</strong><ul>{d.added.slice(0, 20).map(row)}</ul></div>
+          <div><strong>Missing from the feed ({d.missing.length})</strong><ul>{d.missing.slice(0, 20).map(row)}</ul><p className="muted small">Missing is not sold: no sale is recorded without the vendor’s evidence.</p></div>
+          <div><strong>Removed ({d.removed.length})</strong><ul>{d.removed.slice(0, 20).map(row)}</ul></div>
+          {!!d.duplicateVinsElsewhere.length && <div><Badge tone="warn">same VIN at another store</Badge><ul>{d.duplicateVinsElsewhere.map((x) => <li key={x.vin + x.alsoListedBy} className="small">{x.vin} — also listed by {x.alsoListedBy}</li>)}</ul></div>}
+        </div>
       ))}
     </Card>
   );

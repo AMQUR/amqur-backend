@@ -237,6 +237,9 @@ export class CrmWfActionService {
     // Target verification: dealership, customer, channel, current state.
     if (!lead) return block('target_lead_not_in_action_rooftop');
     if (lead.adapterKey !== a.adapterKey) return block('adapter_mismatch');
+    // The customer wrote again after this message was drafted: it no longer answers them.
+    if (lead.lastInboundAt && lead.lastInboundAt > a.createdAt)
+      return block('customer_sent_a_newer_message');
     const adapter = this.adapters.get(a.adapterKey ?? '');
     if (!adapter) return block('adapter_unknown');
     const payload = a.payload as { body?: string; workflow?: string };

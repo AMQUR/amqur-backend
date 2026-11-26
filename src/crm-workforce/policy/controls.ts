@@ -42,6 +42,8 @@ export type ControlTarget = {
   department: Department;
   workflowKey: WorkflowKey;
   assignedTo?: string | null;
+  /** The agent doing the work; an individual agent can be paused (`agent:<key>` workflow row). */
+  agentKey?: string | null;
 };
 
 export const scopeKeys = {
@@ -62,6 +64,10 @@ export function pathKeys(t: ControlTarget): string[] {
     scopeKeys.department(t.tenantId, t.locationId, t.department),
     scopeKeys.workflow(t.tenantId, t.locationId, t.workflowKey),
   ];
+  if (t.agentKey)
+    keys.push(
+      scopeKeys.workflow(t.tenantId, t.locationId, `agent:${t.agentKey}`),
+    );
   if (t.assignedTo?.trim())
     keys.push(scopeKeys.salesperson(t.tenantId, t.locationId, t.assignedTo));
   return keys;

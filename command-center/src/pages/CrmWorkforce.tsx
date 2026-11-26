@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, session, setActingTenant } from '../api';
 import { KnowledgeTab } from './CrmWorkforceKnowledge';
-import { AccessLogCard, ReportDeliveryCard, CostLimitsCard, DealershipSwitcher, GroupStopCard, PolicyCard, TeamTab, type MyDealerships } from './CrmWorkforceAdmin';
+import { AgentPauseCard, AccessLogCard, ReportDeliveryCard, CostLimitsCard, DealershipSwitcher, GroupStopCard, PolicyCard, TeamTab, type MyDealerships } from './CrmWorkforceAdmin';
 import { ago, fmtDate, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, Stat } from '../ui';
 import { DirectorCard, ImportsTab, MiningTab, PrivacyCard, ReportsCard, RosterCard, WorkItemsTab, WorkspaceTab } from './CrmWorkforceOps';
@@ -141,6 +141,7 @@ export function CrmWorkforce({ locationId: homeLocationId }: { locationId: strin
       {tab === 'queues' && <QueuesTab locationId={locationId} />}
       {tab === 'drafts' && <DraftsTab locationId={locationId} isManager={isManager} />}
       {tab === 'workforce' && <RosterCard locationId={locationId} />}
+      {tab === 'workforce' && <AgentPauseCard locationId={locationId} isManager={isManager && !readOnlyGroup} />}
       {tab === 'workforce' && <WorkforceTab locationId={locationId} isAdmin={isAdmin} />}
       {tab === 'controls' && s && <ControlsTab status={s} locationId={locationId} isManager={isManager} isAdmin={isAdmin} reload={reload} />}
       {tab === 'compliance' && <ComplianceTab isAdmin={isAdmin} />}

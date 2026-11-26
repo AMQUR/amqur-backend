@@ -315,3 +315,37 @@ export function ReportDeliveryCard({ locationId }: { locationId: string }) {
     </Card>
   );
 }
+
+const AGENTS: Array<{ key: string; label: string }> = [
+  { key: 'sales_bdc', label: 'Sales BDC' },
+  { key: 'service_bdc', label: 'Service BDC' },
+  { key: 'parts_bdc', label: 'Parts BDC' },
+  { key: 'lead_recovery', label: 'Lead recovery' },
+  { key: 'conversation_manager', label: 'Conversation manager' },
+  { key: 'appointment_manager', label: 'Appointment manager' },
+];
+type Ctl = { scope: string; locationId: string | null; subjectKey: string | null; halted: boolean };
+
+/** Pause one agent at this rooftop without stopping the rest. Anyone may pause; managers resume. */
+export function AgentPauseCard({ locationId, isManager }: { locationId: string; isManager: boolean }) {
+  const st = useAsync(() => api<{ controls: Ctl[] }>(`${BASE}/status?locationId=${encodeURIComponent(locationId)}`), [locationId]);
+  const a = useAct(() => void st.reload());
+  if (!locationId) return null;
+  const paused = (k: string) => !!st.data?.controls.find((c) => c.scope === 'WORKFLOW' && c.locationId === locationId && c.subjectKey === `agent:${k}` && c.halted);
+  return (
+    <Card title="Individual agents">
+      <p className="muted small">Pausing an agent stops its drafts and automated steps at this rooftop only; other agents keep working. A paused agent’s queued work waits and resumes where it left off.</p>
+      {a.note}
+      <table className="table"><tbody>{AGENTS.map((g) => {
+        const p = paused(g.key);
+        return (
+          <tr key={g.key}>
+            <td>{g.label}</td>
+            <td><Badge tone={p ? 'bad' : 'ok'}>{p ? 'paused' : 'running'}</Badge></td>
+            <td>{p ? (isManager && <button className="btn btn--ghost" disabled={a.busy} onClick={() => void a.act(() => post('controls', { scope: 'WORKFLOW', locationId, subjectKey: `agent:${g.key}`, halted: false, reason: `${g.label} resumed` }), 'Resumed.')}>Resume</button>) : <button className="btn btn--ghost" disabled={a.busy} onClick={() => void a.act(() => post('controls', { scope: 'WORKFLOW', locationId, subjectKey: `agent:${g.key}`, halted: true, reason: `${g.label} paused from Command Center` }), 'Paused.')}>Pause</button>}</td>
+          </tr>
+        );
+      })}</tbody></table>
+    </Card>
+  );
+}

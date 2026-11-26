@@ -30,7 +30,17 @@ Format: `pg_dump -Fc -Z 6`, encrypted with AES-256-CBC, PBKDF2 with 200,000 iter
 | **Native Railway backups unavailable** on the current plan (`docs/operations/PRODUCTION_BACKUP_EVIDENCE.md`) | No point-in-time recovery | Plan change enabling volume backups, or keep the logical-backup job | Approval **I2** (owner checks the plan price in Railway) |
 | **Backup passphrase has one copy**, in `.local-secrets/prod-db-backup-20261125.key` on the owner's machine | Machine loss = backups unreadable | Store it in the owner's password manager / vault; then delete the local file | Owner action **K1** |
 
-### Off-volume backup design (ready to build once I1 is approved)
+### Off-volume backup job (built and tested; deploy once I1 is approved)
+
+The code is in `ops/offsite-backup/` (Dockerfile + `backup.sh`). Local test on 2026-11-26, run against the test database with a folder-backed bucket stand-in:
+- three runs each produced `BACKUP OK` with read-back hash match, decrypt and `pg_restore` read (72 table-data entries);
+- retention kept the newest 2 of 3;
+- an unreachable database failed with `BACKUP FAILED: dump_or_encrypt`;
+- a wrong passphrase was refused.
+
+The test also found and fixed a real bug: an empty prefix made the S3 listing exit non-zero and aborted the run.
+
+The design below is what the job implements.
 1. **Storage:** one Railway Bucket (S3-compatible object storage) in the same project. Railway prices storage per GB-month. Each encrypted dump is about 0.3 MB today, so a 30-day daily retention is roughly 10 MB; check the current price in the Railway dashboard before approving. No new vendor.
 2. **Job:** a Railway cron service, daily at 03:30 Chicago, image `postgres:16`. It runs `pg_dump | openssl enc` and uploads to the bucket with a dated name.
    - Its database credential is a read-only role created for backups.

@@ -57,7 +57,7 @@ import { CrmWfPrivacyService } from './privacy.service';
 import { CrmWfKeyRotationService } from './key-rotation.service';
 import { DealerKnowledgeService } from '../dealer-knowledge/dealer-knowledge.service';
 import { InventoryEngine } from '../chat/engines/inventory.engine';
-import { feedStatusForStore } from './inventory-feeds';
+import { feedStatusForStore, inventoryChanges } from './inventory-feeds';
 import { CrmWfReportSchedulerService } from './report-scheduler.service';
 import { REPORT_KINDS, type ReportKind } from './director.service';
 import { CrmWfQueueService } from './queue.service';
@@ -1370,6 +1370,24 @@ export class CrmWorkforceController {
       limit: 20,
     });
     return { by: 'search', results };
+  }
+  /** Added, missing and removed vehicles recently, and VINs another dealership also lists. */
+  @Roles(...STAFF)
+  @Get('inventory/changes')
+  inventoryChanges(
+    @CurrentUser() u: AuthUser,
+    @Query('hours') hours?: string,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, t, l);
+    if (!s.locationId) throw new BadRequestException('choose_a_rooftop');
+    return inventoryChanges(
+      this.prisma,
+      s.tenantId,
+      s.locationId,
+      Number(hours) || 24,
+    );
   }
   /** The two expected feeds (new, used) for this store and whether data is arriving. */
   @Roles(...STAFF)

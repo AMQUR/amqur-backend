@@ -277,6 +277,7 @@ export class CrmWfAssistService {
       department: lead.department,
       workflowKey: workflow,
       assignedTo: lead.assignedTo,
+      agentKey: agent,
     });
     if (control.halted)
       throw new ConflictException(`stopped:${control.haltedBy.join(',')}`);
