@@ -16,10 +16,30 @@ type TrackerRequest = {
   ip?: unknown;
   ips?: unknown;
   user?: unknown;
+  headers?: Record<string, unknown>;
 };
 
-/** First proxy hop when Express `trust proxy` populated `req.ips`, else the socket address. */
-export function clientIp(req: TrackerRequest): string {
+const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+const IPV6 = /^[0-9a-f:]{2,39}$/i;
+
+/**
+ * The client address. On Railway (TRUST_X_REAL_IP=true) the edge sets `X-Real-IP` to the
+ * caller's address and overwrites any client-sent value; X-Forwarded-For can carry an extra
+ * edge hop there, which split one shopper across several buckets. Elsewhere: the first trusted
+ * proxy hop when Express `trust proxy` populated `req.ips`, else the socket address.
+ */
+export function clientIp(
+  req: TrackerRequest,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (env.TRUST_X_REAL_IP === 'true') {
+    const raw = req.headers?.['x-real-ip'];
+    const v = (Array.isArray(raw) ? raw[0] : raw) as unknown;
+    if (typeof v === 'string') {
+      const ip = v.trim();
+      if (IPV4.test(ip) || IPV6.test(ip)) return ip;
+    }
+  }
   const ips = req.ips;
   if (Array.isArray(ips) && ips.length && typeof ips[0] === 'string') {
     return ips[0];
