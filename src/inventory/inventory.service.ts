@@ -3,6 +3,21 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InventoryVehicle } from '../chat/types/vehicle.types';
 import { VehicleStatus, Prisma, InventoryFreshnessState } from '@prisma/client';
 
+type DbClient = Prisma.TransactionClient | PrismaService;
+
+export type UpsertVehiclesMeta = {
+  source?: string;
+  importRunId?: string;
+  freshnessState?: InventoryFreshnessState;
+  feedSourceKey?: string;
+  /** When false, strip advertised price even if present in the feed. */
+  publishPrices?: boolean;
+  /** When false, strip photo URLs (rights not verified). */
+  publishPhotos?: boolean;
+  /** Optional interactive-transaction client for atomic ingest. */
+  tx?: Prisma.TransactionClient;
+};
+
 @Injectable()
 export class InventoryService {
   constructor(private readonly prisma: PrismaService) {}
@@ -68,23 +83,37 @@ export class InventoryService {
     tenantId: string,
     locationId: string | null,
     vehicles: InventoryVehicle[],
-    meta?: {
-      source?: string;
-      importRunId?: string;
-      freshnessState?: InventoryFreshnessState;
-    },
+    meta?: UpsertVehiclesMeta,
   ) {
+    const db: DbClient = meta?.tx ?? this.prisma;
     const now = new Date();
     const source = meta?.source ?? null;
     const importRunId = meta?.importRunId ?? null;
     const freshnessState =
       meta?.freshnessState ?? InventoryFreshnessState.FRESH;
+    const feedSourceKey = meta?.feedSourceKey ?? null;
+    const publishPrices = meta?.publishPrices === true;
+    const publishPhotos = meta?.publishPhotos === true;
 
     for (const v of vehicles) {
       if (!v?.vin) continue;
       const vin = v.vin.toUpperCase().trim();
+      const price = publishPrices ? (v.price ?? null) : null;
+      // MSRP is also commercial pricing — suppress with the same publish gate.
+      const msrp = publishPrices ? (v.msrp ?? null) : null;
+      const photos = publishPhotos
+        ? ((v.photos as Prisma.InputJsonValue) ?? undefined)
+        : [];
 
-      await this.prisma.vehicle.upsert({
+      const existing = await db.vehicle.findUnique({
+        where: { tenantId_vin: { tenantId, vin } },
+        select: { status: true, explicitSoldEvidence: true },
+      });
+      const keepExplicitSold =
+        existing?.status === VehicleStatus.SOLD &&
+        Boolean(existing.explicitSoldEvidence?.trim());
+
+      await db.vehicle.upsert({
         where: {
           tenantId_vin: { tenantId, vin },
         },
@@ -99,16 +128,25 @@ export class InventoryService {
           transmission: v.transmission ?? null,
           fuelType: v.fuelType ?? null,
           color: v.color ?? null,
-          price: v.price ?? null,
-          msrp: v.msrp ?? null,
+          price,
+          msrp,
           mileage: v.mileage ?? null,
-          photos: (v.photos as Prisma.InputJsonValue) ?? undefined,
+          photos,
+          condition: v.condition ?? undefined,
           locationId,
-          status: VehicleStatus.AVAILABLE,
+          // Never resurrect an explicitly evidenced SOLD row from a feed reappearance alone.
+          ...(keepExplicitSold
+            ? {}
+            : {
+                status: VehicleStatus.AVAILABLE,
+                listingRemovedAt: null,
+                explicitSoldEvidence: null,
+              }),
           lastSeenAt: now,
           source: source ?? v.source ?? undefined,
           importRunId: importRunId ?? undefined,
           freshnessState,
+          feedSourceKey: feedSourceKey ?? undefined,
         },
         create: {
           vin,
@@ -122,10 +160,11 @@ export class InventoryService {
           transmission: v.transmission ?? null,
           fuelType: v.fuelType ?? null,
           color: v.color ?? null,
-          price: v.price ?? null,
-          msrp: v.msrp ?? null,
+          price,
+          msrp,
           mileage: v.mileage ?? null,
-          photos: (v.photos as Prisma.InputJsonValue) ?? undefined,
+          photos: photos ?? [],
+          condition: v.condition ?? null,
           tenantId,
           locationId,
           status: VehicleStatus.AVAILABLE,
@@ -133,32 +172,115 @@ export class InventoryService {
           source: source ?? v.source ?? null,
           importRunId,
           freshnessState,
+          feedSourceKey,
         },
       });
     }
   }
 
-  async updateVehicleLifecycle(locationId: string) {
-    const now = new Date();
-    const missingThreshold = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const soldThreshold = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  /**
+   * After a *successful* snapshot for one feed source:
+   * - Vehicles in that source not refreshed in this run → MISSING (not SOLD).
+   * - Long-missing vehicles → REMOVED_FROM_LISTING (still not SOLD).
+   * - SOLD is never inferred from absence; use {@link markExplicitlySold}.
+   *
+   * Scoping by feedSourceKey ensures a New feed cannot wipe Used stock (and vice versa).
+   */
+  async updateVehicleLifecycle(
+    locationId: string,
+    opts: {
+      feedSourceKey?: string | null;
+      /** Start of the successful import; rows with lastSeenAt >= this stay AVAILABLE. */
+      snapshotStartedAt: Date;
+      /** Days in MISSING before REMOVED_FROM_LISTING (default 14). */
+      removedAfterDays?: number;
+      tx?: Prisma.TransactionClient;
+    },
+  ) {
+    const db: DbClient = opts.tx ?? this.prisma;
+    const removedAfterDays = opts.removedAfterDays ?? 14;
+    const removedThreshold = new Date(
+      opts.snapshotStartedAt.getTime() - removedAfterDays * 24 * 60 * 60 * 1000,
+    );
+    // When feedSourceKey is omitted (legacy HTTPS), only touch rows that also lack a
+    // feedSourceKey. Never let an HTTPS reconcile wipe Dial Difference SFTP stock.
+    const sourceFilter = opts.feedSourceKey
+      ? { feedSourceKey: opts.feedSourceKey }
+      : { feedSourceKey: null };
 
-    await this.prisma.vehicle.updateMany({
+    await db.vehicle.updateMany({
       where: {
         locationId,
-        status: VehicleStatus.AVAILABLE,
-        lastSeenAt: { lt: missingThreshold },
+        ...sourceFilter,
+        status: {
+          in: [
+            VehicleStatus.AVAILABLE,
+            VehicleStatus.IN_TRANSIT,
+            VehicleStatus.HOLD,
+            VehicleStatus.PENDING_RECONCILIATION,
+          ],
+        },
+        OR: [
+          { lastSeenAt: null },
+          { lastSeenAt: { lt: opts.snapshotStartedAt } },
+        ],
       },
-      data: { status: VehicleStatus.MISSING },
+      data: {
+        status: VehicleStatus.MISSING,
+        freshnessState: InventoryFreshnessState.DEGRADED,
+      },
     });
 
-    await this.prisma.vehicle.updateMany({
+    await db.vehicle.updateMany({
       where: {
         locationId,
+        ...sourceFilter,
         status: VehicleStatus.MISSING,
-        lastSeenAt: { lt: soldThreshold },
+        // Require a known lastSeenAt so never-seen null rows are not instantly removed.
+        lastSeenAt: { lt: removedThreshold },
       },
-      data: { status: VehicleStatus.SOLD },
+      data: {
+        status: VehicleStatus.REMOVED_FROM_LISTING,
+        listingRemovedAt: new Date(),
+        freshnessState: InventoryFreshnessState.STALE,
+      },
+    });
+  }
+
+  /**
+   * Mark SOLD only with vendor/staff evidence. Absence from a feed is never enough.
+   */
+  async markExplicitlySold(params: {
+    tenantId: string;
+    vin: string;
+    evidence: string;
+  }) {
+    const vin = params.vin.toUpperCase().trim();
+    const evidence = params.evidence.trim().slice(0, 200);
+    if (!evidence) throw new Error('sold_evidence_required');
+    return this.prisma.vehicle.updateMany({
+      where: { tenantId: params.tenantId, vin },
+      data: {
+        status: VehicleStatus.SOLD,
+        explicitSoldEvidence: evidence,
+        freshnessState: InventoryFreshnessState.UNAVAILABLE,
+      },
+    });
+  }
+
+  async quarantineVehicle(params: {
+    tenantId: string;
+    vin: string;
+    reason: string;
+  }) {
+    const vin = params.vin.toUpperCase().trim();
+    return this.prisma.vehicle.updateMany({
+      where: { tenantId: params.tenantId, vin },
+      data: {
+        status: VehicleStatus.QUARANTINED,
+        freshnessState: InventoryFreshnessState.UNAVAILABLE,
+        rawSource: { quarantineReason: params.reason.slice(0, 200) },
+      },
     });
   }
 }

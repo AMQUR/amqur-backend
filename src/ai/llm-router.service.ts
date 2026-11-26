@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AnthropicLlmProvider } from './anthropic-llm.provider';
 import { OpenAiLlmProvider } from './openai-llm.provider';
+import { CompatibleLlmProviders } from './compatible-llm.providers';
 import type {
   LlmGenerateParams,
   LlmGenerateResult,
@@ -99,6 +100,7 @@ export class LlmRouterService {
       tokens: `llm:spend:tokens:${day}`,
       usd: `llm:spend:microusd:${day}`,
       tenantUsd: tenantId ? `llm:spend:microusd:${day}:${tenantId}` : null,
+      tenantTokens: tenantId ? `llm:spend:tokens:${day}:${tenantId}` : null,
     };
   }
 
@@ -115,13 +117,24 @@ export class LlmRouterService {
     // replies continue) rather than letting each replica count on its own.
     if (process.env.NODE_ENV === 'production') {
       const configured = !!process.env.REDIS_URL?.trim();
-      const probe = (this.cache as { isRedisHealthy?: () => boolean })
-        .isRedisHealthy;
-      const healthy = typeof probe === 'function' ? probe() : false;
+      // Call the method ON the cache: it reads `this.redis`, so an extracted reference throws.
+      const cache = this.cache as { isRedisHealthy?: () => boolean };
+      const healthy =
+        typeof cache.isRedisHealthy === 'function'
+          ? cache.isRedisHealthy()
+          : false;
       if (!configured || !healthy) return 'spend_store_unavailable';
     }
     const k = this.keys(tenantId);
     if ((await this.counter(k.tokens)) >= this.dailyBudget())
+      return 'budget_exhausted';
+    // One tenant (one website) cannot spend the whole shared allowance.
+    const perTenant = this.num('LLM_TENANT_DAILY_TOKEN_BUDGET');
+    if (
+      perTenant !== null &&
+      k.tenantTokens &&
+      (await this.counter(k.tenantTokens)) >= perTenant
+    )
       return 'budget_exhausted';
     const caps = this.usdCaps();
     if (caps.group === null && caps.tenant === null) return null;
@@ -142,7 +155,10 @@ export class LlmRouterService {
     const ttl = 2 * 86_400;
     const inc = (key: string, by: number) =>
       this.cache.incrBy(key, by, ttl).catch(() => 0);
-    if (tokens) await inc(k.tokens, tokens);
+    if (tokens) {
+      await inc(k.tokens, tokens);
+      if (k.tenantTokens) await inc(k.tenantTokens, tokens);
+    }
     if (microUsd) {
       await inc(k.usd, microUsd);
       if (k.tenantUsd) await inc(k.tenantUsd, microUsd);
@@ -177,8 +193,20 @@ export class LlmRouterService {
           h.provider === 'anthropic'
             ? (this.config.get<string>('ANTHROPIC_MODEL') ??
               'claude-sonnet-5-5')
-            : (this.config.get<string>('OPENAI_MODEL') ?? 'gpt-4o-mini'),
+            : h.provider === 'openai'
+              ? (this.config.get<string>('OPENAI_MODEL') ?? 'gpt-4o-mini')
+              : (this.compatible
+                  ?.list()
+                  .find((c) => c.providerId === h.provider)
+                  ?.modelId() ?? null),
       })),
+      conversationModel:
+        this.config.get<string>('LLM_CONVERSATION_MODEL')?.trim() ||
+        'claude-opus-5-5',
+      routerModel:
+        this.config.get<string>('LLM_ROUTER_MODEL')?.trim() ||
+        'claude-haiku-5-5',
+      order: this.ordered().map((p) => p.providerId),
       dailyTokenBudget: budget,
       tokensUsedToday: used,
       budgetExhausted: used >= budget,
@@ -203,17 +231,52 @@ export class LlmRouterService {
     private readonly metrics: MetricsService,
     private readonly cache: ConfigCacheService,
     private readonly config: ConfigService,
+    @Optional() private readonly compatible?: CompatibleLlmProviders,
   ) {}
 
+  /**
+   * A model id belongs to one vendor. The caller may name a model per provider
+   * (`modelByProvider`); a bare `model` goes only to the vendor whose naming it matches. Any
+   * provider without a match uses its own configured default.
+   */
+  static modelFor(
+    providerId: string,
+    model?: string,
+    byProvider?: Record<string, string | undefined>,
+  ): string | undefined {
+    const named = byProvider?.[providerId]?.trim();
+    if (named) return named;
+    if (!model) return undefined;
+    const isClaude = model.startsWith('claude');
+    if (providerId === 'anthropic') return isClaude ? model : undefined;
+    return undefined;
+  }
+
+  private allProviders(): LlmProvider[] {
+    return [this.anthropic, this.openai, ...(this.compatible?.list() ?? [])];
+  }
+
+  /**
+   * Primary first, then LLM_FALLBACK_ORDER (comma-separated provider ids) when set, then the
+   * remaining configured providers in their declared order. Unconfigured providers never appear.
+   */
   private ordered(): LlmProvider[] {
     const primary = (
       this.config.get<string>('LLM_PRIMARY_PROVIDER') ?? 'anthropic'
     ).toLowerCase();
-    const all: LlmProvider[] = [this.anthropic, this.openai];
-    all.sort((a, b) =>
-      a.providerId === primary ? -1 : b.providerId === primary ? 1 : 0,
-    );
-    return all.filter((p) => p.isAvailable());
+    const wanted = (this.config.get<string>('LLM_FALLBACK_ORDER') ?? '')
+      .split(',')
+      .map((x) => x.trim().toLowerCase())
+      .filter(Boolean);
+    const all = this.allProviders();
+    const rank = (p: LlmProvider) => {
+      if (p.providerId === primary) return -1;
+      const i = wanted.indexOf(p.providerId);
+      return i === -1 ? wanted.length + all.indexOf(p) : i;
+    };
+    return [...all]
+      .sort((a, b) => rank(a) - rank(b))
+      .filter((p) => p.isAvailable());
   }
 
   isAvailable(): boolean {
@@ -252,7 +315,7 @@ export class LlmRouterService {
       circuitOpen: boolean;
       failures: number;
     }> = [];
-    for (const p of [this.anthropic, this.openai]) {
+    for (const p of this.allProviders()) {
       const s = await this.state(p.providerId);
       out.push({
         provider: p.providerId,
@@ -303,11 +366,19 @@ export class LlmRouterService {
       system: params.system,
       messages: params.messages.map((m) => ({
         ...m,
-        content: redactForLlm(m.content),
+        content:
+          params.redactRoles === 'user' && m.role !== 'user'
+            ? m.content
+            : redactForLlm(m.content),
       })),
     };
-    const timeoutMs = Math.min(params.timeoutMs ?? 12_000, 30_000);
+    // Streaming conversation replies may legitimately run long; everything else stays ≤ 30 s.
+    const timeoutMs = Math.min(
+      params.timeoutMs ?? 12_000,
+      params.onTextDelta ? 120_000 : 30_000,
+    );
     let attempts = 0;
+    let emitted = false;
     let lastReason: LlmFailureReason = 'all_circuits_open';
     for (const provider of providers) {
       const st = await this.state(provider.providerId);
@@ -318,8 +389,32 @@ export class LlmRouterService {
       attempts += 1;
       const started = Date.now();
       try {
+        // A second provider starts the reply over: tell the listener to drop what it has.
+        if (attempts > 1 && emitted) {
+          emitted = false;
+          try {
+            params.onTextDelta?.('', true);
+          } catch {
+            // ignore
+          }
+        }
         const result = await withTimeout(
-          provider.generate({ ...safe, timeoutMs }),
+          provider.generate({
+            ...safe,
+            timeoutMs,
+            // A model id belongs to one vendor; the fallback provider uses its own default.
+            model: LlmRouterService.modelFor(
+              provider.providerId,
+              safe.model,
+              safe.modelByProvider,
+            ),
+            onTextDelta: params.onTextDelta
+              ? (d, reset) => {
+                  if (d) emitted = true;
+                  params.onTextDelta?.(d, reset);
+                }
+              : undefined,
+          }),
           timeoutMs,
         );
         if (!result.text?.trim()) throw new EmptyCompletion();

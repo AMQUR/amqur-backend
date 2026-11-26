@@ -282,6 +282,29 @@ export class AuthService {
     return this.tokensFor(result.user);
   }
 
+  /**
+   * Staff access audit: a failed sign-in for a KNOWN account is recorded (never the password).
+   * Unknown e-mails are not recorded, so the log cannot be used to collect guessed addresses.
+   * Best-effort: an audit failure never changes the login response.
+   */
+  private async auditFailedLogin(
+    user: { id: string; tenantId: string },
+    reason: 'wrong_password' | 'inactive_account',
+  ) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          tenantId: user.tenantId,
+          userId: user.id,
+          action: 'auth.login.failed',
+          metadata: { reason },
+        },
+      });
+    } catch {
+      /* never affect the login outcome */
+    }
+  }
+
   async login(dto: LoginDto) {
     const email = dto.email.toLowerCase();
 
@@ -293,10 +316,12 @@ export class AuthService {
         },
       });
       if (!user || !user.isActive) {
+        if (user) await this.auditFailedLogin(user, 'inactive_account');
         throw new UnauthorizedException('Invalid credentials');
       }
       const passwordValid = await bcrypt.compare(dto.password, user.password);
       if (!passwordValid) {
+        await this.auditFailedLogin(user, 'wrong_password');
         throw new UnauthorizedException('Invalid credentials');
       }
       return this.completePasswordLogin(user);
@@ -319,10 +344,12 @@ export class AuthService {
 
     const user = matches[0];
     if (!user.isActive) {
+      await this.auditFailedLogin(user, 'inactive_account');
       throw new UnauthorizedException('Invalid credentials');
     }
     const passwordValid = await bcrypt.compare(dto.password, user.password);
     if (!passwordValid) {
+      await this.auditFailedLogin(user, 'wrong_password');
       throw new UnauthorizedException('Invalid credentials');
     }
 

@@ -23,7 +23,23 @@ type Overview = {
     sold: { convertedLeads: number; dealSoldRecorded: number };
     surveys: { available: boolean };
   };
-  technical: { outbox: Record<string, number>; inventory: { freshness: Record<string, number>; recentImports: Array<{ id: string; status: string; startedAt: string; records: number | null; rejected: number | null }> }; llm: Array<{ provider: string; configured: boolean; circuitOpen: boolean }> };
+  technical: {
+    outbox: Record<string, number>;
+    inventory: {
+      freshness: Record<string, number>;
+      recentImports: Array<{ id: string; status: string; startedAt: string; records: number | null; rejected: number | null }>;
+      dialDifferenceSftp?: {
+        ingestEnabled: boolean;
+        inventorySyncEnabled: boolean;
+        credentialsConfigured: boolean;
+        publishPrices: boolean;
+        publishPhotos: boolean;
+        hostConfigured: boolean;
+        feedSourceCount: number;
+      };
+    };
+    llm: Array<{ provider: string; configured: boolean; circuitOpen: boolean }>;
+  };
   aiQuality: {
     inventoryMisses: number;
     knowledgeMisses: number;
@@ -335,6 +351,50 @@ export function Home({ locationId }: { locationId: string }) {
                     ))}
                   </span>
                 </li>
+                {data.technical.inventory.dialDifferenceSftp && (
+                  <li>
+                    <span>Dial Difference SFTP</span>
+                    <span>
+                      <Badge
+                        tone={
+                          data.technical.inventory.dialDifferenceSftp.credentialsConfigured
+                            ? 'ok'
+                            : 'warn'
+                        }
+                      >
+                        {data.technical.inventory.dialDifferenceSftp.credentialsConfigured
+                          ? 'creds set'
+                          : 'creds missing'}
+                      </Badge>
+                      <Badge
+                        tone={
+                          data.technical.inventory.dialDifferenceSftp.ingestEnabled
+                            ? 'warn'
+                            : 'neutral'
+                        }
+                      >
+                        ingest {data.technical.inventory.dialDifferenceSftp.ingestEnabled ? 'on' : 'off'}
+                      </Badge>
+                      <Badge
+                        tone={
+                          data.technical.inventory.dialDifferenceSftp.publishPrices ||
+                          data.technical.inventory.dialDifferenceSftp.publishPhotos
+                            ? 'warn'
+                            : 'neutral'
+                        }
+                      >
+                        publish{' '}
+                        {data.technical.inventory.dialDifferenceSftp.publishPrices ||
+                        data.technical.inventory.dialDifferenceSftp.publishPhotos
+                          ? 'partial'
+                          : 'off'}
+                      </Badge>
+                      <Badge tone="neutral">
+                        {data.technical.inventory.dialDifferenceSftp.feedSourceCount} feeds
+                      </Badge>
+                    </span>
+                  </li>
+                )}
                 {data.technical.llm.map((l) => (
                   <li key={l.provider}>
                     <span>LLM · {l.provider}</span>

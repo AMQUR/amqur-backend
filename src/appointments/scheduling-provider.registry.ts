@@ -2,16 +2,47 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   SchedulingContext,
+  SchedulingDepartment,
   ServiceSchedulingProviderAdapter,
 } from './scheduling-provider';
 import { CircuitBreakerService } from '../integrations/core/circuit-breaker.service';
+import {
+  assertSandboxSchedulerAllowed,
+  sandboxSchedulerEnabled,
+} from './sandbox-scheduling.adapter';
 
 export type ResolvedScheduler = {
   adapter: ServiceSchedulingProviderAdapter;
   connectionId: string;
   provider: string;
   mode: 'sandbox' | 'production';
+  /** Sandbox booking per isSandboxBooking(): demo adapter or sandbox-mode connection. */
+  sandbox: boolean;
+  displayName: string;
 };
+
+/**
+ * THE one derivation of "is this booking a sandbox / demo booking?". A booking is sandbox when
+ * the adapter itself is a demo scheduler OR the connection runs in the vendor's sandbox mode
+ * (anything not explicitly `production`). Receipts, cards, replies, reminders and conversation
+ * state all take the label from here — never from a second, local rule.
+ */
+export function isSandboxBooking(
+  s: Pick<ResolvedScheduler, 'mode'> & {
+    adapter?: Pick<ServiceSchedulingProviderAdapter, 'sandbox'>;
+    sandbox?: boolean;
+  },
+): boolean {
+  return (
+    s.sandbox === true || s.adapter?.sandbox === true || s.mode !== 'production'
+  );
+}
+
+/** Extra per-tenant/location gate an adapter must pass on every resolve (fail-closed). */
+export type SchedulerGate = (
+  tenantId: string,
+  locationId: string | null | undefined,
+) => Promise<boolean>;
 
 /**
  * Resolves the authoritative scheduler for a tenant/location from IntegrationConnection
@@ -27,14 +58,37 @@ export class SchedulingProviderRegistry {
     string,
     ServiceSchedulingProviderAdapter
   >();
+  private readonly gates = new Map<string, SchedulerGate>();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly breaker: CircuitBreakerService,
   ) {}
 
-  register(provider: string, adapter: ServiceSchedulingProviderAdapter): void {
+  register(
+    provider: string,
+    adapter: ServiceSchedulingProviderAdapter,
+    gate?: SchedulerGate,
+  ): void {
+    // A sandbox scheduler can never be registered in production, whoever asks — nor anywhere
+    // without the explicit SANDBOX_SCHEDULER_ENABLED=true opt-in.
+    if (adapter.sandbox) assertSandboxSchedulerAllowed();
+    // An adapter that can book must be able to find and cancel a booking by idempotency key,
+    // otherwise a lost response would leave an orphan booking nobody can compensate.
+    if (
+      adapter.capabilities().create &&
+      (typeof adapter.findByIdempotencyKey !== 'function' ||
+        typeof adapter.cancelByIdempotencyKey !== 'function')
+    ) {
+      throw new Error('scheduler_adapter_missing_idempotent_lookup');
+    }
     this.adapters.set(provider, adapter);
+    if (gate) this.gates.set(provider, gate);
+    else this.gates.delete(provider);
+  }
+
+  adapterFor(provider: string): ServiceSchedulingProviderAdapter | undefined {
+    return this.adapters.get(provider);
   }
 
   registeredProviders(): string[] {
@@ -44,6 +98,7 @@ export class SchedulingProviderRegistry {
   async resolve(
     tenantId: string,
     locationId?: string | null,
+    department?: SchedulingDepartment,
   ): Promise<ResolvedScheduler | null> {
     const conns = await this.prisma.integrationConnection.findMany({
       where: {
@@ -73,12 +128,28 @@ export class SchedulingProviderRegistry {
         continue;
       }
       if (this.breaker.isOpen(`scheduler:${c.id}`)) continue;
+      if (adapter.sandbox && !sandboxSchedulerEnabled()) continue;
+      const gate = this.gates.get(c.provider);
+      if (gate && !(await gate(tenantId, locationId).catch(() => false)))
+        continue;
       const cfg = (c.config ?? {}) as Record<string, unknown>;
+      // Optional per-connection department allow-list (absent = every department).
+      if (
+        department &&
+        Array.isArray(cfg.departments) &&
+        !cfg.departments.includes(department)
+      )
+        continue;
       return {
         adapter,
         connectionId: c.id,
         provider: c.provider,
         mode: cfg.mode === 'production' ? 'production' : 'sandbox',
+        sandbox: isSandboxBooking({
+          adapter,
+          mode: cfg.mode === 'production' ? 'production' : 'sandbox',
+        }),
+        displayName: adapter.displayName ?? c.provider,
       };
     }
     return null;
@@ -90,6 +161,7 @@ export class SchedulingProviderRegistry {
     locationId: string | null | undefined,
     idempotencyKey: string,
     correlationId: string,
+    now?: Date,
   ): SchedulingContext {
     return {
       tenantId,
@@ -99,6 +171,7 @@ export class SchedulingProviderRegistry {
       timeoutMs: 8000,
       idempotencyKey,
       correlationId,
+      ...(now ? { now } : {}),
     };
   }
 }

@@ -17,6 +17,32 @@ type VehicleRow = {
   lastSeenAt?: string | null;
 };
 
+type InventoryHealth = {
+  dialDifferenceSftp?: {
+    ingestEnabled: boolean;
+    inventorySyncEnabled: boolean;
+    credentialsConfigured: boolean;
+    publishPrices: boolean;
+    publishPhotos: boolean;
+    feedSourceCount: number;
+  };
+  freshness?: Record<string, number>;
+  failedOrRejectedImports7d?: number;
+  latestImportByFeed?: Record<
+    string,
+    { status: string; startedAt: string | null; validCount: number | null; displayName?: string }
+  >;
+  tenFeeds?: Array<{
+    feedSourceKey: string;
+    status: string;
+    startedAt: string | null;
+    validCount: number | null;
+    displayName: string;
+  }>;
+  pricePhotoPolicy?: { publishPrices: boolean; publishPhotos: boolean; provenance: string };
+  note?: string;
+};
+
 function fmtPrice(n?: number) {
   if (n == null || Number.isNaN(n)) return '—';
   return new Intl.NumberFormat(undefined, {
@@ -60,6 +86,14 @@ export function Inventory({ locationId }: { locationId: string }) {
   );
   const rows = data ?? [];
 
+  const healthPath = useMemo(() => {
+    const p = new URLSearchParams();
+    if (locationId) p.set('locationId', locationId);
+    const qs = p.toString();
+    return `/ops/inventory/health${qs ? `?${qs}` : ''}`;
+  }, [locationId]);
+  const { data: health } = useAsync(() => api<InventoryHealth>(healthPath), [healthPath]);
+
   const runSearch = () => {
     setSubmitted({ vin, stock, make, model, q });
   };
@@ -81,6 +115,77 @@ export function Inventory({ locationId }: { locationId: string }) {
         status are shown exactly as stored — nothing is marked available unless{' '}
         <code>status</code> says so.
       </p>
+      {health && (
+        <Card title="Feed health">
+          <ul className="kv">
+            <li>
+              <span>Dial Difference SFTP</span>
+              <span>
+                <Badge tone={health.dialDifferenceSftp?.credentialsConfigured ? 'ok' : 'warn'}>
+                  {health.dialDifferenceSftp?.credentialsConfigured ? 'creds set' : 'creds missing'}
+                </Badge>
+                <Badge tone={health.dialDifferenceSftp?.ingestEnabled ? 'warn' : 'neutral'}>
+                  ingest {health.dialDifferenceSftp?.ingestEnabled ? 'on' : 'off'}
+                </Badge>
+                <Badge tone="neutral">
+                  {health.dialDifferenceSftp?.feedSourceCount ?? 0} feeds
+                </Badge>
+              </span>
+            </li>
+            <li>
+              <span>Failed/rejected imports · 7d</span>
+              <Badge tone={(health.failedOrRejectedImports7d ?? 0) > 0 ? 'warn' : 'ok'}>
+                {health.failedOrRejectedImports7d ?? 0}
+              </Badge>
+            </li>
+            {health.freshness &&
+              Object.entries(health.freshness).map(([k, v]) => (
+                <li key={k}>
+                  <span>Freshness · {k}</span>
+                  <Badge tone={k === 'FRESH' ? 'ok' : 'warn'}>{v}</Badge>
+                </li>
+              ))}
+          </ul>
+          {health.note && <p className="muted small">{health.note}</p>}
+          {(health.tenFeeds ?? Object.entries(health.latestImportByFeed ?? {}).map(([feedSourceKey, row]) => ({
+            feedSourceKey,
+            ...row,
+            displayName: row.displayName ?? feedSourceKey,
+          }))).length > 0 && (
+            <ul className="kv">
+              {(
+                health.tenFeeds ??
+                Object.entries(health.latestImportByFeed ?? {}).map(([feedSourceKey, row]) => ({
+                  feedSourceKey,
+                  ...row,
+                  displayName: row.displayName ?? feedSourceKey,
+                }))
+              ).map((row) => (
+                <li key={row.feedSourceKey}>
+                  <span>{row.displayName}</span>
+                  <Badge
+                    tone={
+                      row.status === 'SUCCEEDED'
+                        ? 'ok'
+                        : row.status === 'NEVER_RUN'
+                          ? 'neutral'
+                          : 'warn'
+                    }
+                  >
+                    {row.status} · {row.validCount ?? '—'}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          )}
+          {health.pricePhotoPolicy && (
+            <p className="muted small">
+              Prices {health.pricePhotoPolicy.publishPrices ? 'on' : 'off'} · Photos{' '}
+              {health.pricePhotoPolicy.publishPhotos ? 'on' : 'off'}. {health.pricePhotoPolicy.provenance}
+            </p>
+          )}
+        </Card>
+      )}
       <Card title="Search">
         <div className="grid2">
           <label>

@@ -22,7 +22,25 @@ const ROUTING_CTX =
   /\b(routing|aba)\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{9})\b/gi;
 const ACCOUNT_CTX =
   /\b(account|acct)\s*(?:number|#|no\.?)?\s*[:#]?\s*(\d{6,17})\b/gi;
-const PASSWORD_CTX = /\b(password|passcode|pin|pwd)\s*(?:is|:|=)\s*\S+/gi;
+// Every quantifier below is bounded and no two adjacent parts can match the same text, so the
+// patterns are linear in input length (the first login pattern was quadratic: see the spec).
+const PASSWORD_CTX =
+  /\b(pass(?:word|code|phrase)?|passw0rd|pwd|pw|pin|contrase(?:ñ|n)a|clave)(?:\s+(?:for|to|on|de|del|para)\s[^\n:="]{1,40}?)?(?:'s\s+|’s\s+|\s*(?:is|was|es|:|=)\s*:?\s*)("[^"\n]{1,200}"?|\S{1,80})/gi;
+/** "my login is alex@example.com / Hunter2": the secret after a slash or pipe near a login word. */
+const LOGIN_SLASH =
+  /(\b(?:log[- ]?in|sign[- ]?in|username|credentials?)\b[^\n/|]{0,80}(?<![:/])[/|](?!\/)\s{0,3})(\S{4,80})/gi;
+/** "sign in with samdemo:Tr0ub4dor": id:secret right after a login verb. */
+const LOGIN_COLON =
+  /(\b(?:log[- ]?in|sign[- ]?in)\s{1,3}(?:with|as|using)\s{1,3}[\w.@+-]{3,64}:)(\S{4,80})/gi;
+/** "username: samdemo : Hunter2", "login = alex | Hunter2": a labelled id, then a separator. */
+const LOGIN_LABELLED =
+  /(\b(?:user(?:name)?|credentials?|log[- ]?in|sign[- ]?in)\s{0,3}[:=]\s{0,3}[\w.@+-]{3,64}\s{0,3}[:/|]\s{0,3})(?!\/\/)(\S{4,80})/gi;
+/** "my login is alex:Hunter2", "user alex@example.com:Hunter2": a tight id:secret near a login word. */
+const LOGIN_TIGHT =
+  /(\b(?:user(?:name)?|credentials?|log[- ]?in|sign[- ]?in)\b[^\n:]{0,40}?\s[\w.@+-]{3,64}:)(?!\/\/)(\S{4,80})/gi;
+/** "https://sam:Hunter2@portal.example.com": credentials embedded in a URL. */
+const URL_USERINFO =
+  /(\b[a-z][a-z0-9+.-]{1,15}:\/\/)[^\s/?#]{1,160}@(?=[^\s@/?#]{1,255}(?:[/?#\s]|$))/gi;
 const EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE = /(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/g;
 const JWT = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
@@ -67,10 +85,21 @@ export function detectCreditSensitive(text: string): SensitiveKind[] {
 
 /** Replace credit-sensitive values (keeps the rest of the message usable). */
 export function redactCreditSensitive(text: string): string {
-  let out = text.replace(
-    PASSWORD_CTX,
-    (m) => `${m.split(/\s*(?:is|:|=)\s*/i)[0]} [REDACTED]`,
-  );
+  // Order matters: URL userinfo, then labelled passwords, then login pairs. A login pattern
+  // that ran first could consume the word "password" as its secret and leave the value behind.
+  const pair = (m: string, head: string, secret: string) =>
+    /^(?:(?:pass(?:word|code|phrase)?|passw0rd|pwd|pw|pin|contrase(?:ñ|n)a|clave)[:=]?$|\[REDACTED)/i.test(
+      secret,
+    )
+      ? m
+      : `${head}[REDACTED]`;
+  let out = text
+    .replace(URL_USERINFO, (_m, scheme: string) => `${scheme}[REDACTED]@`)
+    .replace(PASSWORD_CTX, (_m, label: string) => `${label} [REDACTED]`)
+    .replace(LOGIN_SLASH, pair)
+    .replace(LOGIN_COLON, pair)
+    .replace(LOGIN_LABELLED, pair)
+    .replace(LOGIN_TIGHT, pair);
   out = out.replace(ROUTING_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(ACCOUNT_CTX, (_m, label: string) => `${label} [REDACTED]`);
   out = out.replace(CARD, (m) => {

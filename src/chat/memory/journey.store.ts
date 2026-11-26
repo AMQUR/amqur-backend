@@ -99,6 +99,25 @@ export type JourneyState = {
       policyVersion: string;
     };
   };
+  /**
+   * The listing on the dealer-site page the customer has open, as published on that page
+   * (reported by the browser, validated; not a system-of-record fact and not availability).
+   */
+  pageVehicle?: {
+    vin: string;
+    stock?: string;
+    year?: number;
+    make?: string;
+    model?: string;
+    trim?: string;
+    condition?: string;
+    mileage?: number;
+    color?: string;
+    bodyType?: string;
+    fuelType?: string;
+    path?: string;
+    asOf: string;
+  };
   trade?: {
     requestId?: string;
     year?: number;
@@ -123,6 +142,8 @@ export type JourneyState = {
     requestedDate?: string | null;
     requestedTime?: string | null;
     outcome: string;
+    /** True when the confirmation came from a sandbox (demo) scheduler — said on every mention. */
+    sandbox?: boolean;
   };
   /** appointment being collected (missing date/time) */
   draftAppointment?: {
@@ -131,6 +152,8 @@ export type JourneyState = {
     note?: string;
     /** Date/time pieces already given ("Friday", then "morning") — merged across turns. */
     when?: import('../../common/time/date-phrase').ResolvedWhen;
+    /** Set when the booking paused to collect contact first (scheduler slots need it). */
+    resumeAfterContact?: boolean;
   };
   service?: {
     need?: string;
@@ -207,6 +230,12 @@ export type JourneyState = {
     landingVin?: string;
   };
   timeline?: string;
+  /** Structured cards offered to this conversation (flag `salesDeskCards`). */
+  salesDesk?: import('../sales-desk/sales-desk.types').SalesDeskState;
+  /** GROUP-SITE conversation only: store preference, bound rooftop, last listed vehicles. */
+  groupRouting?: import('../../group-routing/group-routing.types').GroupRoutingState;
+  /** ROOFTOP conversation opened from the group site (written by the server only). */
+  groupOrigin?: import('../../group-routing/group-routing.types').GroupOrigin;
 };
 
 export function emptyJourney(): JourneyState {
@@ -404,6 +433,45 @@ export class JourneyStore {
         metadata: metadata as Prisma.InputJsonValue | undefined,
       },
     });
+  }
+
+  /**
+   * One visitor's transcript across the conversations the group router linked (this rooftop
+   * turn's own conversation plus the group-site conversation that handed off to it), oldest
+   * first. Ids and the tenant allow-list come from server-side routing state, never from the
+   * request. A turn the router recorded in both conversations appears once.
+   */
+  async recentMessagesAcross(
+    conversationIds: string[],
+    allowedTenantIds: string[],
+    take = 12,
+  ) {
+    const ids = [...new Set(conversationIds.filter(Boolean))];
+    const tenants = [...new Set(allowedTenantIds.filter(Boolean))];
+    if (!ids.length || !tenants.length) return [];
+    const rows = await this.prisma.message.findMany({
+      // Fail closed: a conversation outside the allowed tenants contributes nothing.
+      where: {
+        conversationId: { in: ids },
+        conversation: { tenantId: { in: tenants } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+      select: { role: true, content: true, createdAt: true },
+    });
+    const out: typeof rows = [];
+    for (const r of rows.reverse()) {
+      const dup = out
+        .slice(-4)
+        .some(
+          (o) =>
+            o.role === r.role &&
+            o.content === r.content &&
+            Math.abs(o.createdAt.getTime() - r.createdAt.getTime()) < 15_000,
+        );
+      if (!dup) out.push(r);
+    }
+    return out;
   }
 
   async recentMessages(conversationId: string, take = 12) {

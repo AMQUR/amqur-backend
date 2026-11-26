@@ -1,6 +1,13 @@
+import {
+  ADF_FEATURE_FLAG,
+  deliveryTier,
+  effectiveMode,
+  readLeadDeliveryEnv,
+} from '../integrations/adf/lead-delivery-gates';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
+import { isProductionTier } from '../config/deployment-tier';
 
 export type CapabilityName =
   | 'chat'
@@ -32,6 +39,50 @@ export class CapabilityService {
     private readonly prisma: PrismaService,
     private readonly flags_: FeatureFlagsService,
   ) {}
+
+  private readonly deliveryReady = new Map<
+    string,
+    { ok: boolean; until: number }
+  >();
+
+  /**
+   * Can a lead captured for this store actually reach the dealership? Outside the production
+   * tier this is always true (sandbox and tests). In production it needs the CRM webhook, or
+   * live ADF sending switched on, the store's `adfLeadDelivery` flag, and a SALES route that is
+   * PRODUCTION, enabled, verified and production-enabled. Cached for 30 s.
+   */
+  async leadDeliveryReady(
+    tenantId: string,
+    locationId: string | null | undefined,
+    adfFlag: boolean,
+    env: Record<string, string | undefined> = process.env,
+    now: number = Date.now(),
+  ): Promise<boolean> {
+    const d = readLeadDeliveryEnv(env);
+    if (deliveryTier(d) !== 'production') return true;
+    if ((env.CRM_WEBHOOK_URL ?? '').trim()) return true;
+    if (effectiveMode(d) !== 'live' || !adfFlag) return false;
+    const key = `${tenantId}:${locationId ?? '*'}`;
+    const hit = this.deliveryReady.get(key);
+    if (hit && hit.until > now) return hit.ok;
+    const route = await this.prisma.leadDeliveryRoute
+      .findFirst({
+        where: {
+          tenantId,
+          ...(locationId ? { locationId } : {}),
+          department: 'SALES',
+          environment: 'PRODUCTION',
+          enabled: true,
+          verified: true,
+          productionEnabled: true,
+        },
+        select: { id: true },
+      })
+      .catch(() => null);
+    if (this.deliveryReady.size > 500) this.deliveryReady.clear();
+    this.deliveryReady.set(key, { ok: !!route, until: now + 30_000 });
+    return !!route;
+  }
 
   /** Raw effective flags (for non-capability switches such as llmDisabled). */
   flags(tenantId: string, locationId: string | null | undefined) {
@@ -160,6 +211,21 @@ export class CapabilityService {
             'I can’t record contact requests here right now. Please call the dealership.',
           );
         }
+        // Production never collects a lead nobody would receive: the store needs a verified,
+        // production-enabled delivery route (or the CRM webhook) before contact details are
+        // taken from the public.
+        if (
+          !(await this.leadDeliveryReady(
+            tenantId,
+            locationId,
+            (f as Record<string, unknown>)[ADF_FEATURE_FLAG] === true,
+          ))
+        ) {
+          return unavailable(
+            'lead_delivery_not_ready',
+            'I can’t record contact requests here right now. Please call the dealership.',
+          );
+        }
         return { allowed: true };
 
       case 'knowledge':
@@ -199,15 +265,18 @@ export class CapabilityService {
         })
       : null;
 
+    // Synthetic fixtures never make the *production* deployment tier "ready".
+    // Hosted staging (NODE_ENV=production + DEPLOYMENT_TIER=staging) may use them.
+    const hideSynthetic = isProductionTier()
+      ? { NOT: { source: 'synthetic_demo' as const } }
+      : {};
+
     const vehicleCount = await this.prisma.vehicle.count({
       where: {
         tenantId,
         ...(locationId ? { locationId } : {}),
         status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
-        // Synthetic demo fixtures never make production inventory "ready".
-        ...(process.env.NODE_ENV === 'production'
-          ? { NOT: { source: 'synthetic_demo' } }
-          : {}),
+        ...hideSynthetic,
       },
     });
 
@@ -218,9 +287,7 @@ export class CapabilityService {
           ...(locationId ? { locationId } : {}),
           status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD'] },
           freshnessState: { in: ['FRESH', 'DEGRADED'] },
-          ...(process.env.NODE_ENV === 'production'
-            ? { NOT: { source: 'synthetic_demo' } }
-            : {}),
+          ...hideSynthetic,
         },
       });
       if (fresh > 0) return { ok: true, reason: 'vehicles_present' };

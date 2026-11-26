@@ -2,6 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { api, logout, session, tryRestore } from './api';
 import { useAsync, useHashRoute } from './hooks';
 import { Login } from './pages/Login';
+import { SetPassword } from './pages/SetPassword';
 import { Home } from './pages/Home';
 import { Inbox } from './pages/Inbox';
 import { Appointments } from './pages/Appointments';
@@ -29,6 +30,9 @@ import { Parts } from './pages/Parts';
 import { Finance } from './pages/Finance';
 import { WorkflowStudio } from './pages/WorkflowStudio';
 import { ToolApprovals } from './pages/ToolApprovals';
+import { LeadDeliveries } from './pages/LeadDeliveries';
+import { Funnel } from './pages/Funnel';
+import { CrmWorkforce } from './pages/CrmWorkforce';
 
 const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'home', label: 'Today' },
@@ -55,8 +59,11 @@ const NAV: Array<{ id: string; label: string; roles?: string[] }> = [
   { id: 'spotlights', label: 'Spotlights' },
   { id: 'integrations', label: 'Integrations', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
   { id: 'settings', label: 'Rooftop settings', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
+  { id: 'funnel', label: 'Lead and appointment funnel' },
+  { id: 'lead-deliveries', label: 'Lead deliveries (CRM)' },
+  { id: 'crm-workforce', label: 'CRM Workforce' },
   { id: 'ops', label: 'Delivery failures', roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER'] },
-  { id: 'group', label: 'Group comparison' },
+  { id: 'group', label: 'Group overview' },
   { id: 'security', label: 'Security' },
 ];
 
@@ -70,6 +77,10 @@ export function App() {
   useEffect(() => {
     void tryRestore().finally(() => setBooting(false));
   }, []);
+  if (route.startsWith('set-password')) {
+    const token = new URLSearchParams(route.split('?')[1] ?? '').get('token') ?? '';
+    return <SetPassword token={token} onDone={() => { void logout(); go('home'); }} />;
+  }
   if (booting) return <div className="boot" aria-busy="true" />;
   if (!user) return <Login onDone={(req) => { setEnrollRequired(req); if (req) go('security'); }} />;
   return <Shell route={enrollRequired ? 'security' : route} go={go} role={user.role} name={`${user.firstName} ${user.lastName}`} boundLocation={user.locationId} enrollRequired={enrollRequired} onEnrolled={() => setEnrollRequired(false)} />;
@@ -133,6 +144,9 @@ function Shell(props: { route: string; go: (r: string) => void; role: string; na
         {route === 'studio' && <ConversationStudio locationId={locationId} />}
         {route === 'workflows' && <WorkflowStudio locationId={locationId} />}
         {route === 'approvals' && <ToolApprovals locationId={locationId} />}
+        {route === 'funnel' && <Funnel locationId={locationId} />}
+        {route === 'lead-deliveries' && <LeadDeliveries locationId={locationId} />}
+        {route === 'crm-workforce' && <CrmWorkforce locationId={locationId} />}
         {route === 'campaigns' && <Campaigns locationId={locationId} />}
         {route === 'surveys' && <Surveys locationId={locationId} />}
         {route === 'action-pages' && <ActionPages locationId={locationId} />}

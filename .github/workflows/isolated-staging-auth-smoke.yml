@@ -1,0 +1,68 @@
+name: Isolated staging auth smoke
+
+# Proves RAILWAY_API_TOKEN can talk to Railway without deploying to the shared
+# dial-us-now-platform project (PR #33). Does not mutate production or shared staging.
+#
+# Manual only — never runs on push to main.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # amqur-platform-staging (isolated candidate)
+  RAILWAY_PROJECT_ID: e4d54510-bbc0-45bc-9d5b-a19a5ad5132c
+
+jobs:
+  railway-auth-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Guard — token present
+        run: |
+          if [ -z "${{ secrets.RAILWAY_API_TOKEN }}" ]; then
+            echo "RAILWAY_API_TOKEN secret not configured" >&2
+            exit 1
+          fi
+      - name: Install Railway CLI
+        run: npm i -g @railway/cli
+      - name: Whoami + list isolated staging services (read-only)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          railway whoami
+          railway status --project "$RAILWAY_PROJECT_ID" --environment staging
+      - name: Preflight variable names for backend-staging (values never printed)
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Service names in isolated project differ from shared (backend-staging / worker-staging)
+          railway variables --project "$RAILWAY_PROJECT_ID" --service backend-staging --environment staging --json \
+            | node -e '
+              const fs=require("fs");
+              const raw=fs.readFileSync(0,"utf8");
+              const d=JSON.parse(raw);
+              const vars=d.variables||d;
+              const need=["DATABASE_URL","REDIS_URL","DEPLOYMENT_TIER","JWT_SECRET"];
+              const missing=need.filter(k=>!vars[k]);
+              if(missing.length){console.error("missing",missing.join(",")); process.exit(1)}
+              console.log("preflight_ok keys=", Object.keys(vars).length);
+              console.log("DEPLOYMENT_TIER=", String(vars.DEPLOYMENT_TIER||""));
+            '
+      - name: External smoke — isolated API version + origin refusal
+        run: |
+          set -euo pipefail
+          curl -sf https://backend-staging-staging-b699.up.railway.app/api/health | grep -q '"database":"up"'
+          curl -sf https://backend-staging-staging-b699.up.railway.app/api/version | grep -q '"deploymentTier":"staging"'
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST https://backend-staging-staging-b699.up.railway.app/api/public/widget-token \
+            -H 'Origin: https://unauthorized.example' -H 'Content-Type: application/json' \
+            -d '{"tenantSlug":"jeep-of-chicago","locationSlug":"main"}')
+          [ "$code" = "403" ] || { echo "expected 403 got $code" >&2; exit 1; }
+          echo isolated_auth_smoke_passed

@@ -810,6 +810,10 @@ export function detectLanguage(text: string): 'en' | 'es' | undefined {
 export const GENERAL_TOPIC =
   /\b(awd|4wd|4x4|fwd|rwd|all[- ]wheel|four[- ]wheel|front[- ]wheel|rear[- ]wheel|lease|leasing|financ\w*|loan|hybrid|plug[- ]in|phev|ev|electric|gas|diesel|turbo|msrp|invoice|apr|gap insurance|extended warranty|certified|cpo|new (?:and|or|vs\.?) used)\b/;
 
+/** A request to see what the store has, with no make, model or body style named. EN + ES. */
+const GENERIC_INVENTORY_BROWSE =
+  /\b(?:what|which) (?:vehicles?|cars?|trucks?|suvs?|models?|inventory)\b[^?.!]{0,40}\b(?:have|got|in stock|available|sell|carry|on (?:the|your) lot)\b|\bwhat(?:'s| is| do you have| have you got) (?:in stock|available|on (?:the|your) lot|in (?:your )?inventory)\b|\b(?:show|see|browse|view|look at|check out) (?:me )?(?:your |the |all (?:of )?(?:your |the )?|all )?(?:inventory|vehicles|cars|stock|lot|selection)\b|\bdo you have (?:any )?(?:cars|vehicles|inventory)(?: (?:in stock|available))?\b|\bwhat (?:do|can) you (?:have|sell|offer)\b[^?.!]{0,20}\b(?:cars?|vehicles?|trucks?|suvs?)\b|qu[eé] (?:veh[ií]culos|carros|autos|coches|camionetas|trocas) (?:tienen|hay|tiene|venden)|qu[eé] (?:tienen|hay) (?:disponible|en (?:el )?inventario|en existencia)|(?:mu[eé]str[ae]n?me|quiero ver|ver) (?:el |su |todo (?:el |su )?)?inventario/;
+
 export function understandTurn(
   message: string,
   ctx: {
@@ -1288,11 +1292,20 @@ export function understandTurn(
 
   // ── SAFETY: urgent vehicle-safety language gets safety-first handling (no diagnosis)
   if (
-    /\b(smoke|on fire|fire|flames|smell(?:s|ing)? (?:gas|fuel)|fuel leak|brakes? (?:failed|failing|went out|don'?t work|not working|gave out)|no brakes|steering (?:locked|failed|went out)|(?:car|truck|engine) (?:died|stalled|shut off) (?:on|in) (?:the )?(?:highway|freeway|interstate|traffic)|airbag deployed|(?:i was|we were|i(?:'ve| have) been|just got) in an? (?:accident|crash)|(?:i|we) (?:just )?crashed)\b/.test(
+    /\b(smoke|on fire|fire|flames|smell(?:s|ing)? (?:gas|fuel)|fuel leak|brakes? (?:failed|failing|went out|don'?t work|not working|gave out)|no brakes|steering(?: wheel)? (?:locked(?: up)?|locks? up|failed|went out|seized|froze|stopped working)|lost (?:my |the |all )?(?:steering|power steering|brakes)|brake pedal (?:went|goes|sinks?|sank) to the floor|wheels? (?:fell|came|is coming|are coming) off|can(?:'?t|not) (?:steer|stop the (?:car|truck|vehicle))|(?:car|truck|engine) (?:died|stalled|shut off) (?:on|in) (?:the )?(?:highway|freeway|interstate|traffic)|airbag deployed|(?:i was|we were|i(?:'ve| have) been|just got) in an? (?:accident|crash)|(?:i|we) (?:just )?crashed)\b/.test(
       t,
     )
   ) {
     add('SAFETY_URGENT', 0.95, 'urgent safety language');
+  }
+  // Spanish safety language. Checked on its own so "frenos" / "humo" never fall through to a
+  // parts or service-booking flow: a failed brake is an emergency, not a parts inquiry.
+  if (
+    /(?:se me fueron|me fallaron|fallaron|no (?:me )?(?:sirven|funcionan|responden|agarran)|me qued[eé] sin|no tengo|sin) (?:los )?frenos|frenos (?:fallaron|no (?:sirven|funcionan|responden))|se (?:me )?(?:trab[oó]|bloque[oó]|puso dur[oa]) (?:el volante|la direcci[oó]n)|(?:perd[ií]|me qued[eé] sin) (?:la )?direcci[oó]n (?:del (?:carro|auto|coche|veh[ií]culo|cami[oó]n)|hidr[aá]ulica|asistida)|no puedo (?:frenar|girar el volante)|sale humo|est[aá] (?:saliendo|echando) humo|echa humo|humo del (?:motor|cap[oó]|carro|auto|coche)|se (?:est[aá] )?(?:incendi|quem)|en llamas|huele a (?:gasolina|quemado)|fuga de (?:gasolina|combustible)|(?:se )?(?:trab[oó]|bloque[oó]) (?:la direcci[oó]n|el volante)|se (?:me )?apag[oó] (?:el (?:carro|auto|coche|motor) )?en (?:la )?(?:carretera|autopista|v[ií]a|medio del tr[aá]fico)|(?:tuve|acabo de tener|estuve en) un (?:accidente|choque)|(?:acabo de |me )?choqu[eé]|se (?:activ[oó]|abri[oó]|dispar[oó]) (?:la bolsa de aire|el airbag)/.test(
+      t,
+    )
+  ) {
+    add('SAFETY_URGENT', 0.95, 'urgent safety language (es)');
   }
 
   // ── HUMAN HANDOFF: "agent"/"person" only with request verbs; not "real estate agent", "personal"
@@ -1314,11 +1327,42 @@ export function understandTurn(
   ) {
     add('HUMAN_HANDOFF', 0.95, 'explicit human request');
   }
+  // Spanish requests for a person. "¿es usted una persona?" asks what the assistant is and is
+  // answered as an identity question, so it is excluded here.
+  if (
+    (/(?:comun[ií]quen?me|p[aá]s[ae]n?me|con[eé]cten?me|transfi[eé]ran?me|p[oó]ngan?me|(?:quiero|quisiera|necesito|puedo|podr[ií]a|me gustar[ií]a|d[eé]jeme|d[eé]jame) hablar) con (?:una? |el |la |alg[uú]n |alguna )?(?:persona|humano|alguien|asesor[a]?|agente|representante|vendedor[a]?|gerente|encargad[oa]|operador[a]?)|(?:quiero|necesito|prefiero) (?:a )?(?:una persona|un humano|un agente|un asesor|un representante)(?: real| de verdad)?|que me (?:llame|contacte|atienda) (?:alguien|una persona|un asesor)|ll[aá]men?me/.test(
+      t,
+    ) &&
+      !/(?:es usted|usted es|eres|estoy hablando con|hablo con) (?:un |una )?(?:persona|humano|robot|bot)/.test(
+        t,
+      )) ||
+    // "I'm already working with Richie" — a named colleague owns this customer; do not take over.
+    (/\b(?:i'?m|i am|i was|i'?ve been|i have been|we'?re|we are) (?:already |currently )?(?:talking|working|dealing|speaking|in touch|texting) (?:to|with) (?!you\b|the (?:ai|bot|assistant)\b|an? (?:ai|bot|assistant)\b)[a-z]/.test(
+      t,
+    ) &&
+      /\b(?:already|currently|been)\b/.test(t)) ||
+    /ya (?:estoy|estaba|he estado) (?:hablando|trabajando|tratando) con (?!usted|ustedes|el asistente|la ia)[a-z]/.test(
+      t,
+    )
+  ) {
+    add(
+      'HUMAN_HANDOFF',
+      0.95,
+      'explicit human request (es / existing staff contact)',
+    );
+  }
   if (
     sentiment === 'frustrated' &&
     /\b(nobody|no one|called|waiting|help|ignored|never)\b/.test(t)
   ) {
     add('COMPLAINT', 0.9, 'frustration + unresolved contact');
+  }
+  if (
+    /(?:estoy|ando|me tienen|estamos) (?:muy |bien |super |s[uú]per )?(?:furios[oa]|molest[oa]|enojad[oa]|hart[oa]|indignad[oa]|cansad[oa] de)|nadie me (?:llama|llam[oó]|contesta|contest[oó]|responde|respondi[oó]|atiende|ayuda)|(?:es|esto es|qu[eé]) (?:inaceptable|una verg[uü]enza|p[eé]simo)|p[eé]simo servicio|quiero (?:poner|presentar) una queja|tercera vez que (?:pregunto|llamo|escribo)/.test(
+      t,
+    )
+  ) {
+    add('COMPLAINT', 0.9, 'frustration + unresolved contact (es)');
   }
 
   // ── HOURS: "open"/"close" only with time/status context ("close to", "open to" excluded)
@@ -1693,6 +1737,10 @@ export function understandTurn(
       add('INVENTORY_SEARCH', 0.8, 'availability question');
     else if (e.maxPrice && !intents.length)
       add('INVENTORY_SEARCH', 0.65, 'budget only');
+    // "What do you have in stock?" names no vehicle, but it is plainly a request to see
+    // inventory — never a question to answer with "I'd rather not guess".
+    else if (!intents.length && GENERIC_INVENTORY_BROWSE.test(t))
+      add('INVENTORY_SEARCH', 0.7, 'generic inventory browse');
   }
 
   // ── VEHICLE question (about selected/visible vehicle)

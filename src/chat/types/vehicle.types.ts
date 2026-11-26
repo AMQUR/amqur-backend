@@ -32,10 +32,29 @@ export type InventoryVehicle = {
   status?: string;
   locationId?: string | null;
 
+  /** new | used | certified | unknown — from feed / Dial Difference directory. */
+  condition?: string | null;
+
   /** Feed freshness — ISO timestamp when last seen in inventory sync */
   lastSeenAt?: string | null;
   source?: string | null;
   /** True for synthetic local-demo fixtures (never present in production reads). */
   simulated?: boolean;
   freshnessState?: 'FRESH' | 'DEGRADED' | 'STALE' | 'UNAVAILABLE' | null;
+
+  // ── Sales-desk fields (flag `salesDeskCards`); absent when the flag is off ──
+  /**
+   * The vehicle's page on the OWNING rooftop's own website. Only a verified https URL from
+   * the feed record on that rooftop's host — otherwise null. Never constructed.
+   */
+  vdpUrl?: string | null;
+  /** Display name of the rooftop (location) that holds the vehicle. */
+  rooftopName?: string | null;
+  /**
+   * Group site only: opaque, conversation-bound reference to the rooftop that holds the
+   * vehicle, for the widget to echo back with it. Never a tenant or location id.
+   */
+  rooftopRef?: string;
+  /** true/false only when the dealer-configured pricing policy states it; null = unknown. */
+  priceIncludesDealerFees?: boolean | null;
 };

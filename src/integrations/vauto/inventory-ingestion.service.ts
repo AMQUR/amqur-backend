@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   InventoryFreshnessState,
@@ -21,6 +22,7 @@ export class InventoryIngestionService {
     private readonly vauto: VAutoFeedProvider,
     private readonly inventory: InventoryService,
     private readonly metrics: MetricsService,
+    private readonly config: ConfigService,
   ) {}
 
   async runForLocation(locationId: string) {
@@ -109,6 +111,12 @@ export class InventoryIngestionService {
         },
       });
 
+      const snapshotStartedAt = run.startedAt;
+      // Same commercial publication gates as Dial Difference SFTP (default off).
+      const publishPrices =
+        this.config.get<string>('AMQUR_VAUTO_PUBLISH_PRICES') === 'true';
+      const publishPhotos =
+        this.config.get<string>('AMQUR_VAUTO_PUBLISH_PHOTOS') === 'true';
       await this.inventory.upsertVehicles(
         location.tenantId,
         location.id,
@@ -117,9 +125,14 @@ export class InventoryIngestionService {
           source: 'vauto_feed',
           importRunId: run.id,
           freshnessState: InventoryFreshnessState.FRESH,
+          publishPrices,
+          publishPhotos,
         },
       );
-      await this.inventory.updateVehicleLifecycle(location.id);
+      // Missing from this snapshot → MISSING / REMOVED_FROM_LISTING — never auto-SOLD.
+      await this.inventory.updateVehicleLifecycle(location.id, {
+        snapshotStartedAt,
+      });
 
       await this.prisma.inventoryImportRun.update({
         where: { id: run.id },

@@ -38,6 +38,7 @@ function store(t: Tokens) {
 
 export function clearSession() {
   access = null;
+  actingTenant = null;
   currentUser = null;
   try {
     sessionStorage.removeItem(RT_KEY);
@@ -47,7 +48,22 @@ export function clearSession() {
   emit();
 }
 
+/**
+ * Dealership being worked in CRM Workforce when it is not the signed-in person's own. The server
+ * accepts it only for a group member (GROUP_VIEWER reads, GROUP_ADMIN acts) and re-checks the
+ * membership on every request; setting it here grants nothing by itself.
+ */
+let actingTenant: string | null = null;
+export function setActingTenant(id: string | null) {
+  actingTenant = id;
+}
+export function withActingTenant(path: string): string {
+  if (!actingTenant || !path.startsWith('/ops/crm-workforce/') || /\/admin\/(my-dealerships|group-stop)/.test(path) || /[?&]tenantId=/.test(path)) return path;
+  return `${path}${path.includes('?') ? '&' : '?'}tenantId=${encodeURIComponent(actingTenant)}`;
+}
+
 async function raw(path: string, init: RequestInit = {}, auth = true): Promise<Response> {
+  path = withActingTenant(path);
   const isForm = typeof FormData !== 'undefined' && init.body instanceof FormData;
   return fetch(`/api${path}`, {
     ...init,
@@ -148,4 +164,15 @@ export async function logout(all = false) {
   } finally {
     clearSession();
   }
+}
+
+/** Public: details behind an invitation or reset link (masked email, dealership). */
+export async function describeStaffLink(token: string) {
+  const res = await raw('/public/crm-workforce/staff-link/describe', { method: 'POST', body: JSON.stringify({ token }) }, false);
+  return parse<{ valid: boolean; purpose?: 'INVITE' | 'RESET'; email?: string; dealership?: string; expiresAt?: string }>(res);
+}
+/** Public: the person sets their own password with a single-use link. */
+export async function acceptStaffLink(token: string, password: string) {
+  const res = await raw('/public/crm-workforce/staff-link/accept', { method: 'POST', body: JSON.stringify({ token, password }) }, false);
+  return parse<{ ok: true; dealershipSlug: string | null }>(res);
 }

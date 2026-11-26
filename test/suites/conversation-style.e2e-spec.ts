@@ -1,10 +1,16 @@
 import request from 'supertest';
 import { createE2eApp, E2eCtx, unwrap } from '../helpers/e2e-app';
+import {
+  JOURNEY_ORIGIN,
+  JOURNEY_SLUG,
+  seedJourneyMotors,
+} from '../helpers/journey-fixture';
 
 /**
  * Style regression over full transcripts (deterministic path; LLM disabled in test env).
- * Depends on the journey-motors fixture seeded by journeys.e2e-spec (runInBand order: j < c is
- * NOT guaranteed, so this suite seeds nothing and skips if the fixture tenant is absent).
+ * Seeds the shared journey-motors fixture itself (idempotent). Jest orders suites by cached
+ * timing, so relying on journeys.e2e-spec having run first made every script here pass
+ * without a single assertion whenever this suite came first on a fresh database.
  */
 const BANNED = [
   /^(absolutely|great question|certainly)\b/i,
@@ -49,22 +55,23 @@ const SCRIPTS: string[][] = [
 
 describe('conversation style regression', () => {
   let ctx: E2eCtx;
-  let tok: string | null = null;
+  let tok: string;
 
   beforeAll(async () => {
     ctx = await createE2eApp();
+    await seedJourneyMotors(ctx.prisma);
     const r = await request(ctx.app.getHttpServer())
       .post('/api/public/widget-token')
-      .set('Origin', 'http://127.0.0.1:18084')
-      .send({ tenantSlug: 'journey-motors', locationSlug: 'main' });
-    tok = r.status < 300 ? unwrap<{ token: string }>(r.body).token : null;
+      .set('Origin', JOURNEY_ORIGIN)
+      .send({ tenantSlug: JOURNEY_SLUG, locationSlug: 'main' });
+    expect(r.status).toBeLessThan(300);
+    tok = unwrap<{ token: string }>(r.body).token;
   });
   afterAll(async () => ctx.app.close());
 
   it.each(SCRIPTS.map((s, i) => [i, s] as const))(
     'script %i',
     async (_i, lines) => {
-      if (!tok) return; // fixture not seeded in this run
       let id: string | undefined;
       let prev = '';
       for (const m of lines) {

@@ -59,6 +59,8 @@ import { mergePolicy } from '../finance/financial-assumption-policy';
 import { isValidTimeZone, parseIsoDate } from '../common/time/zoned-time';
 import { redactCreditSensitive } from '../common/security/sensitive-data';
 import { InventoryEngine } from '../chat/engines/inventory.engine';
+import { VAutoSftpIngestionService } from '../integrations/vauto/vauto-sftp-ingestion.service';
+import { DIAL_DIFFERENCE_FEED_SOURCES } from '../integrations/vauto/dial-difference-feed-map';
 import { assignableStaffWhere } from '../leads/round-robin';
 
 type Scope = { tenantId: string; locationId: string | null };
@@ -117,6 +119,7 @@ export class OperationsService {
     private readonly tekion: TekionProvider,
     private readonly credit: CreditApplicationService,
     private readonly inventory: InventoryEngine,
+    private readonly vautoSftp: VAutoSftpIngestionService,
   ) {}
 
   /** Vehicle table browse for Command Center — DB price/status only. */
@@ -135,6 +138,118 @@ export class OperationsService {
       locationId: scope.locationId,
       ...filters,
     });
+  }
+
+  /**
+   * Per-rooftop inventory + Dial Difference SFTP import health (no secrets).
+   * Import history is evidence of past runs — not proof of live feed delivery.
+   */
+  async inventoryHealth(scope: Scope) {
+    const base = {
+      tenantId: scope.tenantId,
+      ...(scope.locationId ? { locationId: scope.locationId } : {}),
+    };
+    const [freshness, recentImports, failedImports, byFeed] = await Promise.all(
+      [
+        this.prisma.vehicle.groupBy({
+          by: ['freshnessState'],
+          where: {
+            ...base,
+            status: { in: ['AVAILABLE', 'IN_TRANSIT', 'HOLD', 'MISSING'] },
+          },
+          _count: { _all: true },
+        }),
+        this.prisma.inventoryImportRun.findMany({
+          where: base,
+          orderBy: { startedAt: 'desc' },
+          take: 25,
+          select: {
+            id: true,
+            status: true,
+            feedSourceKey: true,
+            sourceCondition: true,
+            transport: true,
+            startedAt: true,
+            completedAt: true,
+            recordCount: true,
+            validCount: true,
+            rejectedCount: true,
+            anomalyFlags: true,
+            errorMessage: true,
+          },
+        }),
+        this.prisma.inventoryImportRun.count({
+          where: {
+            ...base,
+            status: { in: ['FAILED', 'REJECTED_ANOMALY'] },
+            startedAt: { gte: new Date(Date.now() - 7 * 86_400_000) },
+          },
+        }),
+        this.prisma.inventoryImportRun.findMany({
+          where: { ...base, feedSourceKey: { not: null } },
+          orderBy: { startedAt: 'desc' },
+          take: 100,
+          select: {
+            feedSourceKey: true,
+            status: true,
+            startedAt: true,
+            validCount: true,
+          },
+        }),
+      ],
+    );
+
+    const latestByFeed = new Map<
+      string,
+      {
+        status: string;
+        startedAt: Date | null;
+        validCount: number | null;
+        displayName: string;
+      }
+    >();
+    for (const src of DIAL_DIFFERENCE_FEED_SOURCES) {
+      latestByFeed.set(src.feedSourceKey, {
+        status: 'NEVER_RUN',
+        startedAt: null,
+        validCount: null,
+        displayName: src.displayName,
+      });
+    }
+    for (const row of byFeed) {
+      const key = row.feedSourceKey!;
+      const existing = latestByFeed.get(key);
+      if (existing && existing.status === 'NEVER_RUN') {
+        latestByFeed.set(key, {
+          status: row.status,
+          startedAt: row.startedAt,
+          validCount: row.validCount,
+          displayName: existing.displayName,
+        });
+      }
+    }
+
+    return {
+      dialDifferenceSftp: this.vautoSftp.operatorStatus(),
+      freshness: Object.fromEntries(
+        freshness.map((v) => [v.freshnessState, v._count._all]),
+      ),
+      failedOrRejectedImports7d: failedImports,
+      /** Always ten Dial Difference feeds — NEVER_RUN until an import attempt exists. */
+      tenFeeds: [...latestByFeed.entries()].map(([feedSourceKey, row]) => ({
+        feedSourceKey,
+        ...row,
+      })),
+      latestImportByFeed: Object.fromEntries(latestByFeed),
+      recentImports,
+      pricePhotoPolicy: {
+        publishPrices: this.vautoSftp.operatorStatus().publishPrices,
+        publishPhotos: this.vautoSftp.operatorStatus().publishPhotos,
+        provenance:
+          'Fail-closed: prices/photos are stripped at upsert unless AMQUR_VAUTO_PUBLISH_* is true. No separate provenance columns; source string + importRunId + publish flags are the evidence.',
+      },
+      note: 'SFTP operatorStatus is configuration presence only — use the staging diagnostic for live directory listing. NEVER_RUN/empty feeds must not be treated as zero vehicles or sold. Missing≠sold.',
+    };
   }
 
   private loc(scope: Scope) {
@@ -390,7 +505,7 @@ export class OperationsService {
       );
     if (st.appointment)
       bits.push(
-        `Appointment ${st.appointment.status.toLowerCase()}: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''}`.trim(),
+        `Appointment ${st.appointment.status.toLowerCase()}${st.appointment.sandbox ? ' (SANDBOX demo booking)' : ''}: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''}`.trim(),
       );
     if (st.service?.need) bits.push(`Service need: ${st.service.need}`);
     if (st.parts?.need)
@@ -419,6 +534,15 @@ export class OperationsService {
   }
 
   // ───────────── takeover lifecycle
+
+  async conversationExternalKey(scope: Scope, id: string): Promise<string> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id, tenantId: scope.tenantId, ...this.loc(scope) },
+      select: { externalKey: true },
+    });
+    if (!conversation) throw new NotFoundException('Conversation not found');
+    return conversation.externalKey;
+  }
 
   async takeover(scope: Scope, id: string, userId: string) {
     const c = await this.prisma.conversation.findFirst({
@@ -1447,6 +1571,7 @@ export class OperationsService {
             rejected: r.rejectedCount,
             anomalies: r.anomalyFlags,
           })),
+          dialDifferenceSftp: this.vautoSftp.operatorStatus(),
         },
         llm: await this.llm.health(),
       },
@@ -2041,8 +2166,25 @@ export class OperationsService {
       data.storeHours = patch.storeHours as Prisma.InputJsonValue;
       data.storeHoursVerifiedAt = null; // hours changed → must be re-verified
     }
-    if (patch.departmentHours !== undefined)
+    if (patch.departmentHours !== undefined) {
+      // { sales?: weekly, service?: weekly, parts?: weekly } — each validated like storeHours.
+      const dh = patch.departmentHours as Record<string, unknown> | null;
+      if (
+        dh !== null &&
+        (typeof dh !== 'object' ||
+          Array.isArray(dh) ||
+          Object.entries(dh).some(
+            ([k, v]) =>
+              !['sales', 'service', 'parts'].includes(k) ||
+              (v !== null && !parseWeekly(v)),
+          ))
+      )
+        throw new BadRequestException(
+          'departmentHours must be { sales|service|parts: { mon: { open: "09:00", close: "19:00" }, … } }',
+        );
       data.departmentHours = patch.departmentHours as Prisma.InputJsonValue;
+      data.storeHoursVerifiedAt = null; // hours changed → must be re-verified
+    }
     if (patch.holidayHours !== undefined) {
       if (
         !Array.isArray(patch.holidayHours) ||

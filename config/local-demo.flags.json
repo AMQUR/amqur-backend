@@ -34,9 +34,13 @@
     "voiceAi": false,
     "proactiveEngagement": false,
     "priceDropAlerts": false,
-    "crossStoreInventory": false
+    "crossStoreInventory": false,
+    "salesDeskCards": true,
+    "sandboxScheduler": true
   },
   "notes": [
+    "salesDeskCards=true adds the lead form / appointment picker cards and structured submissions to chat (off everywhere else by default).",
+    "sandboxScheduler=true enables the SANDBOX (demo) scheduler for this disposable tenant only: the seed adds a MOCK appointments connection, slots are synthetic, references start with SBX-, every card is labelled sandbox. It is forced off and cannot register when NODE_ENV=production. It is not a Tekion or any real scheduler integration.",
     "appointments=true permits appointment REQUEST records only; confirmation still requires staff or a verified scheduler.",
     "uploads=true enables local Inbox file attach; SKIPPED scans are attachable only when NODE_ENV!==production (no malware scanner).",
     "Hours are synthetic (storeHoursVerifiedBy=synthetic-demo) and are labeled 'demo hours' to the customer; production treats them as unverified.",

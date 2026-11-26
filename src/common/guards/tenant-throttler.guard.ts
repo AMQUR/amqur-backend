@@ -1,17 +1,17 @@
-import { Injectable } from '@nestjs/common';
-import { ThrottlerGuard } from '@nestjs/throttler';
+import { ExecutionContext, Injectable } from '@nestjs/common';
+import { ThrottlerGuard, ThrottlerLimitDetail } from '@nestjs/throttler';
+import { resolveThrottleTracker } from './throttle-tracker';
 
 /**
- * Tenant-aware rate limiting.
+ * Rate-limit buckets keyed by who the caller verifiably is.
  *
- * The default ThrottlerGuard tracker is client IP only. Behind a shared
- * proxy/NAT that gives every dealership's visitors one bucket, and a burst
- * against tenant A consumes the same bucket tenant B's visitors rely on.
+ * The tracker comes from `resolveThrottleTracker` (see throttle-tracker.ts): the signed token's
+ * tenant for authenticated traffic, the client IP for public routes. This guard is registered
+ * AFTER JwtAuthGuard, so `req.user` is already verified when the tracker is computed.
  *
- * This tracker scopes the bucket to `${tenantSlug}:${ip}` whenever the
- * request carries a tenant slug (public widget endpoints put it in the
- * body or query). One tenant under load therefore never drains another
- * tenant's allowance. Requests without a tenant slug fall back to per-IP.
+ * A `tenantSlug` in the body or query is client-controlled and is never part of the key:
+ * guards run before validation, so a rotated slug would otherwise mint a fresh bucket per
+ * request (unlimited throughput from one IP).
  *
  * 429 behavior: the client receives HTTP 429 with a Retry-After header;
  * buckets are per route x per tracker with the TTLs configured in
@@ -19,14 +19,18 @@ import { ThrottlerGuard } from '@nestjs/throttler';
  */
 @Injectable()
 export class TenantThrottlerGuard extends ThrottlerGuard {
-  protected async getTracker(req: Record<string, any>): Promise<string> {
-    const ip: string =
-      (Array.isArray(req.ips) && req.ips.length ? req.ips[0] : req.ip) ??
-      'unknown';
-    const tenantSlug: unknown =
-      req.body?.tenantSlug ?? req.query?.tenantSlug ?? null;
-    return typeof tenantSlug === 'string' && tenantSlug
-      ? `${tenantSlug}:${ip}`
-      : ip;
+  protected getTracker(req: Record<string, any>): Promise<string> {
+    return Promise.resolve(resolveThrottleTracker(req));
+  }
+
+  protected throwThrottlingException(
+    context: ExecutionContext,
+    detail: ThrottlerLimitDetail,
+  ): Promise<void> {
+    context
+      .switchToHttp()
+      .getResponse()
+      .setHeader('Retry-After', detail.timeToBlockExpire);
+    return super.throwThrottlingException(context, detail);
   }
 }

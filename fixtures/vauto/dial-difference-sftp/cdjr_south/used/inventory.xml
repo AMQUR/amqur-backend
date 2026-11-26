@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FIXTURE — Dial Difference SFTP layout. Not live dealership stock. -->
+<adf>
+  <prospect>
+    <vehicle interest="buy" status="available">
+      <year>2022</year><make>Ram</make><model>1500</model><trim>Big Horn</trim>
+      <vin>1C6SRFFT0MN000101</vin><stock>CS-USED-1</stock>
+      <mileage units="mi">22000</mileage>
+      <price type="sale" currency="USD">32995</price>
+      <bodystyle>Truck</bodystyle>
+    </vehicle>
+  </prospect>
+</adf>

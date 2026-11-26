@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { isProductionTier } from '../config/deployment-tier';
 
 /**
  * Platform defaults are FAIL-CLOSED for dealership-specific capabilities.
@@ -67,6 +68,50 @@ export const PLATFORM_FEATURE_DEFAULTS: Record<string, boolean> = {
   smsAiReply: false,
   email: false,
   whatsapp: false,
+  /**
+   * Per-rooftop ADF/XML lead delivery (docs/ADF_LEAD_DELIVERY.md). Default off. Turning it on
+   * only lets deliveries be queued; a send still needs ADF_SEND_ENABLED and a verified route.
+   */
+  adfLeadDelivery: false,
+  /**
+   * Structured widget cards (lead form, appointment picker, enriched appointment/vehicle
+   * fields) and structured submissions on POST /chat. Default off: with it off the chat
+   * response is identical to the text-only contract.
+   */
+  salesDeskCards: false,
+  /**
+   * SANDBOX (demo) scheduler. Non-production only — forced off in the production deployment tier.
+   * Also needs an enabled + liveReady `appointments` IntegrationConnection (provider MOCK).
+   */
+  sandboxScheduler: false,
+  /**
+   * Group-site shopping across member rooftops (docs/CHAT_STREAM_CONTRACT.md §6). Has an effect
+   * ONLY on the tenant a DealerGroup designates as its group site (`groupSiteTenantId`); on
+   * any other tenant it does nothing. Default off. `crossStoreInventory` stays reserved.
+   */
+  groupSiteShopping: false,
+  /**
+   * A rooftop's own opt-in to appear in its group site's search. Default off: a rooftop that
+   * has not opted in is never read by a group conversation.
+   */
+  groupInventoryListed: false,
+  /**
+   * Group site only: a handoff with no store chosen goes to the group tenant's own queue
+   * instead of asking which store. Default off (ask which store; never guess a rooftop).
+   */
+  groupHandoffQueue: false,
+  /**
+   * AMQUR CRM Workforce (docs/CRM_WORKFORCE.md). Default off. Turning it on only lets a rooftop
+   * be configured and worked in OBSERVE mode; the engine also needs CRM_WORKFORCE_ENABLED, and
+   * any customer-facing send needs its own control row, env switch and authorization.
+   */
+  crmWorkforce: false,
+  /**
+   * Lets a rooftop import CRM exports that contain REAL customer contacts. Default off: with
+   * it off only files made entirely of reserved test contacts are accepted. Turn on per
+   * rooftop only after the import authorization and privacy checks are recorded.
+   */
+  crmWorkforceRealImports: false,
 };
 
 @Injectable()
@@ -127,6 +172,8 @@ export class FeatureFlagsService {
       merged.tekionIntegration = false;
     }
     for (const k of Object.keys(RESERVED_FLAGS)) merged[k] = false;
+    // The sandbox scheduler can never be switched on in production.
+    if (isProductionTier()) merged.sandboxScheduler = false;
     void vautoLive; // vAuto health is reported by the integration, not a flag
 
     return merged;
@@ -144,7 +191,9 @@ export class FeatureFlagsService {
             RESERVED_FLAGS[k] ??
             (k === 'tekionIntegration' && !v
               ? 'no_live_ready_tekion_connection'
-              : undefined),
+              : k === 'sandboxScheduler' && isProductionTier()
+                ? 'sandbox_scheduler_forbidden_in_production'
+                : undefined),
         },
       ]),
     );

@@ -2,14 +2,18 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { InventoryIngestionService } from '../integrations/vauto/inventory-ingestion.service';
+import { VAutoSftpIngestionService } from '../integrations/vauto/vauto-sftp-ingestion.service';
+import { tryAcquireSftpIngestLock } from './sftp-ingest-lock';
 
 @Injectable()
 export class InventorySyncService {
   private readonly logger = new Logger(InventorySyncService.name);
+  private sftpRunning = false;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly ingestion: InventoryIngestionService,
+    private readonly sftpIngestion: VAutoSftpIngestionService,
   ) {}
 
   @Cron('*/30 * * * *')
@@ -40,8 +44,7 @@ export class InventorySyncService {
     );
 
     if (!locationsWithFeeds.length) {
-      this.logger.log('No inventory feeds configured');
-      return;
+      this.logger.log('No HTTPS inventory feeds configured');
     }
 
     for (const location of locationsWithFeeds) {
@@ -56,6 +59,42 @@ export class InventorySyncService {
       }
     }
 
+    await this.syncDialDifferenceSftp();
+
     this.logger.log('Inventory auto-sync finished');
+  }
+
+  /** Independent of HTTPS feeds; gated by AMQUR_VAUTO_SFTP_ENABLED. */
+  private async syncDialDifferenceSftp() {
+    if (!this.sftpIngestion.isEnabled()) {
+      this.logger.debug('Dial Difference SFTP sync disabled');
+      return;
+    }
+    if (this.sftpRunning) {
+      this.logger.warn('Dial Difference SFTP sync already in progress — skip');
+      return;
+    }
+    const release = await tryAcquireSftpIngestLock();
+    if (!release) {
+      this.logger.warn(
+        'Dial Difference SFTP sync skipped — another worker holds the Redis lock',
+      );
+      return;
+    }
+    this.sftpRunning = true;
+    try {
+      const results = await this.sftpIngestion.runAllSources();
+      for (const r of results) {
+        this.logger.log(
+          `SFTP source=${r.feedSourceKey} status=${r.status} run=${r.runId ?? '-'}`,
+        );
+      }
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Dial Difference SFTP sync failed: ${msg}`);
+    } finally {
+      this.sftpRunning = false;
+      await release();
+    }
   }
 }

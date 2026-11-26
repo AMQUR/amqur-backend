@@ -7,7 +7,7 @@ const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 type Day = { open: string; close: string } | null;
 type S = {
   id: string; name: string; timezone: string; storeHours: Record<string, Day> | null; holidayHours: Array<{ date: string; closed?: boolean; open?: string; close?: string; note?: string }> | null;
-  storeHoursVerifiedAt: string | null; financialPolicy: Record<string, unknown> | null; creditApplication: Record<string, unknown> | null; serviceAmenities: Record<string, unknown> | null;
+  departmentHours?: Record<string, Record<string, Day> | null> | null; storeHoursVerifiedAt: string | null; financialPolicy: Record<string, unknown> | null; creditApplication: Record<string, unknown> | null; serviceAmenities: Record<string, unknown> | null;
   messagingPolicy?: { quietStart?: string; quietEnd?: string; maxMarketingPer24h?: number } | null;
   effective: {
     hours: { verified: boolean };
@@ -22,6 +22,7 @@ export function Settings({ locationId }: { locationId: string }) {
   const [hours, setHours] = useState<Record<string, Day>>({});
   const [tz, setTz] = useState('');
   const [holidays, setHolidays] = useState('');
+  const [dept, setDept] = useState<Record<string, Record<string, Day> | null>>({ sales: null, service: null, parts: null });
   const [policy, setPolicy] = useState({ illustrativeApr: '', defaultTermMonths: '', taxRatePercent: '', docFee: '', verified: false });
   const [amen, setAmen] = useState({ shuttle: '', loaner: '' });
   const [quiet, setQuiet] = useState({ quietStart: '21:00', quietEnd: '08:00' });
@@ -56,6 +57,7 @@ export function Settings({ locationId }: { locationId: string }) {
     if (!d) return;
     setTz(d.timezone);
     setHours(Object.fromEntries(DAYS.map((k) => [k, d.storeHours?.[k] ?? null])));
+    setDept(Object.fromEntries(['sales', 'service', 'parts'].map((k) => [k, d.departmentHours?.[k] ? Object.fromEntries(DAYS.map((x) => [x, d.departmentHours![k]![x] ?? null])) : null])));
     setHolidays((d.holidayHours ?? []).map((h) => `${h.date} ${h.closed ? 'closed' : `${h.open}-${h.close}`}${h.note ? ` ${h.note}` : ''}`).join('\n'));
     const p = d.financialPolicy ?? {};
     setPolicy({ illustrativeApr: String(p.illustrativeApr ?? ''), defaultTermMonths: String(p.defaultTermMonths ?? ''), taxRatePercent: String(p.taxRatePercent ?? ''), docFee: String(p.docFee ?? ''), verified: !!p.verifiedAt });
@@ -121,6 +123,24 @@ export function Settings({ locationId }: { locationId: string }) {
                 <button className="btn btn--primary" onClick={() => void save('Hours verification', { verifyHours: true })}>I verified these hours are correct</button>
               </div>
             )}
+          </Card>
+          <Card title="Department hours" actions={<span className="muted small">Saving clears the verification above; verify again after saving.</span>}>
+            {(['sales', 'service', 'parts'] as const).map((k) => (
+              <details key={k} open={!!dept[k]}>
+                <summary>{k[0].toUpperCase() + k.slice(1)} {dept[k] ? '' : '— same as store hours'}</summary>
+                <label className="row"><input type="checkbox" checked={!dept[k]} disabled={!canEdit} onChange={(e) => setDept({ ...dept, [k]: e.target.checked ? null : Object.fromEntries(DAYS.map((x) => [x, hours[x] ?? null])) })} /> Same as store hours</label>
+                {dept[k] && (
+                  <table className="table hours"><tbody>{DAYS.map((x) => { const v = dept[k]![x]; return (
+                    <tr key={x}>
+                      <th>{x.toUpperCase()}</th>
+                      <td><label className="row"><input type="checkbox" checked={!v} disabled={!canEdit} onChange={(e) => setDept({ ...dept, [k]: { ...dept[k]!, [x]: e.target.checked ? null : { open: '09:00', close: '18:00' } } })} /> Closed</label></td>
+                      <td>{v && <input type="time" value={v.open} disabled={!canEdit} aria-label={`${k} ${x} open`} onChange={(e) => setDept({ ...dept, [k]: { ...dept[k]!, [x]: { ...v, open: e.target.value } } })} />}</td>
+                      <td>{v && <input type="time" value={v.close} disabled={!canEdit} aria-label={`${k} ${x} close`} onChange={(e) => setDept({ ...dept, [k]: { ...dept[k]!, [x]: { ...v, close: e.target.value } } })} />}</td>
+                    </tr>); })}</tbody></table>
+                )}
+              </details>
+            ))}
+            {canEdit && <button className="btn" onClick={() => void save('Department hours', { departmentHours: Object.fromEntries(Object.entries(dept).filter(([, v]) => v)) })}>Save department hours</button>}
           </Card>
           <div className="grid2">
             <Card title="Payment estimate policy" actions={<Badge tone={d.effective.financialPolicy.mode === 'DEALER_CONFIGURED' ? 'ok' : 'neutral'}>{d.effective.financialPolicy.mode === 'DEALER_CONFIGURED' ? 'dealer tax & fees' : 'illustrative (excludes tax & fees)'}</Badge>}>

@@ -87,3 +87,8 @@ dl.kv { grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 13.5px
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 /* Long navigation must scroll inside the sidebar so Sign out stays reachable on short viewports. */
 .side { overflow-y: auto; }
+
+/* Lead delivery ladder: one step per state, wrapping cleanly; position is the order, not a number. */
+.ladder { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.ladder li { white-space: nowrap; }
+.ladder li[aria-current="step"] { font-weight: 650; }

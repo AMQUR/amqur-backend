@@ -9,6 +9,7 @@ import { AuthModule } from '../auth/auth.module';
 import { VinDecoderService } from './vin/vin-decoder.service';
 import { ClaudeConversationService } from './claude/claude-conversation.service';
 import { ConversationComposerService } from './compose/conversation-composer.service';
+import { OpenConversationService } from './conversation/open-conversation.service';
 import { LiveInfoService } from '../live-info/live-info.service';
 import { EscalationsModule } from '../escalations/escalations.module';
 import { LeadsModule } from '../leads/leads.module';
@@ -20,7 +21,11 @@ import { IntegrationsModule } from '../integrations/integrations.module';
 import { ConversationIdService } from './conversation-id.service';
 import { PlaybookService } from './playbooks/playbook.service';
 import { PlaybooksController } from './playbooks/playbooks.controller';
+import { GroupRoutingService } from '../group-routing/group-routing.service';
+import { GroupMembershipService } from '../group-routing/group-membership.service';
+import { GroupInventoryService } from '../group-routing/group-inventory.service';
 
+import { TurnLockService } from './turn-lock.service';
 @Module({
   imports: [
     AuthModule,
@@ -37,17 +42,23 @@ import { PlaybooksController } from './playbooks/playbooks.controller';
   providers: [
     ChatOrchestrator,
     ChatService,
+    TurnLockService,
     InventoryEngine,
     JourneyStore,
     ClaudeConversationService,
     ConversationComposerService,
+    OpenConversationService,
     LiveInfoService,
     VinDecoderService,
     ConversationIdService,
     PlaybookService,
+    GroupMembershipService,
+    GroupInventoryService,
+    GroupRoutingService,
   ],
   exports: [
     ChatOrchestrator,
+    TurnLockService,
     InventoryEngine,
     JourneyStore,
     ClaudeConversationService,

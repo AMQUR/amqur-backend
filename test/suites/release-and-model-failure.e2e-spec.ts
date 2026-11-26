@@ -100,7 +100,7 @@ describe('release markers and model failure handling', () => {
       expect(r.body.provenance?.languageModel).toBe('discarded');
     });
 
-    it('a grounded model rewrite is used and marked polished', async () => {
+    it('a conversational turn is answered by the conversation lane and marked as such', async () => {
       const text =
         'Happy to help you look around. What kind of vehicle are you after?';
       fakeModel(async () => ({
@@ -110,8 +110,9 @@ describe('release markers and model failure handling', () => {
       }));
       const r = await chat('hello there');
       expect(r.status).toBe(201);
-      // Claude composes the reply; the validated text is what the customer sees.
-      expect(r.body.provenance?.languageModel).toBe('composed');
+      // A mid-conversation greeting needs no dealership tool: the conversation model answers
+      // it with the transcript in view, and the envelope says which lane wrote the text.
+      expect(r.body.provenance?.languageModel).toBe('conversation');
       expect(r.body.reply).toBe(text);
     });
 

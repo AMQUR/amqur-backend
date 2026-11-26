@@ -1,9 +1,20 @@
 import * as Joi from 'joi';
+import { DEPLOYMENT_TIERS, deploymentTierProblem } from './deployment-tier';
 
 export const envValidationSchema = Joi.object({
   NODE_ENV: Joi.string()
     .valid('development', 'production', 'test')
     .default('development'),
+
+  /**
+   * Which deployment this is (config/deployment-tier.ts). Optional: unset derives the tier from
+   * NODE_ENV exactly as before (production ⇒ production). `staging` is valid with
+   * NODE_ENV=production (hosted staging). `production` requires NODE_ENV=production, and
+   * `development` / `test` are refused with NODE_ENV=production — both checked below.
+   */
+  DEPLOYMENT_TIER: Joi.string()
+    .valid(...DEPLOYMENT_TIERS)
+    .optional(),
 
   PORT: Joi.number().default(3000),
 
@@ -20,6 +31,44 @@ export const envValidationSchema = Joi.object({
     .default(25000)
     .min(1000)
     .max(120000),
+
+  /** Model for the general conversation lane (strongest suitable; default claude-opus-5-5). */
+  LLM_CONVERSATION_MODEL: Joi.string().optional().allow(''),
+  LLM_CONVERSATION_EFFORT: Joi.string()
+    .valid('low', 'medium', 'high')
+    .optional(),
+  /** Small fast model that decides conversation vs dealership-tool lane. */
+  LLM_ROUTER_MODEL: Joi.string().optional().allow(''),
+  /** OpenAI model per task tier (default: OPENAI_MODEL for both). */
+  OPENAI_CONVERSATION_MODEL: Joi.string().optional().allow(''),
+  OPENAI_ROUTER_MODEL: Joi.string().optional().allow(''),
+  /** Which OpenAI endpoint carries tool calls: 'responses' (api.openai.com default) or 'chat'. */
+  OPENAI_TOOLS_API: Joi.string().valid('responses', 'chat').optional(),
+  /** Kill switch for the conversation lane ('false' restores tool-lane-only behaviour). */
+  OPEN_CONVERSATION_ENABLED: Joi.string().valid('true', 'false').optional(),
+  /** Model tokens one tenant may use per UTC day (unset = only the global LLM_DAILY_TOKEN_BUDGET applies). */
+  LLM_TENANT_DAILY_TOKEN_BUDGET: Joi.number().integer().min(1).optional(),
+  /** Widget chat turns allowed per client address (defaults 120 per hour, 400 per day). */
+  CHAT_TURNS_PER_IP_HOUR: Joi.number().integer().min(1).optional(),
+  CHAT_TURNS_PER_IP_DAY: Joi.number().integer().min(1).optional(),
+  /** Verified store-link handoffs: auto (default), force, or off. See OpenConversationService.directoryMode. */
+  DEALER_DIRECTORY_MODE: Joi.string().valid('auto', 'force', 'off').optional(),
+
+  /** Optional OpenAI-compatible fallbacks: active only when BOTH key and model are set. */
+  GEMINI_API_KEY: Joi.string().optional().allow(''),
+  GEMINI_MODEL: Joi.string().optional().allow(''),
+  GEMINI_BASE_URL: Joi.string().uri().optional().allow(''),
+  XAI_API_KEY: Joi.string().optional().allow(''),
+  XAI_MODEL: Joi.string().optional().allow(''),
+  XAI_BASE_URL: Joi.string().uri().optional().allow(''),
+  DEEPSEEK_API_KEY: Joi.string().optional().allow(''),
+  DEEPSEEK_MODEL: Joi.string().optional().allow(''),
+  DEEPSEEK_BASE_URL: Joi.string().uri().optional().allow(''),
+  OPENROUTER_API_KEY: Joi.string().optional().allow(''),
+  OPENROUTER_MODEL: Joi.string().optional().allow(''),
+  OPENROUTER_BASE_URL: Joi.string().uri().optional().allow(''),
+  /** Fallback order after LLM_PRIMARY_PROVIDER, e.g. "openai,gemini,openrouter". */
+  LLM_FALLBACK_ORDER: Joi.string().optional().allow(''),
 
   OPENAI_API_KEY: Joi.string().optional().allow(''),
   OPENAI_MODEL: Joi.string().optional().default('gpt-4o-mini'),
@@ -83,10 +132,54 @@ export const envValidationSchema = Joi.object({
   /** Comma-separated hostnames allowed for inventory feed fetches */
   INVENTORY_FEED_ALLOWED_HOSTS: Joi.string().optional().allow('').default(''),
 
+  /**
+   * Dial Difference SFTPGo (read-only amqur_inventory_reader). Default off.
+   * Password must come from the server-side secret store — never commit it.
+   */
+  AMQUR_VAUTO_SFTP_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  AMQUR_VAUTO_SFTP_HOST: Joi.string().hostname().optional().allow(''),
+  AMQUR_VAUTO_SFTP_PORT: Joi.number().integer().min(1).max(65535).optional(),
+  AMQUR_VAUTO_SFTP_USER: Joi.string().optional().allow(''),
+  AMQUR_VAUTO_SFTP_PASSWORD: Joi.string().optional().allow(''),
+  AMQUR_VAUTO_SFTP_HOST_FINGERPRINT: Joi.string().optional().allow(''),
+  AMQUR_VAUTO_SFTP_MAX_BYTES: Joi.number().integer().min(1024).optional(),
+  /** Customer-facing advertised price from SFTP feeds — off until dealership approval. */
+  AMQUR_VAUTO_PUBLISH_PRICES: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  /** Vendor photos — off until image rights are documented. */
+  AMQUR_VAUTO_PUBLISH_PHOTOS: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+
+  /** Optional HTTPS webhook for ops alerts (SFTP/freshness/lead). Empty = skip. */
+  OPS_ALERT_WEBHOOK_URL: Joi.string().uri().optional().allow(''),
+
   GOOGLE_CLIENT_EMAIL: Joi.string().optional().allow(''),
   GOOGLE_PRIVATE_KEY: Joi.string().optional().allow(''),
 
   WIDGET_TOKEN_EXPIRES_IN: Joi.string().optional().default('4h'),
+
+  /** Concurrent open POST /chat/stream turns (docs/operations/rate-limits.md). */
+  CHAT_STREAM_MAX_CONCURRENT_PER_IP: Joi.number()
+    .integer()
+    .min(1)
+    .max(1000)
+    .optional()
+    .default(10),
+  CHAT_STREAM_MAX_CONCURRENT_PER_TOKEN: Joi.number()
+    .integer()
+    .min(1)
+    .max(1000)
+    .optional()
+    .default(4),
+  /** Test stacks only: `production` applies the production rate-limit numbers under NODE_ENV=test. */
+  RATE_LIMIT_PROFILE: Joi.string().valid('production', 'test').optional(),
 
   /**
    * Dedicated signing secret for public widget tokens; falls back to
@@ -154,6 +247,109 @@ export const envValidationSchema = Joi.object({
   /** Public HTTPS URLs for this deployment (tenant/env config — not hardcoded branding). */
   PUBLIC_API_URL: Joi.string().uri().optional().allow(''),
   PUBLIC_WIDGET_URL: Joi.string().uri().optional().allow(''),
+
+  /**
+   * Per-rooftop ADF/XML lead delivery (docs/ADF_LEAD_DELIVERY.md). Every switch is fail-closed.
+   * ADF_SEND_ENABLED is the master switch (default false: nothing is handed to any transport).
+   */
+  ADF_SEND_ENABLED: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  /**
+   * sandbox (default) | live. `live` only takes effect when NODE_ENV=production AND
+   * ADF_SEND_ENABLED=true AND the route is a verified, production-enabled PRODUCTION route;
+   * otherwise the transport is forced to the sandbox sink / loopback mock SMTP.
+   */
+  LEAD_DELIVERY_MODE: Joi.string()
+    .valid('sandbox', 'live')
+    .optional()
+    .default('sandbox'),
+  /** Sandbox transport: in-process sink (default) or the loopback mock SMTP server. */
+  ADF_SANDBOX_TRANSPORT: Joi.string()
+    .valid('sink', 'smtp')
+    .optional()
+    .default('sink'),
+  /** SMTP relay. Outside fully-gated live mode only a loopback host is accepted. */
+  /**
+   * Resend HTTPS API key for live lead mail. A secret: set only on the services that send
+   * (API + worker), never in the widget, a browser, Postgres or Redis.
+   */
+  RESEND_API_KEY: Joi.string().min(8).optional().allow(''),
+  /** Live transport. Default: `resend` when RESEND_API_KEY is set, else `smtp`. */
+  ADF_LIVE_TRANSPORT: Joi.string().valid('smtp', 'resend').optional().allow(''),
+  ADF_SMTP_HOST: Joi.when('LEAD_DELIVERY_MODE', {
+    is: 'live',
+    then: Joi.when('RESEND_API_KEY', {
+      is: Joi.string().min(8).required(),
+      then: Joi.string().optional().allow('').default('127.0.0.1'),
+      otherwise: Joi.string().hostname().required(),
+    }),
+    otherwise: Joi.string().optional().allow('').default('127.0.0.1'),
+  }),
+  ADF_SMTP_PORT: Joi.number().port().optional().default(11025),
+  ADF_SMTP_SECURE: Joi.string()
+    .valid('true', 'false')
+    .optional()
+    .default('false'),
+  ADF_SMTP_USER: Joi.string().optional().allow(''),
+  ADF_SMTP_PASS: Joi.string().optional().allow(''),
+  /** Envelope/From address (needs SPF/DKIM/DMARC alignment before any live send). */
+  ADF_FROM_ADDRESS: Joi.when('LEAD_DELIVERY_MODE', {
+    is: 'live',
+    then: Joi.string().email().required(),
+    otherwise: Joi.string()
+      .optional()
+      .allow('')
+      .default('adf-sandbox@amqur.example.invalid'),
+  }),
+  /** `<provider><name>` in the ADF document. */
+  ADF_PROVIDER_NAME: Joi.string()
+    .max(60)
+    .optional()
+    .allow('')
+    .default('AMQUR AI'),
+  /** Interval of the SSE comment heartbeat on POST /chat/stream while a turn runs, ms. */
+  CHAT_STREAM_HEARTBEAT_MS: Joi.number()
+    .integer()
+    .min(25)
+    .max(60000)
+    .optional()
+    .default(15000),
+  /**
+   * Explicit opt-in for the SANDBOX (demo) scheduler. Default off. It is additionally refused
+   * outright in production — setting it to `true` there fails validation at boot.
+   */
+  SANDBOX_SCHEDULER_ENABLED: Joi.when('NODE_ENV', {
+    is: 'production',
+    // Production tier (DEPLOYMENT_TIER unset or `production`): `true` fails boot, as before.
+    // Hosted staging (NODE_ENV=production + DEPLOYMENT_TIER=staging) may opt in.
+    then: Joi.when('DEPLOYMENT_TIER', {
+      is: 'staging',
+      then: Joi.string().valid('true', 'false').optional().default('false'),
+      otherwise: Joi.string().valid('false').optional().default('false'),
+    }),
+    otherwise: Joi.string().valid('true', 'false').optional().default('false'),
+  }),
+  /**
+   * Hard overall deadline for one lead hand-off (connect to final reply), ms. Capped at 60 s so
+   * the 90 s stale-SENT window always exceeds it by a 30 s margin.
+   */
+  ADF_SEND_DEADLINE_MS: Joi.number()
+    .integer()
+    .min(250)
+    .max(60000)
+    .optional()
+    .default(30000),
+  /** Hard cap on one ADF document, bytes. */
+  ADF_MAX_BYTES: Joi.number()
+    .integer()
+    .min(1024)
+    .max(1048576)
+    .optional()
+    .default(65536),
+  /** Optional local directory for sandbox-sink .eml files (never used in production). */
+  ADF_SANDBOX_SINK_DIR: Joi.string().optional().allow(''),
 })
   .with('LLM_DAILY_BUDGET_USD', [
     'LLM_COST_INPUT_PER_MTOK',
@@ -162,4 +358,14 @@ export const envValidationSchema = Joi.object({
   .with('LLM_TENANT_DAILY_BUDGET_USD', [
     'LLM_COST_INPUT_PER_MTOK',
     'LLM_COST_OUTPUT_PER_MTOK',
-  ]);
+  ])
+  .custom((value: Record<string, unknown>, helpers) => {
+    const problem = deploymentTierProblem({
+      NODE_ENV: typeof value.NODE_ENV === 'string' ? value.NODE_ENV : undefined,
+      DEPLOYMENT_TIER:
+        typeof value.DEPLOYMENT_TIER === 'string'
+          ? value.DEPLOYMENT_TIER
+          : undefined,
+    });
+    return problem ? helpers.message({ custom: problem }) : value;
+  });

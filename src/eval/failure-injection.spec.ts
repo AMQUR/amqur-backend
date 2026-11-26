@@ -95,6 +95,7 @@ describe('failure injection', () => {
           .mockResolvedValue([
             { id: '1', topic: 'unknown.topic', payload: {}, attempts: 0 },
           ]),
+        beginHandling: jest.fn().mockResolvedValue(true),
         markPublished: jest.fn().mockResolvedValue({}),
         markFailed: jest.fn().mockResolvedValue({}),
       };

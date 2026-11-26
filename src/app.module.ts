@@ -1,11 +1,19 @@
 import { ExperimentsModule } from './experiments/experiments.module';
 import { SpotlightsModule } from './spotlights/spotlights.module';
-import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  ExecutionContext,
+} from '@nestjs/common';
 
+import { isCredentialController } from './common/guards/credential-routes';
 import { ConfigModule } from '@nestjs/config';
 import { envValidationSchema } from './config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { TenantThrottlerGuard } from './common/guards/tenant-throttler.guard';
+import { rateLimit } from './common/rate-limits';
+import { SecurityHeadersMiddleware } from './common/middleware/security-headers.middleware';
 import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 
@@ -51,10 +59,15 @@ import { DocumentsModule } from './documents/documents.module';
 import { SurveysModule } from './surveys/surveys.module';
 import { WorkflowLabModule } from './workflow-lab/workflow-lab.module';
 import { ToolRegistryModule } from './tool-registry/tool-registry.module';
+import { CrmWorkforceModule } from './crm-workforce/crm-workforce.module';
 
 import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { LoggerMiddleware } from './common/middleware/logger.middleware';
+
+function isCredentialRoute(context: ExecutionContext): boolean {
+  return isCredentialController(context.getClass()?.name);
+}
 
 @Module({
   imports: [
@@ -75,12 +88,16 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
         name: 'default',
         ttl: 60_000,
         // Higher ceiling in test/load labs; production stays 120/min.
-        limit: process.env.NODE_ENV === 'test' ? 10_000 : 120,
+        limit: rateLimit(120, 10_000),
       },
       {
+        // Credential endpoints only (login, MFA, password, invite redemption). Without this
+        // filter a named throttler applies to EVERY route, which capped the public widget
+        // (config + token + chat on each page view) at 20 requests a minute per address.
         name: 'auth',
         ttl: 60_000,
-        limit: process.env.NODE_ENV === 'test' ? 5_000 : 20,
+        limit: rateLimit(20, 5_000),
+        skipIf: (context) => !isCredentialRoute(context),
       },
     ]),
 
@@ -127,6 +144,7 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
     SurveysModule,
     WorkflowLabModule,
     ToolRegistryModule,
+    CrmWorkforceModule,
   ],
 
   providers: [
@@ -138,6 +156,8 @@ import { LoggerMiddleware } from './common/middleware/logger.middleware';
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    consumer.apply(LoggerMiddleware).forRoutes('{*path}');
+    consumer
+      .apply(SecurityHeadersMiddleware, LoggerMiddleware)
+      .forRoutes('{*path}');
   }
 }

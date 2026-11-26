@@ -1,17 +1,23 @@
 name: Deploy
 
-# Feature branch → CI (ci.yml) → approved merge to main → automatic staging
-# deploy (migrations run on container start) → staging smoke tests →
-# manual production approval (GitHub environment "production") → production
-# deploy → production smoke tests. Rollback: Railway "redeploy previous
-# deployment" (see docs/operations/runbook.md).
+# Reviewed release path for the AMQUR backend (docs/crm-workforce/RELEASE_GOVERNANCE.md).
 #
-# OWNER SETUP REQUIRED (workflow is inert until then):
-#   - repo secret RAILWAY_API_TOKEN (Railway account or workspace token;
-#     required because this workflow deploys both staging and production.
-#     Project tokens are single-environment and use RAILWAY_TOKEN instead.)
-#   - GitHub environment "production" with required reviewers
-#   - variables STAGING_API_URL / PRODUCTION_API_URL if they change
+#   pull request → CI (ci.yml) → merge to protected main → staging deploy + acceptance
+#   → manual approval (GitHub environment "production", required reviewer AMQUR)
+#   → lineage guard (refuses any build that does not contain the commit production runs)
+#   → production deploy (api + worker) → production smoke.
+#
+# Targets the services that actually serve AMQUR: Railway project amqur-platform-staging,
+#   staging:    backend-staging / worker-staging
+#   production: backend-production / worker-production   (DB Postgres-1bjE)
+# It never deploys to the legacy dial-us-now-platform project.
+#
+# Requires repo secret RAILWAY_API_TOKEN (an account/workspace token with access to
+# amqur-platform-staging). Without access the first Railway call fails and nothing is deployed.
+# Migrations run on API start (prisma migrate deploy); they are additive by policy. Take the
+# encrypted pre-release backup (docs/crm-workforce/DISASTER_RECOVERY.md) before approving a
+# release that carries a migration. Rollback: deploy the previous prod-* tag (break-glass,
+# after scripts/release/verify-lineage.sh).
 
 on:
   push:
@@ -26,8 +32,9 @@ permissions:
   contents: read
 
 env:
-  # dial-us-now-platform (AMQUR) — required when using account/workspace tokens
-  RAILWAY_PROJECT_ID: 3bca40b6-01c6-4f02-9464-8682e6ffcb75
+  RAILWAY_PROJECT_ID: e4d54510-bbc0-45bc-9d5b-a19a5ad5132c
+  STAGING_URL: https://backend-staging-staging-b699.up.railway.app
+  PRODUCTION_URL: https://backend-production-production-2415eedf.up.railway.app
 
 jobs:
   deploy-staging:
@@ -46,120 +53,82 @@ jobs:
           fi
       - name: Install Railway CLI
         run: npm i -g @railway/cli
-      - name: Sync missing worker boot vars from staging/api (names only, values never printed)
-        env:
-          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          # worker must share CORS_ORIGINS + INTEGRATION_ENCRYPTION_KEY with api
-          # for encryption compatibility; copy only when worker keys are absent.
-          node scripts/sync-worker-required-from-api.mjs staging
       - name: Preflight — staging variables this build needs to boot (names only, values never printed)
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
           set -euo pipefail
-          for svc in api worker; do
-            railway variables --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment staging --json \
-              | node scripts/env-preflight.js staging "$svc"
-          done
-      - name: Publish provenance variables + deploy api and worker
+          railway variables --project "$RAILWAY_PROJECT_ID" --service backend-staging --environment staging --json | node scripts/env-preflight.js staging api
+          railway variables --project "$RAILWAY_PROJECT_ID" --service worker-staging --environment staging --json | node scripts/env-preflight.js staging worker
+      - name: Publish provenance + deploy api and worker to staging
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
           set -euo pipefail
-          COMMIT_SHA="${{ github.sha }}"
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          RELEASE_ID="${{ github.run_id }}-${{ github.run_attempt }}"
-          VERSION="$(node -e 'console.log(require("./package.json").version)')"
-          for svc in api worker; do
+          for svc in backend-staging worker-staging; do
             railway variables --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment staging \
-              --set "APP_COMMIT_SHA=${COMMIT_SHA}" \
+              --set "APP_COMMIT_SHA=${GITHUB_SHA::7}" \
               --set "APP_BUILD_TIME=${BUILD_TIME}" \
-              --set "APP_RELEASE_ID=${RELEASE_ID}" \
-              --set "APP_RELEASE_VERSION=${VERSION}" \
-              --set "APP_SERVICE_NAME=${svc}" \
+              --set "APP_RELEASE_ID=gh-${{ github.run_id }}-${{ github.run_attempt }}" \
+              --set "APP_RELEASE_VERSION=main" \
               --skip-deploys
             railway up --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment staging --ci
           done
-      - name: Staging smoke — release identity + health + five-tenant contract
-        run: |
-          set -euo pipefail
-          scripts/verify-release.sh "https://staging-api.dialusnow.com" "${{ github.sha }}"
-          curl -sf https://staging-api.dialusnow.com/api/health | grep -q '"database":"up"'
-          for t in jeep-of-chicago dial-nissan-of-chicago dial-chevy-of-chicago infiniti-of-chicago dial-cdjr-of-chicago; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://staging-api.dialusnow.com/api/public/widget-config?tenantSlug=$t&locationSlug=main")
-            [ "$code" = "200" ] || { echo "widget-config $t returned $code" >&2; exit 1; }
-          done
-          # Fail-closed origin check
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST https://staging-api.dialusnow.com/api/public/widget-token \
-            -H 'Origin: https://unauthorized.example' -H 'Content-Type: application/json' \
-            -d '{"tenantSlug":"jeep-of-chicago","locationSlug":"main"}')
-          [ "$code" = "403" ] || { echo "expected 403 for unauthorized origin, got $code" >&2; exit 1; }
-          echo "staging smoke passed"
-      - name: Staging acceptance — this exact build (SHA + October release markers + five stores)
-        # Fails if staging is not running github.sha or lacks the release markers, so a green
-        # run can never be mistaken for acceptance of an older build. Read-only apart from
-        # anonymous widget conversations on staging.
-        run: bash scripts/staging-acceptance.sh "https://staging-api.dialusnow.com" "${{ github.sha }}"
+      - name: Staging acceptance — this exact build + five stores
+        # Read-only apart from anonymous widget conversations; chat checks are skipped unless
+        # the staging widget origin is allowed, so no model calls are made by default.
+        run: bash scripts/staging-acceptance.sh "$STAGING_URL" "${GITHUB_SHA::7}"
 
   deploy-production:
-    # Requires the GitHub "production" environment with required reviewers —
-    # the job pauses for manual approval. Inert until the owner creates it.
     needs: deploy-staging
     runs-on: ubuntu-latest
+    # Pauses for the required reviewer (AMQUR) on the GitHub "production" environment.
     environment: production
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Guard — production environment must exist and be approved
-        run: echo "approved by required reviewer"
+      - name: Lineage guard — never deploy a build that drops live functionality
+        run: bash scripts/release/verify-lineage.sh "$GITHUB_SHA" "$PRODUCTION_URL"
       - name: Install Railway CLI
         run: npm i -g @railway/cli
-      - name: Sync missing worker boot vars from prod-api (names only, values never printed)
-        env:
-          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-        run: |
-          set -euo pipefail
-          node scripts/sync-worker-required-from-api.mjs production
       - name: Preflight — production variables this build needs to boot (names only, values never printed)
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
           set -euo pipefail
-          for svc in api worker; do
-            # Preflight reads logical roles; production Railway services are prod-api / prod-worker.
-            railway variables --project "$RAILWAY_PROJECT_ID" --service "prod-$svc" --environment production --json \
-              | node scripts/env-preflight.js production "$svc"
-          done
+          railway variables --project "$RAILWAY_PROJECT_ID" --service backend-production --environment production --json | node scripts/env-preflight.js production api
+          railway variables --project "$RAILWAY_PROJECT_ID" --service worker-production --environment production --json | node scripts/env-preflight.js production worker
       - name: Deploy api and worker to production
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
         run: |
           set -euo pipefail
-          COMMIT_SHA="${{ github.sha }}"
           BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          RELEASE_ID="${{ github.run_id }}-${{ github.run_attempt }}"
-          VERSION="$(node -e 'console.log(require("./package.json").version)')"
-          for svc in prod-api prod-worker; do
+          for svc in backend-production worker-production; do
             railway variables --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment production \
-              --set "APP_COMMIT_SHA=${COMMIT_SHA}" \
+              --set "APP_COMMIT_SHA=${GITHUB_SHA::7}" \
               --set "APP_BUILD_TIME=${BUILD_TIME}" \
-              --set "APP_RELEASE_ID=${RELEASE_ID}" \
-              --set "APP_RELEASE_VERSION=${VERSION}" \
-              --set "APP_SERVICE_NAME=${svc}" \
+              --set "APP_RELEASE_ID=gh-${{ github.run_id }}-${{ github.run_attempt }}" \
+              --set "APP_RELEASE_VERSION=main" \
               --skip-deploys
             railway up --project "$RAILWAY_PROJECT_ID" --service "$svc" --environment production --ci
           done
-      - name: Production smoke — release identity + health
+      - name: Production smoke — release identity, health, five stores
         run: |
           set -euo pipefail
-          scripts/verify-release.sh "https://api.dialusnow.com" "${{ github.sha }}"
-          curl -sf https://api.dialusnow.com/api/health | grep -q '"database":"up"'
+          scripts/verify-release.sh "$PRODUCTION_URL" "${GITHUB_SHA::7}"
+          curl -sf "$PRODUCTION_URL/api/health" | grep -q '"database":"up"'
+          for t in jeep-of-chicago dial-nissan-of-chicago dial-chevy-of-chicago infiniti-of-chicago dial-cdjr-of-chicago; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$PRODUCTION_URL/api/public/widget-config?tenantSlug=$t&locationSlug=main")
+            [ "$code" = "200" ] || { echo "widget-config $t returned $code" >&2; exit 1; }
+          done
           echo "production smoke passed"
       - name: Rollback hint on failure
         if: failure()
         run: |
-          echo "::error::Production smoke failed — roll back via Railway: redeploy the previous api/worker deployment (docs/operations/runbook.md#rollback)"
+          echo "::error::Production deploy or smoke failed — deploy the previous prod-* tag after scripts/release/verify-lineage.sh (docs/crm-workforce/RELEASE_GOVERNANCE.md)"

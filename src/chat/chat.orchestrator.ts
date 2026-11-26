@@ -15,6 +15,12 @@ import {
   understandTurn,
 } from './understanding/turn-understanding';
 import { InventoryEngine, vehicleHasFeature } from './engines/inventory.engine';
+import {
+  groupConversationCapability,
+  groupScopeFor,
+  groupSearchGate,
+} from '../group-routing/group-read-scope';
+import { leadSourceFor } from '../group-routing/group-origin';
 import type { InventoryVehicle } from './types/vehicle.types';
 import { PaymentService, PolicyEstimate } from '../payment/payment.service';
 import {
@@ -55,6 +61,19 @@ import {
   mergeInterpretation,
 } from './understanding/model-interpretation';
 import { ClaudeConversationService } from './claude/claude-conversation.service';
+import { OpenConversationService } from './conversation/open-conversation.service';
+import { isRecallQuestion } from './conversation/recall';
+import {
+  DEALER_FOCUSES,
+  DEALER_DIRECTORY_PHONE_DIGITS,
+  buildDealershipCard,
+  dealerDirectoryFor,
+  storesNamedIn,
+  type DealerFocus,
+  type DealerStore,
+  type DealershipCard,
+} from '../dealer-directory/dealer-directory';
+import type { LlmLocalTool } from '../ai/llm.provider';
 import {
   detectClaimTypes,
   GroundingGuardService,
@@ -68,7 +87,10 @@ import {
 import { AnalyticsService } from '../analytics/analytics.service';
 import { MetricsService } from '../observability/metrics.service';
 import { OutboxService } from '../integrations/core/outbox.service';
-import { redactCreditSensitive } from '../common/security/sensitive-data';
+import {
+  redactCreditSensitive,
+  redactForLlm,
+} from '../common/security/sensitive-data';
 import {
   chooseAcknowledgement,
   compose,
@@ -108,6 +130,47 @@ import { incidentRank } from './safety/customer-incident';
 import { seedOf, socialLine, vary } from './dialogue/social';
 import { CampaignEngine } from '../messaging/campaign.engine';
 import { ConsentService } from '../messaging/consent.service';
+import {
+  GRANT_NOT_EFFECTIVE_HANDSET_OPT_OUT,
+  textStaysOffText,
+} from '../messaging/handset-opt-out';
+import { departmentFor } from '../appointments/appointment.service';
+import type { Appointment } from '@prisma/client';
+import { isoDate } from '../common/time/zoned-time';
+import type {
+  AppointmentPickerCard,
+  LeadFormCard,
+  LeadFormPurpose,
+  PickerAppointmentType,
+} from './sales-desk/sales-desk.types';
+import {
+  APPOINTMENT_SELECTED_MARKER,
+  buildLeadForm,
+  LEAD_SUBMITTED_MARKER,
+  leadFormChannels,
+  leadRefusalText,
+  LeadSubmissionInput,
+  validateLeadSubmission,
+} from './sales-desk/lead-form';
+import {
+  buildPicker,
+  departmentLabel,
+  rememberPicker,
+  settlePickersAfterBooking,
+  bookingFamily,
+  requestOnlyDays,
+  resolveSelection,
+  selectionRefusalText,
+  usableProviderSlots,
+} from './sales-desk/appointment-picker';
+import {
+  priceIncludesDealerFees,
+  verifiedVdpUrl,
+} from './sales-desk/vehicle-enrichment';
+import type { ChatStreamStatusPhase } from './stream/chat-stream';
+
+/** Real engine progress (inventory read, scheduler call, model compose) for the stream. */
+export type ChatStatusEvent = { phase: ChatStreamStatusPhase; label?: string };
 
 export type ChatProvenance = {
   sources: string[];
@@ -125,8 +188,11 @@ export type ChatProvenance = {
     | 'repaired'
     | 'polished'
     | 'answered'
+    | 'conversation'
     | 'discarded'
     | 'none';
+  /** Model that wrote a conversation-lane reply. */
+  model?: string;
   /** Why the model's reply was not used (validator reasons), when it wasn't. */
   fallbackReason?: string;
   /** True when a language model helped understand this turn (proposal validated + merged). */
@@ -144,7 +210,17 @@ export type ChatCard =
       time: string | null;
       label: string;
       verified: boolean;
+      /** Sales-desk fields (flag `salesDeskCards`); provider fields only with a receipt. */
+      providerRef?: string | null;
+      providerName?: string | null;
+      rooftopName?: string | null;
+      department?: string | null;
+      timezone?: string | null;
+      startsAt?: string | null;
+      sandbox?: boolean;
     }
+  | LeadFormCard
+  | AppointmentPickerCard
   | {
       kind: 'credit_application';
       label: string;
@@ -205,6 +281,7 @@ export type ChatCard =
       state: 'requested' | 'queued' | 'notified' | 'recorded';
       escalationId: string;
     }
+  | DealershipCard
   | {
       kind: 'hours';
       summary: string;
@@ -243,7 +320,12 @@ export type JourneySummary = {
     includesTaxAndFees: boolean;
   } | null;
   trade?: { summary: string; requestId?: string } | null;
-  appointment?: { id: string; label: string; status: string } | null;
+  appointment?: {
+    id: string;
+    label: string;
+    status: string;
+    sandbox?: boolean;
+  } | null;
   creditApplication?: { state: string } | null;
   otdQuote?: {
     status: string;
@@ -390,6 +472,8 @@ type Turn = {
   urgent: boolean;
   /** Skip model polish so safety wording cannot be rewritten. */
   lockReply?: boolean;
+  /** A simulated (demo) vehicle was read this turn: the reply must be labeled as demo. */
+  simulatedThisTurn?: boolean;
   quickReplies: string[];
   /** Social opener for this turn ("Hi there!") — replaces the generic acknowledgement. */
   socialPrefix?: string;
@@ -401,6 +485,29 @@ type Turn = {
   conversationExtra: { handoffState?: string; aiPaused?: boolean };
   /** One-line vehicle ack folded into the next service scheduling question. */
   serviceVehicleAck?: string;
+  // ── sales desk / stream (all optional; unset on a plain text turn) ──
+  onStatus?: (e: ChatStatusEvent) => void;
+  /** group-routing: the visitor's linked conversations, read together as one transcript. */
+  linkedConversationIds?: string[];
+  linkedTenantIds?: string[];
+  /** Live reply text for the streaming endpoint (conversation lane only). */
+  onTextDelta?: (text: string, reset?: boolean) => void;
+  signal?: AbortSignal;
+  statusSent?: Set<string>;
+  salesDeskFlag?: Promise<boolean>;
+  rooftopInfo?: { name: string; timezone: string };
+  /** A provider slot picked from an appointment picker (booked through the adapter). */
+  slotBooking?: {
+    idempotencyKey: string;
+    startUtc: string;
+    providerSlotId?: string;
+  };
+  /** Why the scheduler/engine did not save the picked slot (set by the result narration). */
+  slotRejected?: string;
+  /** group-routing: the vehicle the group router resolved the customer's reference to. */
+  pinnedVin?: string;
+  /** group-routing: re-run the standing search after the customer chose a store. */
+  resumeSearch?: boolean;
 };
 
 /** "red Wrangler" → "Wrangler rojo" for Spanish replies (plain colors only). */
@@ -480,6 +587,18 @@ function dateLabel(iso: string | null | undefined, lang: Lang): string {
  * Every business-changing write (appointment, finance, parts, trade, lead, escalation) is
  * awaited BEFORE the assistant acknowledges it. If it throws, the turn fails honestly.
  */
+/** True when every phone number in the message is one of the directory's own store numbers. */
+function quotesOnlyStoreNumbers(message: string): boolean {
+  if (/[\w.+-]+@[\w-]+\.[\w.-]+/.test(message)) return false;
+  const numbers = message.match(/\d[\d\s().-]{8,}\d/g) ?? [];
+  return (
+    numbers.length > 0 &&
+    numbers.every((n) =>
+      DEALER_DIRECTORY_PHONE_DIGITS.has(n.replace(/\D/g, '').slice(-10)),
+    )
+  );
+}
+
 @Injectable()
 export class ChatOrchestrator {
   private readonly logger = new Logger(ChatOrchestrator.name);
@@ -515,6 +634,7 @@ export class ChatOrchestrator {
     private readonly appraisals: AppraisalService,
     private readonly experiments: ExperimentsService,
     private readonly playbooks: PlaybookService,
+    private readonly openConversation: OpenConversationService,
   ) {}
 
   /** First greeting copy, optionally from a RUNNING greeting experiment (tone only). */
@@ -553,18 +673,72 @@ export class ChatOrchestrator {
       pageType?: string;
       vin?: string;
       stockNumber?: string;
+      path?: string;
+      vehicle?: {
+        year?: number;
+        make?: string;
+        model?: string;
+        trim?: string;
+        condition?: string;
+        mileage?: number;
+        color?: string;
+        bodyType?: string;
+        fuelType?: string;
+      };
       utmSource?: string;
       utmMedium?: string;
       utmCampaign?: string;
       referrerClass?: string;
     };
+    /** Structured lead-form submission (action lead_capture). */
+    lead?: LeadSubmissionInput;
+    /** Structured appointment-picker choice (action appointment_select). */
+    appointment?: {
+      pickerId: string;
+      slotId?: string;
+      requestedDate?: string;
+      requestedWindow?: string;
+    };
+    onStatus?: (e: ChatStatusEvent) => void;
+    onTextDelta?: (text: string, reset?: boolean) => void;
+    signal?: AbortSignal;
+    /** Set only by the group-site router (never from the request body). */
+    linkedConversationIds?: string[];
+    linkedTenantIds?: string[];
+    pinnedVin?: string;
+    resumeSearch?: boolean;
   }): Promise<ChatResponse> {
     const started = Date.now();
     const tenantId = input.tenantId;
     const s = await this.store.load(tenantId, input.locationId, input.userId);
     const st = s.state;
-    const rawMessage = (input.message ?? '').trim();
-    const redacted = redactCreditSensitive(rawMessage);
+    // ── sales-desk hook 1/7: a structured submission is never treated (or stored) as text.
+    // The transcript gets a neutral marker; contact details never enter a message row.
+    const structured = input.lead
+      ? LEAD_SUBMITTED_MARKER
+      : input.appointment
+        ? APPOINTMENT_SELECTED_MARKER
+        : null;
+    const rawMessage = structured ? '' : (input.message ?? '').trim();
+    let redacted = structured ?? redactCreditSensitive(rawMessage);
+    // Where no lead or booking tool is connected, contact details typed into the chat cannot
+    // reach anyone. They are masked before the message is stored, and the reply below gives
+    // the store's own contact routes instead of collecting them.
+    const typedContact =
+      !structured &&
+      (/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/.test(
+        rawMessage,
+      ) ||
+        /[\w.+-]+@[\w-]+\.[\w.-]+/.test(rawMessage));
+    const noDelivery = structured
+      ? false
+      : await this.noDeliveryRoute(tenantId, input.locationId);
+    // A store's own published number quoted back ("is 773-423-3000 your sales line?") is not
+    // the customer's contact detail.
+    const quotesStoreNumber =
+      typedContact && quotesOnlyStoreNumbers(rawMessage);
+    const customerContact = typedContact && !quotesStoreNumber;
+    if (customerContact && noDelivery) redacted = redactForLlm(redacted);
 
     // Critical: the customer's message is persisted before any processing (redacted).
     await this.store.appendMessage(s, 'USER', redacted, {
@@ -589,6 +763,44 @@ export class ChatOrchestrator {
     );
 
     if (input.pageContext) {
+      // Page awareness: a vehicle detail page reports its published listing; any other page
+      // clears it, so "this vehicle" never refers to a page the customer has left.
+      const pc = input.pageContext;
+      const pageVin = pc.vin?.toUpperCase();
+      if (
+        pc.pageType === 'vdp' &&
+        pageVin &&
+        /^[A-HJ-NPR-Z0-9]{17}$/.test(pageVin)
+      ) {
+        const v = pc.vehicle ?? {};
+        st.pageVehicle = {
+          vin: pageVin,
+          ...(pc.stockNumber && /^[A-Za-z0-9-]{1,20}$/.test(pc.stockNumber)
+            ? { stock: pc.stockNumber }
+            : {}),
+          ...(v.year ? { year: v.year } : {}),
+          ...(v.make ? { make: v.make } : {}),
+          ...(v.model ? { model: v.model } : {}),
+          ...(v.trim ? { trim: v.trim } : {}),
+          ...(v.condition ? { condition: v.condition } : {}),
+          ...(typeof v.mileage === 'number' ? { mileage: v.mileage } : {}),
+          ...(v.color ? { color: v.color } : {}),
+          ...(v.bodyType ? { bodyType: v.bodyType } : {}),
+          ...(v.fuelType ? { fuelType: v.fuelType } : {}),
+          ...(pc.path ? { path: pc.path } : {}),
+          asOf: new Date().toISOString(),
+        };
+        this.metrics.increment('chat.page_vehicle.received');
+        void this.analytics.trackEvent(
+          tenantId,
+          s.locationId,
+          'vehicle_page_context',
+          { condition: v.condition ?? null, make: v.make ?? null },
+          s.externalKey,
+        );
+      } else if (pc.pageType) {
+        st.pageVehicle = undefined;
+      }
       st.attribution = {
         ...st.attribution,
         ...(input.pageContext.utmSource
@@ -719,6 +931,13 @@ export class ChatOrchestrator {
       capCache: new Map(),
       handled: new Set(),
       conversationExtra: {},
+      onStatus: input.onStatus,
+      onTextDelta: input.onTextDelta,
+      signal: input.signal,
+      linkedConversationIds: input.linkedConversationIds,
+      linkedTenantIds: input.linkedTenantIds,
+      pinnedVin: input.pinnedVin,
+      resumeSearch: input.resumeSearch,
     };
 
     // Language: explicit choice or confident detection; stays sticky once chosen.
@@ -751,6 +970,12 @@ export class ChatOrchestrator {
       });
     }
 
+    // ── sales-desk hook 2/7: structured card submissions (lead form / appointment picker).
+    if (input.lead || input.appointment) {
+      await this.handleStructuredSubmission(t, input);
+      return this.finish(t, { started });
+    }
+
     if (u.entities.sensitive?.length) {
       await this.handleSensitive(t);
       return this.finish(t, { started });
@@ -758,9 +983,39 @@ export class ChatOrchestrator {
 
     const pressureKind = detectPressure(rawMessage);
     if (pressureKind) {
+      // A message that carries an injection or pressure phrase is often a legitimate task
+      // around it ("summarise this email", "translate this sentence"). The conversation
+      // model declines the injected part and still does the work; the fixed refusal remains
+      // the fallback when no model is available.
+      // Never for a turn that also reports an incident: that keeps the fixed safety path.
+      // The lane itself cannot act, and its reply guard rejects any claimed approval,
+      // booking or confirmation, so the fixed refusals lose nothing by going second.
+      // Only a request about the assistant's own instructions goes to the model first (it is
+      // usually a summarise/translate task around the phrase). Attempts to make it assert a
+      // price, stock, fitment, approval or opt-out keep the fixed refusal.
+      const viaModel =
+        u.entities.incident || pressureKind !== 'system_prompt'
+          ? null
+          : await this.tryOpenConversation(t, input, started, { force: true });
+      if (viaModel) {
+        this.metrics.increment(`chat.redteam.${pressureKind}.conversation`);
+        return viaModel;
+      }
       this.handlePressure(t, pressureKind);
       return this.finish(t, { started });
     }
+
+    // ── open-conversation lane: general questions, reasoning, writing, automotive expertise
+    // and anything else no dealership tool answers go to the conversation model with the
+    // whole transcript. Returns null to continue on the tool lane below.
+    const direct = await this.directContactInstead(t, input, started, {
+      typedContact: customerContact,
+      noDelivery,
+    });
+    if (direct) return direct;
+
+    const open = await this.tryOpenConversation(t, input, started);
+    if (open) return open;
 
     this.absorbEntities(t, input);
     if (t.u.entities.incident) {
@@ -836,6 +1091,795 @@ export class ChatOrchestrator {
     return this.finish(t, { started });
   }
 
+  // ───────────────────────────────────────── open conversation
+
+  /** Intents the conversation model answers better than a canned line. */
+  private static readonly CONVERSATIONAL_INTENTS = new Set<string>([
+    'UNKNOWN',
+    'KNOWLEDGE_QUESTION',
+    'SMALL_TALK',
+    'GREETING',
+    'LANGUAGE_SWITCH',
+    'HOURS_LOCATION',
+    'AFFIRM',
+    'DECLINE',
+  ]);
+
+  /** Turns that always stay on the deterministic lane, whatever a model thinks. */
+  private static readonly TOOL_ONLY_INTENTS = new Set<string>([
+    'SAFETY_URGENT',
+    'COMPLAINT',
+    'HUMAN_HANDOFF',
+    'PROVIDE_CONTACT',
+    'APPOINTMENT_CANCEL',
+    'APPOINTMENT_RESCHEDULE',
+  ]);
+
+  private async tryOpenConversation(
+    t: Turn,
+    input: { action?: string; vin?: string },
+    started: number,
+    opts: { force?: boolean } = {},
+  ): Promise<ChatResponse | null> {
+    const { st, u } = t;
+    if (
+      !t.message ||
+      input.action ||
+      input.vin ||
+      t.pinnedVin ||
+      t.resumeSearch
+    )
+      return null;
+    if (!this.openConversation.isEnabled()) return null;
+    if ((await this.capabilities.flags(t.tenantId, t.locationId)).llmDisabled)
+      return null;
+    if (t.s.channel === 'SMS') return null;
+    const intents = u.intents
+      .filter((i) => i.confidence >= 0.6)
+      .map((i) => i.intent as string);
+    // A phone number or email belongs to the tool lane (consent, lead rules). A bare
+    // introduction ("Hi, I'm Alex") is conversation: remember the name, ask for nothing.
+    const contact = u.entities.contact;
+    const awaitingContact =
+      st.pending === 'contact_name' || st.pending === 'contact_method';
+    const sharesLogin =
+      /\b(?:pass(?:word|code|w0rd)|pwd|log[- ]?in|username)\b/i.test(t.message);
+    // A store's own published number quoted back is a question about the store, not a
+    // contact submission.
+    const storeNumber = quotesOnlyStoreNumbers(t.message);
+    if (
+      contact &&
+      (contact.phone || contact.email || awaitingContact) &&
+      !sharesLogin &&
+      !storeNumber
+    )
+      return null;
+    if (contact?.firstName && !st.contact.firstName)
+      st.contact = { ...st.contact, firstName: contact.firstName };
+    // Safety reports, complaints, handoff requests and contact submissions belong to the
+    // tools — but the keyword rules also fire on "a dragon who's scared of fire" and "what
+    // should you call me". These go to the conversation model only on the router's explicit
+    // verdict; with no verdict the tools keep them.
+    const toolOnly =
+      !!u.entities.incident ||
+      intents.some(
+        (i) =>
+          ChatOrchestrator.TOOL_ONLY_INTENTS.has(i) &&
+          // a name-only introduction is not a contact submission
+          !(
+            i === 'PROVIDE_CONTACT' &&
+            ((contact && !contact.phone && !contact.email) || storeNumber)
+          ),
+      );
+    const pending = st.pending && st.pending !== 'none' ? st.pending : null;
+    const affirmOrDecline =
+      intents.includes('AFFIRM') || intents.includes('DECLINE');
+    // A yes/no (or a short answer) to a question the tools are waiting on belongs to them.
+    if (affirmOrDecline && (pending || this.freshOffer(t))) return null;
+    const bareGreeting =
+      intents.length === 1 && intents[0] === 'GREETING' && st.turnCount === 0;
+    if (bareGreeting) return null;
+
+    const allConversational = intents.every(
+      (i) =>
+        ChatOrchestrator.CONVERSATIONAL_INTENTS.has(i) ||
+        i === 'PROVIDE_CONTACT',
+    );
+    const inventoryTool = await this.inventorySearchTool(t);
+    // "What am I trading in?", "what's my budget now?": only the transcript can answer, so a
+    // keyword-matched tool (or a question a tool is waiting on) does not take the turn.
+    const recall = !toolOnly && isRecallQuestion(t.message);
+    if (recall) this.metrics.increment('chat.open_conversation.recall');
+    // Verified store links (inventory search, scheduling, finance, trade pages). When no
+    // inventory, booking or lead tool is connected for this conversation, those links ARE the
+    // useful answer to a shopping or service request, so the conversation model takes the turn
+    // instead of a tool that can only say it is not connected.
+    const mode = this.openConversation.directoryMode();
+    const directory = mode === 'off' ? null : await this.dealerDirectory(t);
+    const linksTool = directory ? this.dealershipLinksTool(t, directory) : null;
+    // On the group site "no inventory" means no member rooftop has a listed, ready feed.
+    const groupScope = groupScopeFor(t.tenantId);
+    const inventoryReady = groupScope
+      ? groupScope.grant.members.some((m) => m.locationIds.length > 0)
+      : !!inventoryTool;
+    const directoryOnly =
+      !!directory &&
+      (mode === 'force' ||
+        (!inventoryReady && !(await this.toolsConnected(t))));
+    const handoffTurn =
+      directoryOnly &&
+      !toolOnly &&
+      !pending &&
+      !affirmOrDecline &&
+      intents.every((i) => !ChatOrchestrator.TOOL_ONLY_INTENTS.has(i));
+    if (handoffTurn) this.metrics.increment('chat.open_conversation.directory');
+    let lane: 'conversation' | 'dealership';
+    if (
+      opts.force ||
+      recall ||
+      handoffTurn ||
+      (allConversational && !pending && !toolOnly)
+    ) {
+      lane = 'conversation';
+    } else {
+      // The rules matched a dealership tool (or a tool question is pending): ask the router
+      // model whether this turn really is one. No verdict → keep the rule result.
+      const recent = await this.store
+        .recentMessages(t.s.conversationId, 7)
+        .catch(() => [] as Array<{ role: string; content: string }>);
+      const verdict = await this.openConversation.classifyLane({
+        inventoryTool: !!inventoryTool || directoryOnly,
+        message: t.message,
+        recent: recent.slice(0, -1),
+        pending,
+        ruleIntents: intents,
+        tenantId: t.tenantId,
+        groupSite: !!groupConversationCapability(t.tenantId, 'appointments'),
+      });
+      // No verdict (router unavailable): a turn the rules themselves read as conversation
+      // still gets the conversation model; anything the rules read as tool work stays put.
+      if (
+        verdict !== 'conversation' &&
+        !(verdict === null && allConversational && !toolOnly)
+      )
+        return null;
+      lane = 'conversation';
+      t.modelInterpreted = true;
+    }
+    if (lane !== 'conversation') return null;
+
+    this.emitStatus(t, 'thinking');
+    const [transcript, assistantName, hours, kc] = await Promise.all([
+      (t.linkedConversationIds?.length
+        ? this.store.recentMessagesAcross(
+            [t.s.conversationId, ...t.linkedConversationIds],
+            [t.tenantId, ...(t.linkedTenantIds ?? [])],
+            240,
+          )
+        : this.store.recentMessages(t.s.conversationId, 240)
+      ).catch(() => [] as Array<{ role: string; content: string }>),
+      this.assistantName(t),
+      this.getHours(t).catch(() => null),
+      this.cap(t, 'knowledge'),
+    ]);
+    const knowledge: Array<{ title: string; content: string }> = [];
+    if (kc.allowed) {
+      const hits = await this.knowledge
+        .search({
+          tenantId: t.tenantId,
+          locationId: t.locationId,
+          query: t.message,
+          forWidget: true,
+          limit: 5,
+        })
+        .catch(() => []);
+      for (const h of hits)
+        knowledge.push({ title: h.title, content: h.content });
+      if (hits.length) {
+        t.sources.add('knowledge_base');
+        t.evidence.push(
+          this.evidenceSvc.verifiedConfig(
+            t.tenantId,
+            t.locationId,
+            'dealership_policy',
+            hits.length,
+            'knowledge_base',
+            new Date().toISOString(),
+          ),
+        );
+      }
+    }
+    const hoursSummary =
+      hours && hours.verified && !hours.synthetic
+        ? this.hoursLine(hours)
+        : null;
+    const memory = this.memorySummary(t);
+    const onScreen = await this.loadVisible(t).catch(() => []);
+    if (onScreen.length)
+      memory.push(
+        `vehicles on screen from the last search, in order: ${onScreen
+          .slice(0, 6)
+          .map(
+            (v, i) =>
+              `${i + 1}) ${vehicleLabel(v, true)}${v.price ? `, $${v.price.toLocaleString('en-US')}` : ''}${v.stock ? `, stock ${v.stock}` : ''}${v.simulated ? ' (demonstration data)' : ''}`,
+          )
+          .join('; ')}`,
+      );
+    const res = await this.openConversation.answer({
+      tenantId: t.tenantId,
+      locationId: t.locationId,
+      conversationId: t.s.conversationId,
+      transcript,
+      assistantName,
+      memory,
+      knowledge,
+      hoursSummary,
+      extraTools: [
+        ...(inventoryTool && !directoryOnly ? [inventoryTool] : []),
+        ...(linksTool ? [linksTool] : []),
+      ],
+      directoryOnly,
+      directoryStores: directory?.stores.map((d) => d.name) ?? [],
+      appointmentConfirmed:
+        st.appointment?.status === 'CONFIRMED' && !st.appointment.sandbox,
+      onTextDelta: t.onTextDelta,
+      signal: t.signal,
+    });
+    if (!res.ok) {
+      // Streamed text (if any) is discarded; the tool lane answers this turn instead.
+      try {
+        t.onTextDelta?.('', true);
+      } catch {
+        // ignore
+      }
+      t.fallbackReason = `open_conversation_${res.reason}`;
+      this.metrics.increment('chat.open_conversation.fell_back');
+      // The model could not answer (daily allowance reached, provider down). Where no tool
+      // is connected either, a scripted line would only pretend to be an answer: say plainly
+      // that the assistant is temporarily unavailable and put the verified store links up.
+      if (
+        directory &&
+        directoryOnly &&
+        res.reason !== 'guard_rejected' &&
+        res.reason !== 'refusal'
+      ) {
+        this.metrics.increment('chat.open_conversation.unavailable_notice');
+        const lang = t.lang === 'es' ? 'es' : 'en';
+        t.cards = t.cards.filter((c) => c.kind !== 'dealership');
+        for (const d of directory.stores)
+          t.cards.push(buildDealershipCard(d, 'visit', lang));
+        t.sources.add('dealer_directory');
+        t.lockReply = true;
+        return this.finish(t, {
+          forcedReply: tr(
+            t.lang,
+            'The AI assistant is temporarily unavailable, so I can’t answer that right now. Please try again in a little while. In the meantime, each store’s website and phone number are below.',
+            'El asistente de IA no está disponible por el momento, así que no puedo responder ahora. Intente de nuevo en un rato. Mientras tanto, abajo están el sitio web y el teléfono de cada agencia.',
+          ),
+          started,
+        });
+      }
+      return null;
+    }
+    t.toolCount += res.toolsUsed.length;
+    t.sources.add('conversation_model');
+    if (res.toolsUsed.length) t.sources.add('deterministic_calculation');
+    return this.finishConversation(t, res.text, res.model, started);
+  }
+
+  private readonly tenantSlugs = new Map<string, string | null>();
+
+  /**
+   * True when this tenant has a verified store directory and neither lead capture nor booking
+   * is connected: a callback request or typed contact details could not be delivered.
+   */
+  private async noDeliveryRoute(
+    tenantId: string,
+    locationId: string | null | undefined,
+  ): Promise<boolean> {
+    const mode = this.openConversation.directoryMode();
+    if (mode === 'off') return false;
+    let slug = this.tenantSlugs.get(tenantId);
+    if (slug === undefined) {
+      slug =
+        (
+          await this.prisma.tenant
+            .findUnique({ where: { id: tenantId }, select: { slug: true } })
+            .catch(() => null)
+        )?.slug ?? null;
+      if (this.tenantSlugs.size > 500) this.tenantSlugs.clear();
+      this.tenantSlugs.set(tenantId, slug);
+    }
+    if (!slug || !dealerDirectoryFor(slug)) return false;
+    if (mode === 'force') return true;
+    const check = (c: CapabilityName) =>
+      groupConversationCapability(tenantId, c) ??
+      this.capabilities.check(tenantId, locationId ?? null, c);
+    const [leads, appointments] = await Promise.all([
+      check('leadCapture'),
+      check('appointments'),
+    ]);
+    return !leads.allowed && !appointments.allowed;
+  }
+
+  /**
+   * A request for a person, a callback, or typed contact details, where nothing can deliver
+   * it: say so, store nothing, and show the store's own phone and contact page. Never for a
+   * safety report, a complaint or a customer-reported incident, which keep their own path.
+   */
+  private async directContactInstead(
+    t: Turn,
+    input: { action?: string; vin?: string },
+    started: number,
+    flags: { typedContact: boolean; noDelivery: boolean },
+  ): Promise<ChatResponse | null> {
+    if (!flags.noDelivery || !t.message || input.action || input.vin)
+      return null;
+    if (t.s.channel === 'SMS' || t.u.entities.incident) return null;
+    const intents = t.u.intents
+      .filter((i) => i.confidence >= 0.6)
+      .map((i) => i.intent as string);
+    if (intents.includes('SAFETY_URGENT') || intents.includes('COMPLAINT'))
+      return null;
+    const wantsPerson = intents.includes('HUMAN_HANDOFF');
+    if (!wantsPerson && !flags.typedContact) return null;
+    const directory = await this.dealerDirectory(t);
+    if (!directory) return null;
+
+    const lang = t.lang === 'es' ? 'es' : 'en';
+    t.cards = t.cards.filter((c) => c.kind !== 'dealership');
+    // "A person at the Nissan store": only that store's card. No store named: every store
+    // this conversation can show.
+    const named = storesNamedIn(t.message, directory.stores);
+    const shown = named.length ? named : directory.stores;
+    for (const d of shown) t.cards.push(buildDealershipCard(d, 'visit', lang));
+    void this.analytics.trackEvent(
+      t.tenantId,
+      t.locationId,
+      'direct_contact_shown',
+      {
+        stores: shown.map((d) => d.sourceRecordId),
+        typedContact: flags.typedContact,
+      },
+      t.s.externalKey,
+    );
+    t.sources.add('dealer_directory');
+    t.handled.add('HUMAN_HANDOFF');
+    t.handled.add('PROVIDE_CONTACT');
+    t.lockReply = true;
+    this.metrics.increment('chat.direct_contact_instead');
+    const one = shown.length === 1;
+    const reply = flags.typedContact
+      ? tr(
+          t.lang,
+          `This chat can’t pass contact details to the team yet, so I haven’t saved the details you typed and nobody has been notified. The quickest way to reach someone is to call ${one ? 'the store' : 'the store you want'} or use its contact page, below.`,
+          `Este chat todavía no puede enviar datos de contacto al equipo, así que no guardé lo que escribió y nadie ha sido notificado. Lo más rápido es llamar a ${one ? 'la agencia' : 'la agencia que le interesa'} o usar su página de contacto, abajo.`,
+        )
+      : tr(
+          t.lang,
+          `I can’t connect you to a person or leave a message for the team from this chat yet, and I’d rather not take your number when nobody would receive it. The quickest way to reach someone is to call ${one ? 'the store' : 'the store you want'} or use its contact page, below.`,
+          `Todavía no puedo comunicarle con una persona ni dejar un mensaje al equipo desde este chat, y prefiero no pedirle su número si nadie lo recibiría. Lo más rápido es llamar a ${one ? 'la agencia' : 'la agencia que le interesa'} o usar su página de contacto, abajo.`,
+        );
+    return this.finish(t, { forcedReply: reply, started });
+  }
+
+  /**
+   * The verified store directory for this conversation, or null when the tenant has none.
+   * A rooftop's own conversation offers only its own store. The group site, and a rooftop turn
+   * that the group site handed off (the shopper is still on the group's website), offer every
+   * store of the group: the cards are public website links, each labelled with its own store.
+   */
+  private async dealerDirectory(
+    t: Turn,
+  ): Promise<{ stores: DealerStore[] } | null> {
+    let slug = this.tenantSlugs.get(t.tenantId);
+    if (slug === undefined) {
+      slug =
+        (
+          await this.prisma.tenant
+            .findUnique({ where: { id: t.tenantId }, select: { slug: true } })
+            .catch(() => null)
+        )?.slug ?? null;
+      if (this.tenantSlugs.size > 500) this.tenantSlugs.clear();
+      this.tenantSlugs.set(t.tenantId, slug);
+    }
+    const view = slug ? dealerDirectoryFor(slug) : null;
+    if (!view) return null;
+    const viaGroupSite = !view.self || !!t.linkedConversationIds?.length;
+    const stores = viaGroupSite ? view.group : view.self ? [view.self] : [];
+    return stores.length ? { stores } : null;
+  }
+
+  /** True when this conversation has at least one working action tool (booking or leads). */
+  private async toolsConnected(t: Turn): Promise<boolean> {
+    const [appointments, leads] = await Promise.all([
+      this.cap(t, 'appointments'),
+      this.cap(t, 'leadCapture'),
+    ]);
+    return appointments.allowed || leads.allowed;
+  }
+
+  /**
+   * Lets the conversation model put verified store cards in the reply. The model chooses
+   * stores and a focus from fixed lists; every URL and phone number comes from the directory.
+   * Nothing is fetched and no tenant data is read.
+   */
+  private dealershipLinksTool(
+    t: Turn,
+    directory: { stores: DealerStore[] },
+  ): LlmLocalTool {
+    const norm = (v: string) =>
+      v
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    return {
+      name: 'show_dealership_links',
+      description:
+        "Show a card for each named store with buttons to that store's own website: current new, used or certified inventory search, service scheduling, parts, finance application, trade-in tool, directions, and its phone number. These are handoffs to the store's site, not vehicles and not proof of stock.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          stores: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 5,
+            items: {
+              type: 'string',
+              enum: directory.stores.map((d) => d.name),
+            },
+            description: 'Stores to show, most relevant first.',
+          },
+          focus: {
+            type: 'string',
+            enum: [...DEALER_FOCUSES],
+            description:
+              'What the person wants there: new, used or certified vehicles, service, parts, finance, trade, or visit (directions and contact).',
+          },
+        },
+        required: ['stores', 'focus'],
+        additionalProperties: false,
+      },
+      run: (input) => {
+        const focus = (DEALER_FOCUSES as readonly string[]).includes(
+          String(input.focus),
+        )
+          ? (input.focus as DealerFocus)
+          : 'visit';
+        const wanted = Array.isArray(input.stores)
+          ? input.stores.filter((x): x is string => typeof x === 'string')
+          : [];
+        const picked: DealerStore[] = [];
+        for (const w of wanted.slice(0, 5)) {
+          const hit = directory.stores.find((d) => norm(d.name) === norm(w));
+          if (hit && !picked.includes(hit)) picked.push(hit);
+        }
+        if (!picked.length)
+          return Promise.resolve(
+            JSON.stringify({
+              shown: [],
+              error: `Unknown store. Use one of: ${directory.stores.map((d) => d.name).join('; ')}`,
+            }),
+          );
+        const lang = t.lang === 'es' ? 'es' : 'en';
+        // One card per store per reply: a later call in the same turn replaces the earlier one.
+        t.cards = t.cards.filter(
+          (c) =>
+            c.kind !== 'dealership' ||
+            !picked.some((p) => p.sourceRecordId === c.storeId),
+        );
+        for (const p of picked)
+          t.cards.push(buildDealershipCard(p, focus, lang));
+        t.sources.add('dealer_directory');
+        this.metrics.increment('chat.dealer_directory.cards', picked.length);
+        // Conversion analytics: which store handoffs were put in front of the shopper.
+        void this.analytics.trackEvent(
+          t.tenantId,
+          t.locationId,
+          'handoff_cards_shown',
+          { stores: picked.map((p) => p.sourceRecordId), focus },
+          t.s.externalKey,
+        );
+        return Promise.resolve(
+          JSON.stringify({
+            shown: picked.map((p) => ({
+              store: p.name,
+              sideOfTown: p.sideOfTown,
+              brands: p.brands,
+              buttons: t.cards
+                .filter(
+                  (c): c is DealershipCard =>
+                    c.kind === 'dealership' && c.storeId === p.sourceRecordId,
+                )
+                .flatMap((c) => c.links.map((l) => l.key)),
+            })),
+            note: "Cards are displayed with your reply. They open each store's own website pages; they are not vehicles and do not confirm stock or price.",
+          }),
+        );
+      },
+    };
+  }
+
+  /**
+   * Read-only inventory search for the conversation model. Tenant and location come from the
+   * authenticated conversation, never from the model. Results are recorded on the turn exactly
+   * like a tool-lane search (cards, evidence, on-screen vehicles, saved criteria), so "the
+   * second one" or "payments on that" work on the next turn. Not offered on the group site,
+   * where the store question is asked first by the tool lane.
+   */
+  private async inventorySearchTool(t: Turn): Promise<LlmLocalTool | null> {
+    if (groupConversationCapability(t.tenantId, 'inventory')) return null;
+    if (!(await this.cap(t, 'inventory')).allowed) return null;
+    const str = (v: unknown, max = 40) =>
+      typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined;
+    const num = (v: unknown, lo: number, hi: number) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= lo && n <= hi
+        ? Math.round(n)
+        : undefined;
+    };
+    return {
+      name: 'search_inventory',
+      description:
+        "Search this store's vehicle inventory. Every filter is optional; pass only what the customer asked for. Returns up to 6 vehicles shown to the customer as cards, the total match count, and whether the data is the demonstration dataset or the live feed.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          make: { type: 'string', description: 'e.g. Chevrolet' },
+          model: { type: 'string', description: 'e.g. Tahoe' },
+          bodyType: {
+            type: 'string',
+            description: 'SUV, Truck, Sedan, Van, Coupe, Hatchback, Wagon',
+          },
+          color: {
+            type: 'string',
+            description: 'Plain colour word, e.g. black',
+          },
+          maxPrice: {
+            type: 'number',
+            description: 'Budget ceiling in dollars',
+          },
+          maxMileage: { type: 'number' },
+          yearMin: { type: 'integer' },
+          condition: { type: 'string', enum: ['new', 'used', 'certified'] },
+          drivetrain: { type: 'string', description: 'AWD, 4WD, FWD or RWD' },
+          fuel: {
+            type: 'string',
+            enum: ['electric', 'hybrid', 'gas', 'diesel'],
+          },
+          sortBy: {
+            type: 'string',
+            enum: ['price_asc', 'price_desc', 'miles_asc', 'newest'],
+          },
+        },
+        additionalProperties: false,
+      },
+      run: async (input) => {
+        const cond = str(input.condition);
+        const fuel = str(input.fuel);
+        const sort = str(input.sortBy);
+        const criteria = {
+          make: str(input.make),
+          model: str(input.model),
+          bodyType: str(input.bodyType),
+          color: str(input.color),
+          maxPrice: num(input.maxPrice, 500, 2_000_000),
+          maxMileage: num(input.maxMileage, 0, 1_000_000),
+          yearMin: num(input.yearMin, 1980, 2100),
+          drivetrain: str(input.drivetrain, 10),
+          condition:
+            cond === 'new' || cond === 'used' || cond === 'certified'
+              ? (cond as 'new' | 'used' | 'certified')
+              : undefined,
+          fuel:
+            fuel === 'electric' ||
+            fuel === 'hybrid' ||
+            fuel === 'gas' ||
+            fuel === 'diesel'
+              ? (fuel as 'electric' | 'hybrid' | 'gas' | 'diesel')
+              : undefined,
+          sortBy:
+            sort === 'price_asc' ||
+            sort === 'price_desc' ||
+            sort === 'miles_asc' ||
+            sort === 'newest'
+              ? (sort as 'price_asc' | 'price_desc' | 'miles_asc' | 'newest')
+              : undefined,
+        };
+        this.emitStatus(
+          t,
+          'checking',
+          'Checking inventory',
+          'Revisando inventario',
+        );
+        const found = await this.inventory.searchVehicles({
+          tenantId: t.tenantId,
+          locationId: t.locationId,
+          ...criteria,
+          limit: 24,
+        });
+        t.toolCount += 1;
+        t.sources.add('inventory_db');
+        this.signal(t, 'inventory_search');
+        this.metrics.increment(
+          found.length ? 'inventory.hit' : 'inventory.miss',
+        );
+        void this.analytics.trackEvent(
+          t.tenantId,
+          t.locationId,
+          'inventory_search',
+          { hasModel: !!criteria.model, hasBudget: !!criteria.maxPrice },
+          t.s.externalKey,
+        );
+        const shown = found.slice(0, 6);
+        // What the customer is shopping for now — the tool lane reads this on later turns.
+        t.st.department = 'sales';
+        t.st.criteria = {
+          ...(criteria.make ? { make: criteria.make } : {}),
+          ...(criteria.model ? { model: criteria.model } : {}),
+          ...(criteria.bodyType ? { bodyType: criteria.bodyType } : {}),
+          ...(criteria.color ? { color: criteria.color } : {}),
+          ...(criteria.maxPrice ? { maxPrice: criteria.maxPrice } : {}),
+          ...(criteria.condition ? { condition: criteria.condition } : {}),
+        } as typeof t.st.criteria;
+        if (found.some((v) => v.simulated)) t.simulatedThisTurn = true;
+        if (shown.length) {
+          t.st.visibleVins = shown.map((v) => v.vin);
+          this.rememberModels(t, shown);
+          t.vehicles = await this.withPaymentEstimates(t, shown);
+          t.type = 'vehicle_carousel';
+          await this.attachVehicleEvidence(t, shown);
+        }
+        // An empty follow-up search does not take away cards from an earlier search in the
+        // same reply: the model may try a narrower filter after finding matches.
+        const simulated = found.some((v) => v.simulated);
+        return JSON.stringify({
+          dataset: simulated
+            ? 'DEMONSTRATION dataset (simulated vehicles, not live dealership stock)'
+            : 'dealership inventory feed',
+          totalMatches: found.length,
+          cardsShownToCustomer: shown.length,
+          vehicles: found.slice(0, 12).map((v, i) => ({
+            shownAsCard: i < shown.length,
+            year: v.year,
+            make: v.make,
+            model: v.model,
+            trim: v.trim,
+            color: v.color,
+            bodyType: v.bodyType,
+            drivetrain: v.drivetrain,
+            fuelType: v.fuelType,
+            condition: v.condition,
+            mileage: v.mileage,
+            price: v.price ?? null,
+            status: v.status,
+            stock: v.stock ?? null,
+          })),
+          note: 'Prices are listed prices before taxes and fees unless the store states otherwise. Availability must be confirmed by the store.',
+        });
+      },
+    };
+  }
+
+  /** Compact verified weekly hours for the conversation model ("sales: Mon 9:00–20:00, …"). */
+  private hoursLine(h: HoursProfile): string {
+    const fmt = (min: number) =>
+      `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}`;
+    const parts: string[] = [];
+    for (const [dept, weekly] of Object.entries(h.weekly ?? {})) {
+      if (!weekly) continue;
+      const days = Object.entries(weekly as Record<string, unknown>)
+        .map(([day, v]) => {
+          const d = v as {
+            open?: number | string;
+            close?: number | string;
+            closed?: boolean;
+          } | null;
+          if (!d || d.closed) return `${day} closed`;
+          const o = typeof d.open === 'number' ? fmt(d.open) : d.open;
+          const c = typeof d.close === 'number' ? fmt(d.close) : d.close;
+          return o && c ? `${day} ${o}–${c}` : null;
+        })
+        .filter(Boolean);
+      if (days.length) parts.push(`${dept}: ${days.join(', ')}`);
+    }
+    return parts.length ? `${parts.join(' | ')} (${h.timezone})` : '';
+  }
+
+  /**
+   * Persist and return a conversation-lane reply. The text is the model's own (already
+   * guarded); nothing is trimmed, re-composed or given a sales follow-up. Journey state the
+   * tools own — pending question, offers, criteria — is left exactly as it was.
+   */
+  private async finishConversation(
+    t: Turn,
+    reply: string,
+    model: string,
+    started: number,
+  ): Promise<ChatResponse> {
+    const st = t.st;
+    // Simulated inventory is never presented unlabeled, whichever lane wrote the reply.
+    if (
+      t.simulatedThisTurn &&
+      !/\b(?:demo|demonstration|simulated|sample)\b|simulad|demostraci(?:o|ó)n/i.test(
+        reply,
+      )
+    )
+      reply = `${reply}\n\n${tr(t.lang, '(Simulated demo inventory, not live stock.)', '(Inventario simulado de demostración, no existencias reales.)')}`;
+    st.turnCount += 1;
+    st.lastReplySig = signature(reply);
+    st.fallbacks = 0;
+    const owned = await this.prisma.conversation
+      .findFirst({
+        where: { id: t.s.conversationId, tenantId: t.tenantId },
+        select: { aiPaused: true, handoffState: true },
+      })
+      .catch(() => null);
+    if (
+      owned?.aiPaused ||
+      owned?.handoffState === 'ASSIGNED' ||
+      owned?.handoffState === 'JOINED'
+    ) {
+      this.metrics.increment('chat.ai_cancelled_human_owns');
+      await this.store.save(t.s);
+      return this.staffHandlingResponse(t.s);
+    }
+    if (t.vehicles?.length && (await this.salesDeskOn(t)))
+      t.vehicles = await this.enrichVehicles(t);
+    await this.store.save(t.s);
+    const evidence = publicEvidence(t.evidence);
+    const inventoryAsOf = t.evidence
+      .filter((e) => e.field === 'inventory_availability' && e.sourceUpdatedAt)
+      .map((e) => e.sourceUpdatedAt!)
+      .sort()
+      .pop();
+    const provenance: ChatProvenance = {
+      sources: [...t.sources],
+      inventoryAsOf: inventoryAsOf ?? null,
+      verifiedFactsOnly: false,
+      languageModel: 'conversation',
+      model,
+      modelInterpreted: t.modelInterpreted,
+    };
+    await this.store.appendMessage(t.s, 'ASSISTANT', reply, {
+      type: 'reply',
+      lane: 'conversation',
+      model,
+      cards: t.cards
+        .filter((c) => c.kind === 'dealership')
+        .map((c) => ({ kind: c.kind, id: c.storeId, focus: c.focus })),
+      vins: t.vehicles?.map((v) => v.vin),
+      intents: t.u.intents.map((i) => i.intent),
+      language: t.lang,
+    });
+    this.metrics.increment('chat.latency_ms_total', Date.now() - started);
+    return {
+      reply,
+      segments: [reply],
+      type: t.type,
+      vehicles: t.vehicles,
+      // The conversation lane performs no actions, so the only cards it can carry are the
+      // verified store-link cards its own tool produced this turn.
+      cards: t.cards.filter((c) => c.kind === 'dealership'),
+      quickReplies: [],
+      journey: this.journeySummary(t),
+      provenance,
+      evidence,
+      conversation: {
+        language: t.lang,
+        handoffState: t.s.handoffState,
+        aiPaused: false,
+        pending: st.pending ?? 'none',
+      },
+      delivery: {
+        urgent: false,
+        toolCount: t.toolCount,
+        minTypingMs: 0,
+        maxTypingMs: 0,
+      },
+    };
+  }
+
   // ───────────────────────────────────────── planning
 
   private absorbEntities(
@@ -905,6 +1949,9 @@ export class ChatOrchestrator {
   }
 
   private planIntents(t: Turn, input: { action?: string }): TurnIntent[] {
+    // ── group-routing hook 1/5: the customer just answered "which store?" — run the search
+    // they already asked for (their criteria are in state) instead of parsing the answer.
+    if (t.resumeSearch) return ['INVENTORY_SEARCH'];
     const list = t.u.intents
       .filter((i) => i.confidence >= 0.6)
       .map((i) => i.intent);
@@ -925,6 +1972,20 @@ export class ChatOrchestrator {
     };
     const forced = input.action ? actionMap[input.action] : undefined;
     if (forced && !list.includes(forced)) list.unshift(forced);
+    // An urgent safety report is handled on its own. "My brakes failed" also reads like a parts
+    // or service request, but opening a parts inquiry and asking for a VIN in the same breath
+    // as "stop driving" is wrong: the customer needs help, not a form. Staff follow up.
+    if (list.includes('SAFETY_URGENT')) {
+      const deferred = new Set<TurnIntent>([
+        'PARTS_INQUIRY',
+        'SERVICE_APPOINTMENT',
+        'INVENTORY_SEARCH',
+        'PAYMENT_ESTIMATE',
+      ]);
+      const kept = list.filter((i) => !deferred.has(i));
+      list.length = 0;
+      list.push(...kept);
+    }
     // Department chips with no free text open a department-specific greeting.
     if (
       (input.action === 'service' ||
@@ -954,6 +2015,20 @@ export class ChatOrchestrator {
   }
 
   private async runIntent(t: Turn, intent: TurnIntent) {
+    // stream hook: a real "checking inventory" status when an inventory read is starting.
+    if (
+      intent === 'INVENTORY_SEARCH' ||
+      intent === 'FEATURE_FILTER' ||
+      intent === 'SELECT_VEHICLE' ||
+      intent === 'COMPARE' ||
+      intent === 'RESUME_VEHICLE'
+    )
+      this.emitStatus(
+        t,
+        'checking',
+        'Checking inventory',
+        'Revisando inventario',
+      );
     switch (intent) {
       case 'SAFETY_URGENT':
         return this.handleSafety(t);
@@ -1047,7 +2122,12 @@ export class ChatOrchestrator {
   private cap(t: Turn, c: CapabilityName) {
     let p = t.capCache.get(c);
     if (!p) {
-      p = this.capabilities.check(t.tenantId, t.locationId, c);
+      // ── group-routing hook 2/5: the group site's own conversation only chats and searches.
+      // No-op (undefined) for every rooftop conversation.
+      const group = groupConversationCapability(t.tenantId, c);
+      p = group
+        ? Promise.resolve(group)
+        : this.capabilities.check(t.tenantId, t.locationId, c);
       t.capCache.set(c, p);
     }
     return p;
@@ -1139,7 +2219,10 @@ export class ChatOrchestrator {
 
   /** One-time, plain-language note that the demo runs on simulated inventory. */
   private noteSimulated(t: Turn, vehicles: InventoryVehicle[]) {
-    if (!vehicles.some((v) => v.simulated) || t.st.social?.demoNoted) return;
+    if (!vehicles.some((v) => v.simulated)) return;
+    // Every reply that states something about a simulated vehicle says so (see finish()).
+    t.simulatedThisTurn = true;
+    if (t.st.social?.demoNoted) return;
     t.st.social = { ...t.st.social, demoNoted: true };
     const tag = tr(
       t.lang,
@@ -1216,6 +2299,12 @@ export class ChatOrchestrator {
     t: Turn,
   ): Promise<{ v?: InventoryVehicle; ambiguous?: InventoryVehicle[] }> {
     const e = t.u.entities;
+    // ── group-routing hook 3/5: the reference was already resolved on the group site's
+    // mixed-rooftop list ("the second one" there is not this rooftop's second one).
+    if (t.pinnedVin) {
+      const v = await this.inventory.getVehicleByVin(t.tenantId, t.pinnedVin);
+      return v ? { v } : {};
+    }
     if (e.vin) {
       const v = await this.inventory.getVehicleByVin(t.tenantId, e.vin);
       return v ? { v } : {};
@@ -1477,7 +2566,7 @@ export class ChatOrchestrator {
       `Message: "${redactCreditSensitive(t.message).slice(0, 280)}"`,
       st.selectedVin ? `Vehicle: ${st.selectedVin}` : null,
       st.appointment
-        ? `Appointment request: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''} (${st.appointment.status})`
+        ? `Appointment request: ${st.appointment.requestedDate ?? ''} ${st.appointment.requestedTime ?? ''} (${st.appointment.status}${st.appointment.sandbox ? ', SANDBOX demo booking' : ''})`
         : null,
       st.department ? `Department: ${st.department}` : null,
       this.customerName(t) ? `Name: ${this.customerName(t)}` : null,
@@ -2242,6 +3331,15 @@ export class ChatOrchestrator {
     if (await this.capBlocked(t, 'inventory')) return;
     this.mergeCriteria(t);
     const c = t.st.criteria;
+    // ── group-routing hook 4/5: on the group site, ask which store before a search that more
+    // than one rooftop can answer. Always null for a rooftop conversation.
+    const storeAsk = await groupSearchGate(t.tenantId, c);
+    if (storeAsk) {
+      t.answers.push(storeAsk.text);
+      t.quickReplies.push(...storeAsk.quickReplies);
+      t.lockReply = true;
+      return;
+    }
     t.toolCount += 1;
     this.signal(t, 'inventory_search');
     void this.analytics.trackEvent(
@@ -3715,6 +4813,7 @@ export class ChatOrchestrator {
     rescheduled = false,
   ) {
     if (res.status === 'incomplete') return;
+    if (t.slotBooking && res.status === 'rejected') t.slotRejected = res.code;
     if (res.status === 'rejected') {
       const hours = await this.getHours(t);
       const demoPrefix = hours?.synthetic
@@ -3816,16 +4915,27 @@ export class ChatOrchestrator {
       requestedDate: a.requestedDate,
       requestedTime: a.requestedTime,
       outcome: res.outcome,
+      // Remembered so the recap, the model's memory and later cards keep the demo label.
+      ...(res.outcome === 'confirmed' && res.provider?.sandbox
+        ? { sandbox: true }
+        : {}),
     };
+    // A confirmation keeps its exact wording (incl. the demo label): no model rewrite.
+    if (res.outcome === 'confirmed') t.lockReply = true;
     t.st.draftAppointment = undefined;
     t.st.pending = 'none';
     t.evidence.push(
       this.evidenceSvc.forAppointment(t.tenantId, t.locationId, a),
     );
+    // "Provider-confirmed" needs a CONFIRMED provider receipt; a row staff confirmed by hand
+    // (no receipt) is confirmed, but never attributed to a scheduling system.
+    const providerConfirmed = res.outcome === 'confirmed' && !!res.provider;
     t.sources.add(
-      res.outcome === 'confirmed'
+      providerConfirmed
         ? `scheduler:${a.provider}`
-        : 'appointment_request',
+        : res.outcome === 'confirmed'
+          ? 'appointment_staff_confirmed'
+          : 'appointment_request',
     );
     const label = this.apptLabel(t, a);
     const what =
@@ -3836,11 +4946,24 @@ export class ChatOrchestrator {
           : tr(t.lang, 'visit', 'visita');
     if (res.outcome === 'confirmed') {
       t.narration.push(
-        tr(
-          t.lang,
-          `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
-          `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
-        ),
+        // A sandbox confirmation is always labelled as a demo booking.
+        res.provider?.sandbox
+          ? tr(
+              t.lang,
+              `The sandbox scheduler confirmed a ${what} ${label}. This is a demo booking, not a real appointment.`,
+              `El sistema de citas de demostración confirmó su ${what} para el ${label}. Es una reserva de prueba, no una cita real.`,
+            )
+          : providerConfirmed
+            ? tr(
+                t.lang,
+                `You're booked for a ${what} ${label} — the dealership's scheduling system confirmed it.`,
+                `Su ${what} quedó confirmada para el ${label} — el sistema de citas de la agencia la confirmó.`,
+              )
+            : tr(
+                t.lang,
+                `You're booked for a ${what} ${label} — the dealership team confirmed it.`,
+                `Su ${what} quedó confirmada para el ${label} — el equipo de la agencia la confirmó.`,
+              ),
       );
     } else if (res.outcome === 'pending') {
       t.narration.push(
@@ -3887,7 +5010,9 @@ export class ChatOrchestrator {
       date: a.requestedDate,
       time: a.requestedTime,
       label,
-      verified: res.outcome === 'confirmed',
+      verified: providerConfirmed,
+      // sales-desk hook 5/7: rooftop/department/provider-receipt fields (flag-gated).
+      ...(await this.appointmentCardExtras(t, a, res)),
     });
     this.signal(
       t,
@@ -3998,6 +5123,7 @@ export class ChatOrchestrator {
     if (
       active &&
       t.u.entities.when &&
+      !t.slotBooking &&
       !hasIntent(t.u, 'APPOINTMENT_RESCHEDULE')
     ) {
       return this.handleReschedule(t);
@@ -4114,6 +5240,8 @@ export class ChatOrchestrator {
         return;
       }
     }
+    // ── sales-desk hook 3/7: a scheduler booking needs the customer's identity first.
+    if (await this.salesDeskNeedsContactFirst(t, type)) return;
     const when = t.u.entities.when;
     if (!when?.date) {
       st.draftAppointment = {
@@ -4215,6 +5343,17 @@ export class ChatOrchestrator {
           .join(' | ') || null,
       source: 'chat',
       now: referenceNow(),
+      // sales-desk hook 4/7: a picked provider slot is booked idempotently per
+      // (conversation, picker, slot) through the scheduling adapter.
+      ...(t.slotBooking
+        ? {
+            idempotencyKey: t.slotBooking.idempotencyKey,
+            providerSlot: {
+              startUtc: t.slotBooking.startUtc,
+              providerSlotId: t.slotBooking.providerSlotId,
+            },
+          }
+        : {}),
     });
     if (res.status === 'saved' && st.parts?.inquiryId && type === 'SERVICE') {
       await this.parts.linkInstallAppointment(
@@ -5511,6 +6650,8 @@ export class ChatOrchestrator {
         ),
       );
     }
+    // ── sales-desk hook 6/7: resume a booking that was waiting on contact details.
+    await this.resumeDraftAfterContact(t);
   }
 
   private async handleAffirm(t: Turn) {
@@ -5547,6 +6688,18 @@ export class ChatOrchestrator {
     if (p === 'confirm_handoff') return this.handleHandoff(t, 'request');
     if (p === 'text_consent') {
       if (!t.st.contact.phone) return;
+      // A handset opt-out is only lifted from the handset (the chat cannot verify the number).
+      if (
+        await this.consent.handsetOptOutStands(
+          t.tenantId,
+          'SMS',
+          t.st.contact.phone,
+        )
+      ) {
+        this.metrics.increment('chat.text_consent.handset_opt_out_stands');
+        t.narration.push(textStaysOffText(t.lang === 'es' ? 'es' : 'en'));
+        return;
+      }
       await this.consent.record({
         tenantId: t.tenantId,
         locationId: t.locationId,
@@ -6030,20 +7183,40 @@ export class ChatOrchestrator {
     const st = t.st;
     const m: string[] = [];
     if (st.department) m.push(`department: ${st.department}`);
+    const pv = st.pageVehicle;
+    if (pv) {
+      const name = [pv.condition, pv.year, pv.make, pv.model, pv.trim]
+        .filter(Boolean)
+        .join(' ');
+      const facts = [
+        `VIN ${pv.vin}`,
+        pv.stock ? `stock number ${pv.stock}` : null,
+        typeof pv.mileage === 'number'
+          ? `${pv.mileage.toLocaleString('en-US')} miles`
+          : null,
+        pv.color ? `colour ${pv.color}` : null,
+        pv.bodyType ? `body ${pv.bodyType}` : null,
+        pv.fuelType ? `fuel ${pv.fuelType}` : null,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      m.push(
+        `VEHICLE PAGE THE CUSTOMER HAS OPEN on this store's website right now: ${name || 'a vehicle listing'} (${facts}). These details are the published listing as reported by that page. "This vehicle", "this one", "it" refer to this listing. It is a listing, not a live availability check: do not say it is in stock, on the lot, available or sold, and do not state its price, payment or incentives (the page shows the store's current price; you do not have it). You may answer about the model and trim from general knowledge, clearly as general information, and use the listing details above as given. Describe the listing; do not question, second-guess or speculate about how the store labelled it (for example why a low-mileage vehicle is listed as used).`,
+      );
+    }
     if (st.selectedLabel)
       m.push(
         `selected vehicle: ${st.selectedLabel}${st.selectedStock ? ` (stock ${st.selectedStock})` : ''}${st.selectedStatus ? `, status ${st.selectedStatus}` : ''}`,
       );
     const c = st.criteria;
-    const crit = [
-      c.model,
-      c.bodyType,
-      c.color,
-      c.maxPrice ? `under $${c.maxPrice.toLocaleString('en-US')}` : null,
-    ]
-      .filter(Boolean)
-      .join(', ');
-    if (crit) m.push(`shopping for: ${crit}`);
+    const crit = [c.model, c.bodyType, c.color].filter(Boolean).join(', ');
+    if (crit) m.push(`filters from the last inventory search: ${crit}`);
+    // A search filter, not the customer's budget: "anything under $20,000?" does not replace
+    // "I can spend $64,000", and only the transcript holds later changes to either.
+    if (c.maxPrice)
+      m.push(
+        `price ceiling used in the last inventory search: $${c.maxPrice.toLocaleString('en-US')} (a search filter only; the customer's own stated budget, wants and any later changes are in the transcript and take precedence)`,
+      );
     if (st.payment.maxMonthly)
       m.push(`monthly budget: $${st.payment.maxMonthly}`);
     if (
@@ -6063,7 +7236,9 @@ export class ChatOrchestrator {
     if (st.appointment) {
       const apptLabel =
         st.appointment.status === 'CONFIRMED'
-          ? 'confirmed appointment'
+          ? st.appointment.sandbox
+            ? 'SANDBOX DEMO booking (not a real appointment)'
+            : 'confirmed appointment'
           : st.appointment.status === 'CANCELLED'
             ? 'canceled appointment request'
             : 'appointment request (not confirmed)';
@@ -6078,7 +7253,7 @@ export class ChatOrchestrator {
     if (st.parts?.need) m.push(`parts: ${st.parts.need}`);
     if (st.trade?.model)
       m.push(
-        `trade-in: ${[st.trade.year, st.trade.make, st.trade.model].filter(Boolean).join(' ')}`,
+        `trade-in: ${[st.trade.year, st.trade.make, st.trade.model].filter(Boolean).join(' ')}${st.trade.mileage ? `, ${st.trade.mileage.toLocaleString('en-US')} miles` : ''}`,
       );
     if (st.finance?.creditLinkOffered)
       m.push(
@@ -6532,11 +7707,11 @@ export class ChatOrchestrator {
       recap.push(
         tr(
           t.lang,
-          `your ${visitKind} request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? 'confirmed' : 'still a request'}`.replace(
+          `your ${visitKind} request for ${st.appointment.requestedDate ?? ''} is ${st.appointment.status === 'CONFIRMED' ? (st.appointment.sandbox ? 'a demo booking on the sandbox scheduler, not a real appointment' : 'confirmed') : 'still a request'}`.replace(
             '  ',
             ' ',
           ),
-          `su solicitud de ${visitKindEs} del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? 'confirmada' : 'pendiente'}`,
+          `su solicitud de ${visitKindEs} del ${st.appointment.requestedDate ?? ''} está ${st.appointment.status === 'CONFIRMED' ? (st.appointment.sandbox ? 'como reserva de prueba en el sistema de demostración, no es una cita real' : 'confirmada') : 'pendiente'}`,
         ),
       );
     }
@@ -6642,6 +7817,737 @@ export class ChatOrchestrator {
     this.ask(t, 'none', text, 9);
   }
 
+  // ───────────────────────────────────────── sales desk (structured cards)
+  //
+  // Everything below is gated on the `salesDeskCards` flag (default off) and is reached only
+  // from the seven marked hook points above. Pure logic lives in ./sales-desk/*.
+
+  private salesDeskOn(t: Turn): Promise<boolean> {
+    if (!t.salesDeskFlag)
+      t.salesDeskFlag = this.capabilities
+        .flags(t.tenantId, t.locationId)
+        .then((f) => f.salesDeskCards === true);
+    return t.salesDeskFlag;
+  }
+
+  private emitStatus(
+    t: Turn,
+    phase: ChatStreamStatusPhase,
+    en?: string,
+    es?: string,
+  ) {
+    if (!t.onStatus) return;
+    const label = en ? tr(t.lang, en, es ?? en) : undefined;
+    const key = `${phase}:${label ?? ''}`;
+    t.statusSent = t.statusSent ?? new Set();
+    if (t.statusSent.has(key)) return;
+    t.statusSent.add(key);
+    try {
+      t.onStatus({ phase, ...(label ? { label } : {}) });
+    } catch {
+      // a status listener must never break the turn
+    }
+  }
+
+  /** Display name and timezone of the rooftop this conversation is bound to (server-side). */
+  private async rooftop(t: Turn): Promise<{ name: string; timezone: string }> {
+    if (!t.rooftopInfo) {
+      const loc = t.locationId
+        ? await this.prisma.location.findFirst({
+            where: { id: t.locationId, tenantId: t.tenantId },
+            select: { name: true, timezone: true },
+          })
+        : null;
+      const tenant = loc
+        ? null
+        : await this.prisma.tenant.findUnique({
+            where: { id: t.tenantId },
+            select: { name: true },
+          });
+      t.rooftopInfo = {
+        name: loc?.name ?? tenant?.name ?? '',
+        timezone: loc?.timezone ?? 'America/Chicago',
+      };
+    }
+    return t.rooftopInfo;
+  }
+
+  private contactComplete(t: Turn): boolean {
+    const c = t.st.contact;
+    return !!(c.firstName && (c.phone || c.email));
+  }
+
+  private activeAppointmentOfType(t: Turn, type: string): boolean {
+    const a = t.st.appointment;
+    return (
+      !!a &&
+      ['REQUESTED', 'PENDING_CONFIRMATION', 'CONFIRMED'].includes(a.status) &&
+      a.type === type
+    );
+  }
+
+  private async handleStructuredSubmission(
+    t: Turn,
+    input: {
+      lead?: LeadSubmissionInput;
+      appointment?: {
+        pickerId: string;
+        slotId?: string;
+        requestedDate?: string;
+        requestedWindow?: string;
+      };
+    },
+  ) {
+    // Consent, contact storage and bookings keep their fixed wording (no model rewrite).
+    t.lockReply = true;
+    if (input.lead) await this.submitLead(t, input.lead);
+    else if (input.appointment)
+      await this.selectAppointment(t, input.appointment);
+    await this.syncTradeTarget(t);
+    await this.syncLead(t);
+  }
+
+  /**
+   * Lead-form submission. Validated server-side against the form this conversation was
+   * offered; on any failure NOTHING is stored and the form is offered again. On success the
+   * contact goes into the journey exactly like the conversational path (and through the same
+   * `handleContact` propagation and lead sync), and one append-only consent record is written
+   * per channel the customer actually ticked.
+   */
+  private async submitLead(t: Turn, lead: LeadSubmissionInput) {
+    const st = t.st;
+    const on =
+      (await this.salesDeskOn(t)) &&
+      (await this.cap(t, 'leadCapture')).allowed &&
+      !st.incident?.withholdContact;
+    const offered = on ? st.salesDesk?.leadForm : undefined;
+    if (offered?.submittedAt && offered.id === lead.formId) {
+      t.narration.push(
+        tr(
+          t.lang,
+          'I already have your details from that form — the team will use those.',
+          'Ya tengo sus datos de ese formulario — el equipo usará esos.',
+        ),
+      );
+      return;
+    }
+    const v = validateLeadSubmission(lead, offered, t.lang, referenceNow());
+    if (!v.ok) {
+      this.metrics.increment(`chat.lead_form.refused.${v.reason}`);
+      t.answers.push(leadRefusalText(v.reason, t.lang));
+      if (on && !this.contactComplete(t))
+        this.ask(
+          t,
+          st.contact.firstName ? 'contact_method' : 'contact_name',
+          tr(
+            t.lang,
+            'Could you check the form and send it again?',
+            '¿Puede revisar el formulario y enviarlo de nuevo?',
+          ),
+          1,
+          'contact',
+        );
+      return;
+    }
+    // The form does not prove who owns the number: a text opt-in typed here never undoes an
+    // opt-out sent from the handset itself. The tick is still recorded (what the form said), but
+    // marked as not effective, and the lead is not flagged as textable.
+    const smsGrant = v.grants.find((g) => g.ledgerChannel === 'SMS');
+    const textLocked = smsGrant
+      ? await this.consent.handsetOptOutStands(
+          t.tenantId,
+          'SMS',
+          smsGrant.endpoint,
+        )
+      : false;
+    if (textLocked) {
+      v.contact.consentToText = false;
+      this.metrics.increment('chat.lead_form.text_grant_not_effective');
+    }
+    // Consent first (append-only), so contact is never held without its consent record.
+    for (const g of v.grants) {
+      await this.consent.record({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        leadId: st.leadId ?? null,
+        conversationExternalKey: t.s.externalKey,
+        channel: g.ledgerChannel,
+        endpoint: g.endpoint,
+        purpose: 'CONVERSATIONAL',
+        granted: true,
+        wording: g.wording,
+        wordingVersion: g.version,
+        source: 'WIDGET',
+        evidence: {
+          capturedVia: 'lead_form',
+          formId: offered!.id,
+          formPurpose: offered!.purpose,
+          formChannel: g.channel,
+          preferredChannel: lead.preferredChannel,
+          // The language the form was ISSUED in (the wording shown), not the client's claim.
+          language: v.language,
+          formIssuedAt: offered!.issuedAt,
+          ...(textLocked && g.ledgerChannel === 'SMS'
+            ? { notEffective: GRANT_NOT_EFFECTIVE_HANDSET_OPT_OUT }
+            : {}),
+        },
+      });
+    }
+    if (textLocked) t.answers.push(textStaysOffText(v.language));
+    const c = v.contact;
+    // Same shape absorbEntities() produces for a typed "John Smith, 555…" turn.
+    t.u.entities.contact = {
+      firstName: c.firstName,
+      lastName: c.lastName,
+      ...(c.phone ? { phone: c.phone } : {}),
+      ...(c.email ? { email: c.email } : {}),
+    };
+    st.contact = {
+      ...st.contact,
+      ...t.u.entities.contact,
+      preferredContact: c.preferredContact,
+      ...(c.consentToText ? { consentToText: true } : {}),
+    };
+    this.signal(t, 'contact_name');
+    this.signal(t, 'contact_method');
+    if (c.consentToText) this.signal(t, 'text_consent');
+    offered!.submittedAt = referenceNow().toISOString();
+    this.metrics.increment('chat.lead_form.submitted');
+    void this.analytics.trackEvent(
+      t.tenantId,
+      t.locationId,
+      'lead_form_submitted',
+      {
+        purpose: offered!.purpose,
+        preferredChannel: lead.preferredChannel,
+        grantedChannels: v.grants.map((g) => g.channel),
+      },
+      t.s.externalKey,
+    );
+    await this.handleContact(t);
+  }
+
+  /**
+   * Appointment-picker choice. The picker/slot must be one this conversation was offered, for
+   * this rooftop, and still on offer. A day + window goes down the existing REQUEST path; a
+   * provider slot is booked through the scheduling adapter and is only ever reported as
+   * confirmed from the adapter's receipt.
+   */
+  private async selectAppointment(
+    t: Turn,
+    sel: {
+      pickerId: string;
+      slotId?: string;
+      requestedDate?: string;
+      requestedWindow?: string;
+    },
+  ) {
+    const st = t.st;
+    const on = await this.salesDeskOn(t);
+    const now = referenceNow();
+    const { timezone } = await this.rooftop(t);
+    const r = resolveSelection({
+      selection: sel,
+      state: on ? st.salesDesk : undefined,
+      locationId: t.locationId,
+      timezone,
+      now,
+    });
+    const reoffer = (type: PickerAppointmentType, en: string, es: string) => {
+      st.draftAppointment = { type, serviceNeed: st.service?.need };
+      this.ask(t, 'appointment_date', tr(t.lang, en, es), 1, 'date');
+    };
+    if (!r.ok) {
+      this.metrics.increment(`chat.appointment_picker.refused.${r.reason}`);
+      // A spent card: say what is already booked instead of booking a second appointment.
+      if (
+        r.reason === 'already_booked' &&
+        r.type &&
+        (await this.answerExistingBooking(t, r.type, null))
+      )
+        return;
+      t.answers.push(selectionRefusalText(r.reason, t.lang));
+      if (on && r.type && r.reason !== 'wrong_location')
+        reoffer(
+          r.type,
+          'Which of these works for you?',
+          '¿Cuál de estas opciones le funciona?',
+        );
+      return;
+    }
+    const type = r.picker.type;
+    if (r.kind === 'request') {
+      // A repeated submit of the same choice is a no-op, not a reschedule to the same time.
+      const a = st.appointment;
+      if (
+        a &&
+        this.activeAppointmentOfType(t, a.type) &&
+        a.requestedDate === isoDate(r.date) &&
+        a.requestedTime === r.window
+      ) {
+        t.narration.push(
+          tr(
+            t.lang,
+            'That request is already in — the team will confirm the time with you.',
+            'Esa solicitud ya está registrada — el equipo le confirmará la hora.',
+          ),
+        );
+        return;
+      }
+      t.u.entities.when = {
+        date: r.date,
+        partOfDay: r.window,
+        phrase: `${isoDate(r.date)} ${r.window}`,
+        inferred: false,
+      };
+      return this.handleAppointment(t, type);
+    }
+    const slotKey = `slot:${t.s.conversationId}:${r.picker.id}:${r.slot.id}`;
+    // One active appointment per kind: a different slot never books a second one. (The same
+    // slot again is an idempotent replay of the saved booking and goes through.)
+    if (await this.answerExistingBooking(t, type, slotKey)) return;
+    this.emitStatus(
+      t,
+      'checking',
+      'Checking with the scheduler',
+      'Consultando el sistema de citas',
+    );
+    t.u.entities.when = {
+      date: r.date,
+      time: r.time,
+      phrase: 'selected slot',
+      inferred: false,
+    };
+    t.slotBooking = {
+      idempotencyKey: slotKey,
+      startUtc: r.slot.startUtc,
+      providerSlotId: r.slot.providerSlotId,
+    };
+    const mark = {
+      answers: t.answers.length,
+      narration: t.narration.length,
+      questions: t.questions.length,
+    };
+    await this.handleAppointment(t, type);
+    if (t.slotRejected) {
+      // The scheduler did not take it: say so plainly, book nothing, offer fresh times.
+      t.answers.length = mark.answers;
+      t.narration.length = mark.narration;
+      t.questions.length = mark.questions;
+      t.answers.push(
+        t.slotRejected === 'unavailable'
+          ? tr(
+              t.lang,
+              'That time was just taken, so nothing was booked.',
+              'Ese horario se acaba de ocupar, así que no se reservó nada.',
+            )
+          : tr(
+              t.lang,
+              'That time can’t be booked anymore, so nothing was booked.',
+              'Ese horario ya no se puede reservar, así que no se reservó nada.',
+            ),
+      );
+      reoffer(
+        type,
+        'Which other time works for you?',
+        '¿Qué otro horario le funciona?',
+      );
+      return;
+    }
+    // A booking was saved: the card (and any other remembered slot card of this kind) is spent.
+    if (st.appointment && this.activeAppointmentOfType(t, st.appointment.type))
+      st.salesDesk = settlePickersAfterBooking(st.salesDesk, {
+        pickerId: r.picker.id,
+        slotId: r.slot.id,
+        type,
+      });
+  }
+
+  /**
+   * When this conversation already has an active appointment of the same kind (and the
+   * selection is not a replay of that very booking), tell the customer the truth — what exists,
+   * that nothing new was booked — and offer the existing change flow. Returns true when it
+   * answered. Reads the row, so a booking staff have since cancelled does not block a new one.
+   */
+  private async answerExistingBooking(
+    t: Turn,
+    type: PickerAppointmentType,
+    replayKey: string | null,
+  ): Promise<boolean> {
+    const st = t.st;
+    const cur = st.appointment;
+    if (
+      !cur ||
+      !this.activeAppointmentOfType(t, cur.type) ||
+      bookingFamily(cur.type) !== bookingFamily(type)
+    )
+      return false;
+    const row = await this.prisma.appointment.findFirst({
+      where: { id: cur.id, tenantId: t.tenantId },
+      select: {
+        status: true,
+        type: true,
+        requestedDate: true,
+        requestedTime: true,
+        idempotencyKey: true,
+      },
+    });
+    if (!row) return false;
+    if (
+      !['REQUESTED', 'PENDING_CONFIRMATION', 'CONFIRMED'].includes(row.status)
+    ) {
+      st.appointment = { ...cur, status: row.status };
+      return false;
+    }
+    if (replayKey && row.idempotencyKey === replayKey) return false;
+    st.appointment = { ...cur, status: row.status };
+    const what =
+      row.type === 'SERVICE'
+        ? tr(t.lang, 'service visit', 'cita de servicio')
+        : row.type === 'TEST_DRIVE'
+          ? tr(t.lang, 'test drive', 'prueba de manejo')
+          : tr(t.lang, 'visit', 'visita');
+    const label = this.apptLabel(t, row);
+    this.metrics.increment('chat.appointment_picker.already_booked');
+    t.answers.push(
+      row.status === 'CONFIRMED'
+        ? cur.sandbox
+          ? tr(
+              t.lang,
+              `You already have a ${what} booked for ${label} on the sandbox scheduler (a demo booking, not a real appointment), so nothing new was booked.`,
+              `Ya tiene una ${what} reservada para el ${label} en el sistema de demostración (una reserva de prueba, no una cita real), así que no se reservó nada nuevo.`,
+            )
+          : tr(
+              t.lang,
+              `You already have a ${what} booked for ${label}, so nothing new was booked.`,
+              `Ya tiene una ${what} reservada para el ${label}, así que no se reservó nada nuevo.`,
+            )
+        : tr(
+            t.lang,
+            `You already have a ${what} request in for ${label}, so nothing new was booked.`,
+            `Ya tiene una solicitud de ${what} para el ${label}, así que no se reservó nada nuevo.`,
+          ),
+    );
+    st.draftAppointment = undefined;
+    this.ask(
+      t,
+      'appointment_date',
+      tr(
+        t.lang,
+        'Do you want to change it? If so, which day works better?',
+        '¿Quiere cambiarla? Si es así, ¿qué día le funciona mejor?',
+      ),
+      1,
+      'date',
+    );
+    return true;
+  }
+
+  /**
+   * True (and the contact question is asked) when an authorised scheduler would offer real
+   * slots but we do not yet know who is booking. Without a scheduler the engine's own order
+   * stands: request first, contact afterwards.
+   */
+  private async salesDeskNeedsContactFirst(
+    t: Turn,
+    type: 'SALES' | 'TEST_DRIVE' | 'SERVICE',
+  ): Promise<boolean> {
+    const st = t.st;
+    if (
+      t.slotBooking ||
+      t.u.entities.when?.date ||
+      this.contactComplete(t) ||
+      st.incident?.withholdContact ||
+      this.activeAppointmentOfType(t, type)
+    )
+      return false;
+    if (!(await this.salesDeskOn(t))) return false;
+    if (!(await this.cap(t, 'leadCapture')).allowed) return false;
+    const offer = await this.appointments.offerableSlots({
+      tenantId: t.tenantId,
+      locationId: t.locationId,
+      type,
+      now: referenceNow(),
+    });
+    if (!offer?.slots.length) return false;
+    st.draftAppointment = {
+      type,
+      serviceNeed: st.service?.need,
+      when: t.u.entities.when,
+      resumeAfterContact: true,
+    };
+    this.serviceSchedulingAsk(
+      t,
+      st.contact.firstName ? 'contact_method' : 'contact_name',
+      st.contact.firstName
+        ? tr(
+            t.lang,
+            "What's the best number or email to confirm with you?",
+            '¿Cuál es el mejor número o correo para confirmarle?',
+          )
+        : tr(
+            t.lang,
+            'Happy to set that up. Who should the team ask for?',
+            'Con gusto. ¿A nombre de quién lo dejo?',
+          ),
+      2,
+      'contact',
+    );
+    return true;
+  }
+
+  private async resumeDraftAfterContact(t: Turn) {
+    const d = t.st.draftAppointment;
+    if (
+      !d?.resumeAfterContact ||
+      !this.contactComplete(t) ||
+      t.handled.has('DRAFT_RESUMED') ||
+      t.handled.has('SALES_APPOINTMENT') ||
+      t.handled.has('SERVICE_APPOINTMENT')
+    )
+      return;
+    if (d.type !== 'SALES' && d.type !== 'TEST_DRIVE' && d.type !== 'SERVICE')
+      return;
+    if (!(await this.salesDeskOn(t))) return;
+    t.handled.add('DRAFT_RESUMED');
+    await this.handleAppointment(t, d.type);
+  }
+
+  private async appointmentCardExtras(
+    t: Turn,
+    a: Appointment,
+    res: Extract<AppointmentRequestResult, { status: 'saved' }>,
+  ) {
+    // Provider fields come from the adapter receipt and only with a confirmation.
+    const p = res.outcome === 'confirmed' ? res.provider : undefined;
+    // A sandbox booking is labelled even when the structured cards are off.
+    if (!(await this.salesDeskOn(t)))
+      return p?.sandbox ? { sandbox: true } : {};
+    const r = await this.rooftop(t);
+    return {
+      rooftopName: r.name,
+      department: departmentLabel(
+        a.type === 'SERVICE'
+          ? 'service'
+          : a.type === 'PARTS'
+            ? 'parts'
+            : 'sales',
+        t.lang,
+      ),
+      timezone: a.timezone ?? r.timezone,
+      ...(p
+        ? {
+            providerRef: p.ref,
+            providerName: p.name,
+            startsAt: p.startsAt,
+            ...(p.sandbox ? { sandbox: true } : {}),
+          }
+        : {}),
+    };
+  }
+
+  private async attachSalesDeskCards(t: Turn, q: Question | undefined) {
+    if (!(await this.salesDeskOn(t))) return;
+    if (t.vehicles?.length) t.vehicles = await this.enrichVehicles(t);
+    if (!q) return;
+    if (q.key === 'contact_name' || q.key === 'contact_method')
+      await this.attachLeadForm(t);
+    else if (q.key === 'appointment_date' || q.key === 'appointment_time')
+      await this.attachPicker(t);
+  }
+
+  /**
+   * A vehicle chosen by a card button arrives as a VIN only. Cards that name the vehicle load
+   * its label here (this tenant's inventory only) so the form and picker say which vehicle,
+   * not nothing. Never invents a label: an unknown VIN stays unlabelled.
+   */
+  private async ensureSelectedLabel(t: Turn) {
+    const st = t.st;
+    if (!st.selectedVin || st.selectedLabel) return;
+    const v = await this.inventory.getVehicleByVin(t.tenantId, st.selectedVin);
+    if (v) st.selectedLabel = vehicleLabel(v, true);
+  }
+
+  private async attachLeadForm(t: Turn) {
+    const st = t.st;
+    await this.ensureSelectedLabel(t);
+    if (st.incident?.withholdContact || this.contactComplete(t)) return;
+    if (!(await this.cap(t, 'leadCapture')).allowed) return;
+    // TEXT is offered only when SMS is really enabled for this tenant/location.
+    const channels = leadFormChannels((await this.cap(t, 'sms')).allowed);
+    const apptType = st.appointment?.type ?? st.draftAppointment?.type;
+    const purpose: LeadFormPurpose =
+      apptType === 'TEST_DRIVE'
+        ? 'test_drive'
+        : apptType === 'SERVICE'
+          ? 'service'
+          : apptType
+            ? 'sales'
+            : st.parts?.inquiryId
+              ? 'parts'
+              : st.handoff?.escalationId
+                ? 'callback'
+                : 'sales';
+    const prev = st.salesDesk?.leadForm;
+    const { card, offered } = buildLeadForm({
+      purpose,
+      rooftopName: (await this.rooftop(t)).name,
+      vehicleLabel:
+        purpose === 'sales' || purpose === 'test_drive'
+          ? (st.selectedLabel ?? null)
+          : null,
+      vin:
+        purpose === 'sales' || purpose === 'test_drive'
+          ? (st.selectedVin ?? null)
+          : null,
+      channels,
+      lang: t.lang,
+      now: referenceNow(),
+      // A form still waiting for an answer keeps its id, so the one on screen stays valid.
+      reuse:
+        prev &&
+        !prev.submittedAt &&
+        prev.purpose === purpose &&
+        prev.channels.join() === channels.join()
+          ? prev
+          : undefined,
+    });
+    st.salesDesk = { ...st.salesDesk, leadForm: offered };
+    t.cards.push(card);
+  }
+
+  private async attachPicker(t: Turn) {
+    const st = t.st;
+    await this.ensureSelectedLabel(t);
+    if (!(await this.cap(t, 'appointments')).allowed) return;
+    const active = st.appointment
+      ? this.activeAppointmentOfType(t, st.appointment.type)
+      : false;
+    const raw =
+      st.draftAppointment?.type ?? (active ? st.appointment!.type : null);
+    if (raw !== 'SALES' && raw !== 'TEST_DRIVE' && raw !== 'SERVICE') return;
+    const type: PickerAppointmentType = raw;
+    if (type === 'SERVICE' && !(await this.cap(t, 'service')).allowed) return;
+    const now = referenceNow();
+    const rooftop = await this.rooftop(t);
+    const hours = await this.getHours(t);
+    const department = departmentFor(type);
+    const startFrom = st.draftAppointment?.when?.date ?? null;
+    const days = requestOnlyDays({
+      now,
+      timezone: rooftop.timezone,
+      hours,
+      department,
+      startFrom,
+    });
+    // Real slots only from an authorised scheduler, only for a known customer, and never
+    // while an existing request of this type is being moved (that stays a request).
+    let provider: Parameters<typeof buildPicker>[0]['provider'];
+    if (!this.activeAppointmentOfType(t, type) && this.contactComplete(t)) {
+      const offer = await this.appointments.offerableSlots({
+        tenantId: t.tenantId,
+        locationId: t.locationId,
+        type,
+        now,
+      });
+      if (offer) {
+        let slots = usableProviderSlots({
+          slots: offer.slots,
+          now,
+          timezone: rooftop.timezone,
+          hours,
+          department,
+          max: 48,
+        });
+        if (startFrom) {
+          const sameDay = slots.filter(
+            (s) =>
+              s.startUtc &&
+              this.localIso(s.startUtc, rooftop.timezone) ===
+                isoDate(startFrom),
+          );
+          if (sameDay.length) slots = sameDay;
+        }
+        slots = slots.slice(0, 12);
+        if (slots.length)
+          provider = {
+            connectionId: offer.connectionId,
+            provider: offer.provider,
+            sandbox: offer.sandbox,
+            slots,
+          };
+      }
+    }
+    if (!provider && !days.length) return;
+    const { card, offered } = buildPicker({
+      type,
+      lang: t.lang,
+      rooftopName: rooftop.name,
+      timezone: rooftop.timezone,
+      locationId: t.locationId,
+      vehicleLabel: st.selectedLabel ?? null,
+      vin: st.selectedVin ?? null,
+      serviceNeed: st.service?.need ?? null,
+      now,
+      days,
+      provider,
+    });
+    st.salesDesk = rememberPicker(st.salesDesk, offered);
+    t.cards.push(card);
+  }
+
+  private localIso(utc: string, timeZone: string): string {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(utc));
+  }
+
+  /** Additive vehicle fields: owning rooftop, verified listing URL, fee inclusion. */
+  private async enrichVehicles(t: Turn): Promise<InventoryVehicle[]> {
+    const list = t.vehicles ?? [];
+    const locationIds = [
+      ...new Set(list.map((v) => v.locationId).filter((x): x is string => !!x)),
+    ];
+    const locations = locationIds.length
+      ? await this.prisma.location.findMany({
+          where: { tenantId: t.tenantId, id: { in: locationIds } },
+          select: { id: true, name: true, publicConfig: true },
+        })
+      : [];
+    const rows = await this.prisma.vehicle.findMany({
+      where: { tenantId: t.tenantId, vin: { in: list.map((v) => v.vin) } },
+      select: { vin: true, rawSource: true },
+    });
+    const policy = await this.getPolicy(t).catch(() => null);
+    const byId = new Map(locations.map((l) => [l.id, l]));
+    const raw = new Map(rows.map((r) => [r.vin, r.rawSource]));
+    return list.map((v) => {
+      const loc = v.locationId ? byId.get(v.locationId) : undefined;
+      const site =
+        loc?.publicConfig && typeof loc.publicConfig === 'object'
+          ? (loc.publicConfig as Record<string, unknown>).websiteUrl
+          : null;
+      return {
+        ...v,
+        vdpUrl: v.simulated
+          ? null
+          : verifiedVdpUrl(
+              raw.get(v.vin),
+              typeof site === 'string' ? site : null,
+            ),
+        rooftopName: loc?.name ?? null,
+        // The pricing policy is the conversation rooftop's; it says nothing about others.
+        priceIncludesDealerFees:
+          v.locationId && v.locationId === t.locationId
+            ? priceIncludesDealerFees(policy)
+            : null,
+      };
+    });
+  }
+
   // ───────────────────────────────────────── lead sync
 
   /** Point the trade at the vehicle being bought, never at the trade itself. */
@@ -6715,12 +8621,15 @@ export class ChatOrchestrator {
       utmSource: st.attribution?.utmSource,
       utmMedium: st.attribution?.utmMedium,
       utmCampaign: st.attribution?.utmCampaign,
-      source:
+      // ── group-routing hook 5/5: a sales lead that came through the group site says so.
+      source: leadSourceFor(
+        st.groupOrigin,
         st.department === 'service'
           ? 'widget_service'
           : st.department === 'parts'
             ? 'widget_parts'
             : 'widget',
+      ),
       score: score.score,
       stage: score.stage,
       scoreReasons: score.reasons,
@@ -6729,6 +8638,10 @@ export class ChatOrchestrator {
     });
     const isNewLead = !st.leadId;
     st.leadId = lead.id;
+    // Consent captured before the lead existed (lead form, text consent) is linked to it now.
+    await this.consent
+      .linkLead(t.tenantId, t.s.externalKey, lead.id)
+      .catch(() => undefined);
     if (st.appointment?.id) {
       await this.prisma.appointment.updateMany({
         where: { id: st.appointment.id, tenantId: t.tenantId, leadId: null },
@@ -6800,6 +8713,7 @@ export class ChatOrchestrator {
               type: st.appointment.type,
             }),
             status: st.appointment.status,
+            ...(st.appointment.sandbox ? { sandbox: true } : {}),
           }
         : null,
       // OFFERED = live link shown; PREVIEW = labeled demo preview (never reaches the vendor).
@@ -7161,6 +9075,17 @@ export class ChatOrchestrator {
           st.department ? deptMap[st.department] : PlaybookDepartment.GENERAL,
         )
         .catch(() => null);
+      // Which store this chat belongs to is verified configuration, not something a handler
+      // has to have looked up: the composer may always state it. Phone numbers stay out —
+      // the egress redactor would mask them.
+      const ident = await this.openConversation
+        .storeIdentity(t.tenantId, t.locationId, '')
+        .catch(() => null);
+      if (ident?.storeName)
+        t.facts.push(
+          `STORE IDENTITY (verified): this chat is for ${ident.storeName}${ident.address ? `, ${ident.address}` : ''}${ident.groupName ? `; part of ${ident.groupName}` : ''}${ident.siblings.length ? `; other stores in the group, each a separate business: ${ident.siblings.map((x) => (x.address ? `${x.name} (${x.address})` : x.name)).join('; ')}` : ''}`,
+        );
+      this.emitStatus(t, 'composing');
       const res = await this.composer.compose({
         message: t.message,
         transcript,
@@ -7238,6 +9163,40 @@ export class ChatOrchestrator {
       });
       segments = [reply];
     }
+    // Simulated inventory is never presented unlabeled, whatever the model did with the draft.
+    if (
+      t.simulatedThisTurn &&
+      !/\b(?:demo|demonstration|simulated|sample data)\b|simulad|demostraci(?:o|ó)n/i.test(
+        reply,
+      )
+    ) {
+      reply = `${reply} ${tr(t.lang, '(Simulated demo inventory, not live stock.)', '(Inventario simulado de demostración, no existencias reales.)')}`;
+      segments = [reply];
+    }
+    // The tools write English or Spanish. A customer writing in another script gets the same
+    // reply in their language; numbers and status words must survive or the original is sent.
+    if (
+      !opts.forcedReply &&
+      !llmOff &&
+      // safety wording and locked replies are never rewritten, in any language
+      !t.lockReply &&
+      !t.urgent &&
+      /\p{Script=Arabic}|\p{Script=Devanagari}|\p{Script=Cyrillic}|\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul}|\p{Script=Thai}|\p{Script=Hebrew}/u.test(
+        t.message,
+      )
+    ) {
+      const translated = await this.openConversation
+        .translateReply({
+          reply,
+          customerMessage: t.message,
+          tenantId: t.tenantId,
+        })
+        .catch(() => null);
+      if (translated) {
+        reply = translated;
+        segments = [reply];
+      }
+    }
     if (ack) st.recentOpeners = [...st.recentOpeners, ack].slice(-4);
     st.lastReplySig = signature(reply);
     // A question that lives inside the reply text ("Want to adjust the down payment or term?")
@@ -7260,6 +9219,10 @@ export class ChatOrchestrator {
       }
     }
     st.turnCount += 1;
+
+    // ── sales-desk hook 7/7: structured cards for the question being asked, and the
+    // additive vehicle fields. A no-op (byte-identical response) when the flag is off.
+    if (!opts.forcedReply) await this.attachSalesDeskCards(t, q);
 
     // Mid-turn ownership: if staff claimed the thread while we were composing, do not send AI.
     const owned = await this.prisma.conversation

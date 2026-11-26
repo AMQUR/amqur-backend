@@ -1,0 +1,228 @@
+SANDBOX EVIDENCE - synthetic leads, loopback mock SMTP (127.0.0.1:11025), reserved example.invalid recipients.
+ACCEPTED by a mock is not delivery and not a CRM record.
+
+ENVELOPE TO: ['adf-sales-dial-nissan-of-chicago@leads.example.invalid']
+X-Amqur-Delivery-ID: cmwmxjlm4001konxdmjtnpbuz
+X-Amqur-Correlation-ID: 3d7f77f2-3362-490b-861e-9a22ed9960f0
+Auto-Submitted: auto-generated
+From: adf-sandbox@amqur.example.invalid
+To: adf-sales-dial-nissan-of-chicago@leads.example.invalid
+Subject: New lead amqur-lead-cmwmxjlm0001ionxdqnz9ey16
+Message-ID: <lead-delivery.cmwmxjlm4001konxdmjtnpbuz@amqur.example.invalid>
+Date: Thu, 19 Nov 2026 02:27:22 +0000
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+<?xml version=3D"1.0" encoding=3D"UTF-8"?>
+<?adf version=3D"1.0"?>
+<adf>
+  <prospect status=3D"new">
+    <id sequence=3D"1" source=3D"AMQUR">amqur-l=
+ead-cmwmxjlm0001ionxdqnz9ey16</id>
+    <requestdate>2026-11-19T02:27:22.=
+536Z</requestdate>
+    <customer>
+      <contact>
+        <name =
+part=3D"first">Synthetic</name>
+        <name part=3D"last">Demo 2</name>
+        <email>synthetic-demo-2-1795055242536@example.invalid</email>
+        <phone type=3D"voice">312-555-0111</phone>
+      </contact>
+      <comments>Department: SALES; Requested action: Sales inquiry - =
+contact the customer; Appointment: none requested; Consent: text=3Dnot =
+recorded, email=3Dnot recorded, call=3Dnot recorded; Source: =
+adf_sandbox_demo</comments>
+    </customer>
+    <vendor>
+      <vendorname>Dial Nissan of Chicago</vendorname>
+    </vendor>
+    <provider>
+      <name>AMQUR AI</name>
+    </provider>
+  </prospect>
+</adf>
+
+
+================================================================================
+ENVELOPE TO: ['adf-sales-dial-chevy-of-chicago@leads.example.invalid']
+X-Amqur-Delivery-ID: cmwmxjllu001conxdabda0d8r
+X-Amqur-Correlation-ID: dd7539f5-08b4-4903-a9b5-4fca06b7f74d
+Auto-Submitted: auto-generated
+From: adf-sandbox@amqur.example.invalid
+To: adf-sales-dial-chevy-of-chicago@leads.example.invalid
+Subject: New lead amqur-lead-cmwmxjlln001aonxdae4mumoq
+Message-ID: <lead-delivery.cmwmxjllu001conxdabda0d8r@amqur.example.invalid>
+Date: Thu, 19 Nov 2026 02:27:22 +0000
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+<?xml version=3D"1.0" encoding=3D"UTF-8"?>
+<?adf version=3D"1.0"?>
+<adf>
+  <prospect status=3D"new">
+    <id sequence=3D"1" source=3D"AMQUR">amqur-l=
+ead-cmwmxjlln001aonxdae4mumoq</id>
+    <requestdate>2026-11-19T02:27:22.=
+523Z</requestdate>
+    <customer>
+      <contact>
+        <name =
+part=3D"first">Synthetic</name>
+        <name part=3D"last">Demo 1</name>
+        <email>synthetic-demo-1-1795055242522@example.invalid</email>
+        <phone type=3D"voice">312-555-0110</phone>
+      </contact>
+      <comments>Department: SALES; Requested action: Sales inquiry - =
+contact the customer; Appointment: none requested; Consent: text=3Dnot =
+recorded, email=3Dnot recorded, call=3Dnot recorded; Source: =
+adf_sandbox_demo</comments>
+    </customer>
+    <vendor>
+      <vendorname>Dial Chevy of Chicago</vendorname>
+    </vendor>
+    <provider>
+      <name>AMQUR AI</name>
+    </provider>
+  </prospect>
+</adf>
+
+
+================================================================================
+ENVELOPE TO: ['adf-sales-jeep-of-chicago@leads.example.invalid']
+X-Amqur-Delivery-ID: cmwmxjlml0028onxdsz42p55e
+X-Amqur-Correlation-ID: c5902f98-7858-4bcd-b4cf-bde568cccbb3
+Auto-Submitted: auto-generated
+From: adf-sandbox@amqur.example.invalid
+To: adf-sales-jeep-of-chicago@leads.example.invalid
+Subject: New lead amqur-lead-cmwmxjlmi0026onxdt42sgd7e
+Message-ID: <lead-delivery.cmwmxjlml0028onxdsz42p55e@amqur.example.invalid>
+Date: Thu, 19 Nov 2026 02:27:22 +0000
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+<?xml version=3D"1.0" encoding=3D"UTF-8"?>
+<?adf version=3D"1.0"?>
+<adf>
+  <prospect status=3D"new">
+    <id sequence=3D"1" source=3D"AMQUR">amqur-l=
+ead-cmwmxjlmi0026onxdt42sgd7e</id>
+    <requestdate>2026-11-19T02:27:22.=
+554Z</requestdate>
+    <customer>
+      <contact>
+        <name =
+part=3D"first">Synthetic</name>
+        <name part=3D"last">Demo 5</name>
+        <email>synthetic-demo-5-1795055242554@example.invalid</email>
+        <phone type=3D"voice">312-555-0114</phone>
+      </contact>
+      <comments>Department: SALES; Requested action: Sales inquiry - =
+contact the customer; Appointment: none requested; Consent: text=3Dnot =
+recorded, email=3Dnot recorded, call=3Dnot recorded; Source: =
+adf_sandbox_demo</comments>
+    </customer>
+    <vendor>
+      <vendorname>Jeep of Chicago (North CDJR)</vendorname>
+    </vendor>
+    <provider>
+      <name>AMQUR AI</name>
+    </provider>
+  </prospect>
+</adf>
+
+
+================================================================================
+ENVELOPE TO: ['adf-sales-infiniti-of-chicago@leads.example.invalid']
+X-Amqur-Delivery-ID: cmwmxjlma001sonxdznsim86m
+X-Amqur-Correlation-ID: f2aa2f23-f4ae-4b2e-8f1b-f320908cf939
+Auto-Submitted: auto-generated
+From: adf-sandbox@amqur.example.invalid
+To: adf-sales-infiniti-of-chicago@leads.example.invalid
+Subject: New lead amqur-lead-cmwmxjlm6001qonxd4k1z4du3
+Message-ID: <lead-delivery.cmwmxjlma001sonxdznsim86m@amqur.example.invalid>
+Date: Thu, 19 Nov 2026 02:27:22 +0000
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+<?xml version=3D"1.0" encoding=3D"UTF-8"?>
+<?adf version=3D"1.0"?>
+<adf>
+  <prospect status=3D"new">
+    <id sequence=3D"1" source=3D"AMQUR">amqur-l=
+ead-cmwmxjlm6001qonxd4k1z4du3</id>
+    <requestdate>2026-11-19T02:27:22.=
+543Z</requestdate>
+    <customer>
+      <contact>
+        <name =
+part=3D"first">Synthetic</name>
+        <name part=3D"last">Demo 3</name>
+        <email>synthetic-demo-3-1795055242542@example.invalid</email>
+        <phone type=3D"voice">312-555-0112</phone>
+      </contact>
+      <comments>Department: SALES; Requested action: Sales inquiry - =
+contact the customer; Appointment: none requested; Consent: text=3Dnot =
+recorded, email=3Dnot recorded, call=3Dnot recorded; Source: =
+adf_sandbox_demo</comments>
+    </customer>
+    <vendor>
+      <vendorname>INFINITI of Chicago</vendorname>
+    </vendor>
+    <provider>
+      <name>AMQUR AI</name>
+    </provider>
+  </prospect>
+</adf>
+
+
+================================================================================
+ENVELOPE TO: ['adf-sales-dial-cdjr-of-chicago@leads.example.invalid']
+X-Amqur-Delivery-ID: cmwmxjlmf0020onxd7qmnqjwo
+X-Amqur-Correlation-ID: 01e2c564-5ac8-44f7-8276-7e50c8a684f2
+Auto-Submitted: auto-generated
+From: adf-sandbox@amqur.example.invalid
+To: adf-sales-dial-cdjr-of-chicago@leads.example.invalid
+Subject: New lead amqur-lead-cmwmxjlmc001yonxdvo1z3203
+Message-ID: <lead-delivery.cmwmxjlmf0020onxd7qmnqjwo@amqur.example.invalid>
+Date: Thu, 19 Nov 2026 02:27:22 +0000
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+<?xml version=3D"1.0" encoding=3D"UTF-8"?>
+<?adf version=3D"1.0"?>
+<adf>
+  <prospect status=3D"new">
+    <id sequence=3D"1" source=3D"AMQUR">amqur-l=
+ead-cmwmxjlmc001yonxdvo1z3203</id>
+    <requestdate>2026-11-19T02:27:22.=
+549Z</requestdate>
+    <customer>
+      <contact>
+        <name =
+part=3D"first">Synthetic</name>
+        <name part=3D"last">Demo 4</name>
+        <email>synthetic-demo-4-1795055242548@example.invalid</email>
+        <phone type=3D"voice">312-555-0113</phone>
+      </contact>
+      <comments>Department: SALES; Requested action: Sales inquiry - =
+contact the customer; Appointment: none requested; Consent: text=3Dnot =
+recorded, email=3Dnot recorded, call=3Dnot recorded; Source: =
+adf_sandbox_demo</comments>
+    </customer>
+    <vendor>
+      <vendorname>Dial Chrysler Dodge Jeep Ram of Chicago =
+(South)</vendorname>
+    </vendor>
+    <provider>
+      <name>AMQUR =
+AI</name>
+    </provider>
+  </prospect>
+</adf>
+

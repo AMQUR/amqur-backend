@@ -18,6 +18,7 @@
  *
  * It never configures a credit-application destination; use `npm run credit:destination`.
  */
+import { isProductionTier } from '../src/config/deployment-tier';
 import { PrismaClient, Role } from '@prisma/client';
 import { seedDisabledAppointmentReminderCampaign } from '../src/messaging/seed-appointment-reminder-campaign';
 import { seedDisabledPostSaleCampaign } from '../src/messaging/seed-post-sale-campaign';
@@ -41,8 +42,8 @@ async function main() {
     );
     process.exit(1);
   }
-  if (process.env.NODE_ENV === 'production') {
-    console.error('Refusing to seed demo data with NODE_ENV=production.');
+  if (isProductionTier()) {
+    console.error('Refusing to seed demo data in the production deployment tier.');
     process.exit(1);
   }
   const cfg = JSON.parse(
@@ -125,6 +126,44 @@ async function main() {
     locationId: location.id,
   });
 
+  // SANDBOX scheduler connection (demo only). The adapter is registered only outside
+  // production and still needs this enabled connection plus the sandboxScheduler flag.
+  const sandboxScheduler =
+    cfg.featureFlags.sandboxScheduler === true &&
+    !isProductionTier();
+  const sandboxConn = await prisma.integrationConnection.findFirst({
+    where: {
+      tenantId: tenant.id,
+      locationId: location.id,
+      provider: 'MOCK',
+      capability: 'appointments',
+    },
+    select: { id: true },
+  });
+  const sandboxData = {
+    enabled: sandboxScheduler,
+    liveReady: sandboxScheduler,
+    config: {
+      mode: 'sandbox',
+      note: 'SANDBOX demo scheduler — not a real DMS',
+    },
+  };
+  if (sandboxConn)
+    await prisma.integrationConnection.update({
+      where: { id: sandboxConn.id },
+      data: sandboxData,
+    });
+  else if (sandboxScheduler)
+    await prisma.integrationConnection.create({
+      data: {
+        tenantId: tenant.id,
+        locationId: location.id,
+        provider: 'MOCK',
+        capability: 'appointments',
+        ...sandboxData,
+      },
+    });
+
   const now = new Date();
   for (const v of VEHICLES) {
     const data = {
@@ -197,6 +236,9 @@ async function main() {
         inventory: 'SIMULATED (source=synthetic_demo)',
         hours: 'synthetic demo hours (labeled to customers)',
         appointments: 'REQUEST records enabled',
+        scheduler: sandboxScheduler
+          ? 'SANDBOX demo scheduler (SBX- references, labelled; not a real scheduler)'
+          : 'none (requests only)',
         appointmentReminderCampaign: {
           id: appointmentReminderCampaign.id,
           enabled: appointmentReminderCampaign.enabled,

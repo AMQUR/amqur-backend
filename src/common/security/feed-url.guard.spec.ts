@@ -1,11 +1,17 @@
 import { assertFeedUrlAllowed } from './feed-url.guard';
 
 describe('assertFeedUrlAllowed', () => {
-  const prev = process.env.INVENTORY_FEED_ALLOWED_HOSTS;
+  const prevHosts = process.env.INVENTORY_FEED_ALLOWED_HOSTS;
+  const prevTier = process.env.DEPLOYMENT_TIER;
+  const prevNode = process.env.NODE_ENV;
 
   afterEach(() => {
-    process.env.INVENTORY_FEED_ALLOWED_HOSTS = prev;
-    process.env.NODE_ENV = 'development';
+    if (prevHosts === undefined)
+      delete process.env.INVENTORY_FEED_ALLOWED_HOSTS;
+    else process.env.INVENTORY_FEED_ALLOWED_HOSTS = prevHosts;
+    if (prevTier === undefined) delete process.env.DEPLOYMENT_TIER;
+    else process.env.DEPLOYMENT_TIER = prevTier;
+    process.env.NODE_ENV = prevNode ?? 'development';
   });
 
   it('rejects private IP hosts', () => {
@@ -16,10 +22,20 @@ describe('assertFeedUrlAllowed', () => {
 
   it('rejects non-https in production', () => {
     process.env.NODE_ENV = 'production';
-    process.env.INVENTORY_FEED_ALLOWED_HOSTS = '';
+    process.env.DEPLOYMENT_TIER = 'production';
+    process.env.INVENTORY_FEED_ALLOWED_HOSTS = 'feeds.example.com';
     expect(() =>
       assertFeedUrlAllowed('http://feeds.example.com/x.xml'),
     ).toThrow(/HTTPS/i);
+  });
+
+  it('requires allowlist on hosted tiers', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.DEPLOYMENT_TIER = 'staging';
+    process.env.INVENTORY_FEED_ALLOWED_HOSTS = '';
+    expect(() =>
+      assertFeedUrlAllowed('https://feeds.example.com/x.xml'),
+    ).toThrow(/INVENTORY_FEED_ALLOWED_HOSTS is required/);
   });
 
   it('enforces host allowlist when configured', () => {

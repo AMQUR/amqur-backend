@@ -47,3 +47,18 @@ describe('Command Center API client', () => {
     expect(restored).toBe(false);
   });
 });
+
+describe('acting dealership', () => {
+  it('adds tenantId only to CRM Workforce calls, never to switching or group stop', async () => {
+    const { setActingTenant, withActingTenant } = await import('./api');
+    expect(withActingTenant('/ops/crm-workforce/status?locationId=a')).toBe('/ops/crm-workforce/status?locationId=a');
+    setActingTenant('t2');
+    expect(withActingTenant('/ops/crm-workforce/status?locationId=a')).toBe('/ops/crm-workforce/status?locationId=a&tenantId=t2');
+    expect(withActingTenant('/ops/crm-workforce/admin/staff')).toBe('/ops/crm-workforce/admin/staff?tenantId=t2');
+    expect(withActingTenant('/ops/crm-workforce/admin/my-dealerships')).toBe('/ops/crm-workforce/admin/my-dealerships');
+    expect(withActingTenant('/ops/crm-workforce/admin/group-stop')).toBe('/ops/crm-workforce/admin/group-stop');
+    expect(withActingTenant('/leads?x=1')).toBe('/leads?x=1');
+    expect(withActingTenant('/ops/crm-workforce/status?tenantId=t9')).toBe('/ops/crm-workforce/status?tenantId=t9');
+    setActingTenant(null);
+  });
+});
