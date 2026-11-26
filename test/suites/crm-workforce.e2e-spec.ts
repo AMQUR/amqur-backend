@@ -3372,7 +3372,12 @@ describe('CRM Workforce (e2e)', () => {
         })
         .expect(401);
       const log = unwrap<
-        Array<{ action: string; email: string | null; reason: string | null }>
+        Array<{
+          action: string;
+          email: string | null;
+          subjectEmail: string | null;
+          reason: string | null;
+        }>
       >((await api('nissan').get('admin/access-log').expect(200)).body);
       const mine = log
         .filter(
