@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { dealerDirectoryFor } from '../dealer-directory/dealer-directory';
 import { StoreHoursService } from '../locations/store-hours.service';
 import { SpotlightsService } from '../spotlights/spotlights.service';
+import { DealerKnowledgeService } from '../dealer-knowledge/dealer-knowledge.service';
 import { Department, VerifiedFact } from './crm-workforce.types';
 import { LeadView as CrmWfLead } from './vault.service';
 
@@ -24,6 +25,7 @@ export class CrmWfFactsService {
     private readonly prisma: PrismaService,
     private readonly hours: StoreHoursService,
     private readonly spotlights: SpotlightsService,
+    private readonly knowledge: DealerKnowledgeService,
   ) {}
 
   /**
@@ -92,6 +94,8 @@ export class CrmWfFactsService {
     facts: VerifiedFact[];
     appointmentConfirmed: boolean;
     vehicleAvailable: boolean | null;
+    /** Approved store guidance for this department (management-written, rules still win). */
+    guidance: string[];
   }> {
     const facts: VerifiedFact[] = [];
     const rooftopId = lead.locationId;
@@ -265,6 +269,39 @@ export class CrmWfFactsService {
         rooftopId,
       });
 
-    return { facts, appointmentConfirmed, vehicleAvailable };
+    // Approved store knowledge from the shared layer: policies and department contacts become
+    // facts; store guidance is returned separately. Stale, expired and unapproved entries never.
+    const guidance: string[] = [];
+    for (const e of await this.knowledge.activeEntries(
+      lead.tenantId,
+      lead.locationId,
+      [
+        'POLICY',
+        'DEPARTMENT_MANAGER',
+        'ESCALATION_CONTACT',
+        'AGENT_INSTRUCTION',
+      ],
+      now,
+    )) {
+      if (e.department && e.department !== lead.department) continue;
+      if (e.kind === 'AGENT_INSTRUCTION') {
+        guidance.push(e.body.slice(0, 600));
+        continue;
+      }
+      const d = (e.data ?? {}) as { name?: string; role?: string };
+      facts.push({
+        kind: e.kind === 'POLICY' ? 'policy' : 'contact',
+        // Contacts: name and role only — never their phone or e-mail in a customer message.
+        text:
+          e.kind === 'POLICY'
+            ? `${e.title}: ${e.body.slice(0, 500)}`
+            : `${(e.department ?? 'store').toLowerCase()} ${e.kind === 'DEPARTMENT_MANAGER' ? 'manager' : 'escalation contact'}: ${d.name ?? e.title}${d.role ? ` (${d.role})` : ''}`,
+        sourceRecordId: `knowledge:${e.id}`,
+        asOf: e.verifiedAt.toISOString(),
+        verified: true,
+        rooftopId,
+      });
+    }
+    return { facts, appointmentConfirmed, vehicleAvailable, guidance };
   }
 }

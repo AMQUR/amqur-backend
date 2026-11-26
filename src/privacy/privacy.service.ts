@@ -16,9 +16,51 @@ function normPhone(p?: string) {
  * Audit logs and consent evidence are retained (pseudonymized endpoint hashes) because
  * policy requires proof of consent/opt-out history.
  */
+/**
+ * A module that holds customer data of its own (e.g. CRM Workforce) registers here so that a
+ * platform-wide export or deletion covers its tables too. Contributors keep whatever records
+ * the law requires after deletion (for example an opt-out suppression hash).
+ */
+export type PrivacyContributor = {
+  key: string;
+  export(
+    tenantId: string,
+    actorId: string,
+    q: { email?: string; phone?: string },
+  ): Promise<unknown>;
+  erase(
+    tenantId: string,
+    actorId: string,
+    q: { email?: string; phone?: string },
+  ): Promise<unknown>;
+};
+
 @Injectable()
 export class PrivacyService {
+  private readonly contributors: PrivacyContributor[] = [];
   constructor(private readonly prisma: PrismaService) {}
+
+  register(c: PrivacyContributor) {
+    if (!this.contributors.some((x) => x.key === c.key))
+      this.contributors.push(c);
+  }
+
+  private async eachContributor(
+    fn: (c: PrivacyContributor) => Promise<unknown>,
+  ): Promise<Record<string, unknown>> {
+    const out: Record<string, unknown> = {};
+    for (const c of this.contributors) {
+      try {
+        out[c.key] = await fn(c);
+      } catch (e) {
+        // Reported, never hidden: an incomplete request must be visible to the operator.
+        out[c.key] = {
+          error: e instanceof Error ? e.message.slice(0, 160) : 'failed',
+        };
+      }
+    }
+    return out;
+  }
 
   private where(tenantId: string, q: { email?: string; phone?: string }) {
     const email = normEmail(q.email);
@@ -101,6 +143,9 @@ export class PrivacyService {
     q: { email?: string; phone?: string },
   ) {
     const data = await this.lookup(tenantId, q);
+    const modules = await this.eachContributor((c) =>
+      c.export(tenantId, actorId, q),
+    );
     await this.prisma.auditLog.create({
       data: {
         tenantId,
@@ -109,10 +154,11 @@ export class PrivacyService {
         metadata: {
           leads: data.leads.length,
           conversations: data.conversations.length,
+          modules: Object.keys(modules),
         },
       },
     });
-    return { exportedAt: new Date().toISOString(), ...data };
+    return { exportedAt: new Date().toISOString(), ...data, modules };
   }
 
   /** Deletion request: remove message content and contact PII; keep non-identifying business records. */
@@ -204,10 +250,14 @@ export class PrivacyService {
         },
       },
     });
+    const modules = await this.eachContributor((c) =>
+      c.erase(tenantId, actorId, q),
+    );
     return {
       ok: true,
       conversations: convIds.length,
       leads: data.leads.length,
+      modules,
     };
   }
 }

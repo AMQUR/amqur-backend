@@ -147,6 +147,7 @@ export function TeamTab({ isAdmin, actingRole, locations, crossDealership = fals
                     <td className="row">
                       {can && <button className="btn btn--ghost" disabled={a.busy} onClick={() => { if (window.confirm(`Reset ${p.firstName}'s password? They are signed out everywhere and need the new link to get back in.`)) void a.act(async () => show(`${p.firstName} ${p.lastName}`, await post<{ link: string; expiresAt: string }>(`admin/staff/${p.id}/reset`)), 'Password reset; they are signed out.'); }}>{p.isActive ? 'Reset password' : 'New link'}</button>}
                       {can && p.isActive && <button className="btn btn--ghost" disabled={a.busy} onClick={() => { if (window.confirm(`Deactivate ${p.firstName}? They are signed out at once.`)) void a.act(() => post(`admin/staff/${p.id}/deactivate`), 'Deactivated.'); }}>Deactivate</button>}
+                      {can && <button className="btn btn--ghost" disabled={a.busy} onClick={() => { const reason = window.prompt(`Offboard ${p.firstName}? This ends every session, removes group access, resets their authenticator, returns their open items to the queue and retires their directory entries. Reason (kept in the audit ledger):`) ?? ''; if (reason.trim().length >= 5) void a.act(() => post(`admin/staff/${p.id}/offboard`, { reason }), 'Offboarded.'); }}>Offboard</button>}
                       {can && !p.isActive && !p.pending && <button className="btn btn--ghost" disabled={a.busy} onClick={() => void a.act(() => post(`admin/staff/${p.id}/reactivate`), 'Reactivated.')}>Reactivate</button>}
                       {self && <span className="muted small">change your own account under Security</span>}
                     </td>
@@ -256,6 +257,61 @@ export function PolicyCard() {
           <p className="muted small">To change it, send the counsel-approved wording and limits to the platform operator; the change is recorded with the approving document.</p>
         </>
       )}
+    </Card>
+  );
+}
+
+type AccessRow = { id: string; action: string; at: string; who: string | null; email: string | null; subject: string | null; subjectEmail: string | null; ip: string | null; reason: string | null };
+const ACCESS_LABEL: Record<string, string> = {
+  'auth.login': 'Signed in', 'auth.login.failed': 'Failed sign-in', 'auth.login.password_ok_mfa_pending': 'Password accepted, waiting for authenticator', 'auth.mfa.failed': 'Wrong authenticator code', 'auth.mfa.recovery_code_used': 'Recovery code used', 'auth.logout_all': 'Signed out everywhere', 'auth.mfa.reset': 'Authenticator reset',
+  'crmwf.staff.invited': 'Invited', 'crmwf.staff.invite_accepted': 'Invitation accepted', 'crmwf.staff.password_set': 'Password reset completed', 'crmwf.staff.reset': 'Password reset issued', 'crmwf.staff.deactivated': 'Deactivated', 'crmwf.staff.reactivated': 'Reactivated', 'crmwf.staff.role_changed': 'Role changed', 'crmwf.staff.offboarded': 'Offboarded', 'crmwf.group_membership.granted': 'Group access granted',
+};
+
+/** Who signed in, who failed to, and every account change — last 30 days. Administrators. */
+export function AccessLogCard() {
+  const r = useAsync(() => api<AccessRow[]>(`${BASE}/admin/access-log?days=30`), []);
+  const failed = (r.data ?? []).filter((x) => x.action === 'auth.login.failed' || x.action === 'auth.mfa.failed').length;
+  return (
+    <Card title="Staff access log (30 days)">
+      <p className="muted small">Sign-ins, failed sign-ins and account changes at this dealership. Passwords and authenticator codes are never recorded. {failed ? `${failed} failed attempt(s).` : ''}</p>
+      <ErrorNote error={r.error} />
+      {!r.data ? <p aria-busy="true">Loading…</p> : !r.data.length ? <Empty>No access events recorded.</Empty> : (
+        <table className="table">
+          <thead><tr><th>When</th><th>Event</th><th>Person</th><th>Detail</th></tr></thead>
+          <tbody>{r.data.slice(0, 100).map((x) => (
+            <tr key={x.id}><td className="small">{fmtDate(x.at)}</td><td><Badge tone={/failed|reset|offboard|deactivat/.test(x.action) ? 'warn' : 'neutral'}>{ACCESS_LABEL[x.action] ?? x.action}</Badge></td><td className="small">{x.subject && x.subject !== x.who ? <>{x.subject}<div className="muted">by {x.who ?? 'the person'}</div></> : <>{x.who ?? '—'}<div className="muted">{x.email ?? ''}</div></>}</td><td className="small muted">{[x.reason?.replace(/_/g, ' '), x.ip].filter(Boolean).join(' · ')}</td></tr>
+          ))}</tbody>
+        </table>
+      )}
+    </Card>
+  );
+}
+
+type DeliveryStatus = { enabled: boolean; reason?: string; channel?: string; recipients?: number; schedule: Array<{ kind: string; weekday: number | null; minute: number }> };
+const hm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+
+/** Scheduled report delivery: state and an exact preview. Delivery is off until approval R14. */
+export function ReportDeliveryCard({ locationId }: { locationId: string }) {
+  const st = useAsync(() => api<DeliveryStatus>(`${BASE}/report-delivery`), []);
+  const [kind, setKind] = useState('morning');
+  const [text, setText] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <Card title="Scheduled reports">
+      <ErrorNote error={st.error ?? err} />
+      {st.data && (
+        <p>
+          {st.data.enabled ? <Badge tone="ok">delivering by {st.data.channel} to {st.data.recipients} destination(s)</Badge> : <Badge tone="neutral">not delivering — {st.data.reason}</Badge>}
+          <span className="muted small"> Schedule (Chicago time): {st.data.schedule.map((s) => `${s.kind.replace('_', ' ')} ${s.weekday !== null ? ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][s.weekday] + ' ' : ''}${hm(s.minute)}`).join(' · ')}</span>
+        </p>
+      )}
+      <div className="row">
+        <select value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Report">
+          <option value="morning">Morning</option><option value="midday">Midday</option><option value="end_of_day">End of day</option><option value="weekly">Weekly</option>
+        </select>
+        <button className="btn btn--ghost" disabled={!locationId} onClick={async () => { setErr(null); try { setText((await api<{ text: string }>(`${BASE}/report-delivery/preview?kind=${kind}&locationId=${encodeURIComponent(locationId)}`)).text); } catch (e) { setErr(e instanceof Error ? e.message : 'failed'); } }}>Preview what would be sent</button>
+      </div>
+      {text && <pre className="small" style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}
     </Card>
   );
 }

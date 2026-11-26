@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 /**
  * AMQUR CRM Workforce — critical-path integration suite (real Postgres + Redis, real Nest app).
  * The model gateway is stubbed (no model spend); the CRM is the synthetic fixture adapter.
@@ -14,6 +15,7 @@ import { CrmWfActionService } from '../../src/crm-workforce/action.service';
 import { CrmWfEngineService } from '../../src/crm-workforce/engine.service';
 import { CrmWfIntakeService } from '../../src/crm-workforce/intake.service';
 import { CrmWfPrivacyService } from '../../src/crm-workforce/privacy.service';
+import { CrmWfReportSchedulerService } from '../../src/crm-workforce/report-scheduler.service';
 import { CrmWfKeyRotationService } from '../../src/crm-workforce/key-rotation.service';
 import { CrmWfQueueService } from '../../src/crm-workforce/queue.service';
 import { CrmWfVaultService } from '../../src/crm-workforce/vault.service';
@@ -2916,6 +2918,544 @@ describe('CRM Workforce (e2e)', () => {
       expect(r.outcomes.deferred_halted).toBe(1);
       expect(adapters.fixture.executeCalls).toBe(0);
       expect(await actionsOf('nissan')).toHaveLength(0);
+    });
+  });
+
+  describe('shared dealership knowledge and inventory', () => {
+    const N = () => ids.nissan;
+    const managerId = async () =>
+      (
+        await ctx.prisma.user.findFirstOrThrow({
+          where: { tenantId: N().tenantId, role: 'MANAGER' },
+        })
+      ).id;
+    afterEach(async () => {
+      await ctx.prisma.dealerKnowledgeEntry.deleteMany({});
+      await ctx.prisma.vehicle.deleteMany({
+        where: { vin: { startsWith: 'TESTKNOW' } },
+      });
+      await ctx.prisma.location.update({
+        where: { id: N().locationId },
+        data: { escalationRecipients: null },
+      });
+    });
+    const propose = (
+      body: object,
+      role: 'admin' | 'manager' = 'manager',
+      k: 'nissan' | 'chevy' = 'nissan',
+    ) =>
+      api(k, role).post('knowledge/entries', {
+        locationId: ids[k].locationId,
+        source: 'GM by phone 2026-11-25',
+        ...body,
+      });
+
+    it('reports missing knowledge truthfully instead of guessing', async () => {
+      await ctx.prisma.location.update({
+        where: { id: N().locationId },
+        data: {
+          storeHours: Prisma.DbNull,
+          departmentHours: Prisma.DbNull,
+          storeHoursVerifiedAt: null,
+        },
+      });
+      const h = unwrap<{ items: Array<{ item: string; status: string }> }>(
+        (
+          await api('nissan', 'staff')
+            .get(`knowledge/health?locationId=${N().locationId}`)
+            .expect(200)
+        ).body,
+      );
+      const st = (re: RegExp) =>
+        h.items.filter((i) => re.test(i.item)).map((i) => i.status);
+      expect(st(/^Store hours$/)).toEqual(['MISSING']);
+      expect(st(/^Vehicle inventory$/)).toEqual(['BLOCKED']);
+      expect(st(/^Approved offers/)).toEqual(['MISSING']);
+      expect(st(/Sales escalation contact/)).toEqual(['MISSING']);
+      expect(st(/Manufacturer incentives/)).toEqual(['MISSING']);
+    });
+
+    it('validates entries, needs a second person to approve a manager proposal, and audits', async () => {
+      await propose({
+        kind: 'ESCALATION_CONTACT',
+        department: 'SALES',
+        title: 'Sales escalations',
+        body: 'GM handles complaints',
+        data: { name: 'Pat Example' },
+      }).expect(400);
+      await propose({
+        kind: 'ESCALATION_CONTACT',
+        department: 'SALES',
+        title: 'Sales escalations',
+        body: 'x',
+        data: { name: 'Pat Example', email: 'not-an-email' },
+      }).expect(400);
+      await api('nissan', 'staff')
+        .post('knowledge/entries', {
+          locationId: N().locationId,
+          kind: 'POLICY',
+          title: 'Returns',
+          body: 'No returns',
+          source: 'handbook',
+        })
+        .expect(403);
+      const e = unwrap<{ id: string }>(
+        (
+          await propose({
+            kind: 'ESCALATION_CONTACT',
+            department: 'SALES',
+            title: 'Sales escalations',
+            body: 'Complaints and requests for a manager',
+            data: {
+              name: 'Pat Example',
+              role: 'General Sales Manager',
+              email: 'pat@example.invalid',
+            },
+          }).expect(201)
+        ).body,
+      );
+      await api('nissan', 'manager')
+        .post(`knowledge/entries/${e.id}/review`, { approve: true })
+        .expect(403);
+      await api('nissan')
+        .post(`knowledge/entries/${e.id}/review`, { approve: true })
+        .expect(201);
+      await api('nissan')
+        .post(`knowledge/entries/${e.id}/review`, { approve: true })
+        .expect(400);
+      expect(
+        await ctx.prisma.auditLog.count({
+          where: {
+            resourceId: e.id,
+            action: { in: ['knowledge.proposed', 'knowledge.approved'] },
+          },
+        }),
+      ).toBe(2);
+      // Another dealership cannot see or touch it.
+      await api('chevy').post(`knowledge/entries/${e.id}/retire`).expect(404);
+      const chevy = unwrap<unknown[]>(
+        (
+          await api('chevy')
+            .get(`knowledge/entries?locationId=${ids.chevy.locationId}`)
+            .expect(200)
+        ).body,
+      );
+      expect(chevy).toHaveLength(0);
+      // Applying it to the Concierge is an explicit administrator step.
+      await api('nissan', 'manager')
+        .post(
+          `knowledge/apply-escalation-recipients?locationId=${N().locationId}`,
+        )
+        .expect(403);
+      await api('nissan')
+        .post(
+          `knowledge/apply-escalation-recipients?locationId=${N().locationId}`,
+        )
+        .expect(201);
+      expect(
+        (
+          await ctx.prisma.location.findUniqueOrThrow({
+            where: { id: N().locationId },
+          })
+        ).escalationRecipients,
+      ).toBe('pat@example.invalid');
+      expect(await managerId()).toBeTruthy();
+    });
+
+    it('drafts use only approved, current knowledge: guidance and contacts yes, expired or pending never', async () => {
+      await api('nissan')
+        .post('controls', {
+          scope: 'LOCATION',
+          locationId: N().locationId,
+          mode: 'ASSIST',
+          reason: 'assist',
+        })
+        .expect(201);
+      await api('nissan')
+        .post('connectors', {
+          locationId: N().locationId,
+          adapterKey: 'manual_assist',
+          enabled: true,
+        })
+        .expect(201);
+      const approve = async (body: object) => {
+        const e = unwrap<{ id: string }>(
+          (await propose(body).expect(201)).body,
+        );
+        await api('nissan')
+          .post(`knowledge/entries/${e.id}/review`, { approve: true })
+          .expect(201);
+        return e.id;
+      };
+      await approve({
+        kind: 'AGENT_INSTRUCTION',
+        department: 'SALES',
+        title: 'Tone',
+        body: 'Offer a test drive when the customer asks about a specific vehicle.',
+      });
+      await approve({
+        kind: 'DEPARTMENT_MANAGER',
+        department: 'SALES',
+        title: 'Sales manager',
+        body: 'Sales manager',
+        data: {
+          name: 'Robin Example',
+          role: 'Sales Manager',
+          email: 'robin@example.invalid',
+          phone: '312-555-0144',
+        },
+      });
+      const stale = await approve({
+        kind: 'POLICY',
+        title: 'Old policy',
+        body: 'Superseded wording',
+      });
+      await ctx.prisma.dealerKnowledgeEntry.update({
+        where: { id: stale },
+        data: { verifiedAt: new Date(Date.now() - 400 * 86_400_000) },
+      });
+      await propose({
+        kind: 'AGENT_INSTRUCTION',
+        department: 'SALES',
+        title: 'Unapproved',
+        body: 'Tell everyone the price is negotiable.',
+      }).expect(201);
+      await approve({
+        kind: 'AGENT_INSTRUCTION',
+        department: 'SERVICE',
+        title: 'Service only',
+        body: 'Mention the shuttle.',
+      });
+      const lead = unwrap<{ id: string }>(
+        (
+          await api('nissan', 'staff')
+            .post('assist/leads', {
+              locationId: N().locationId,
+              department: 'SALES',
+              firstName: 'Test',
+              customerMessage: 'Is the Rogue still available?',
+            })
+            .expect(201)
+        ).body,
+      ).id;
+      route.mockClear();
+      await api('nissan', 'staff').post(`leads/${lead}/draft`, {}).expect(201);
+      const prompt = JSON.stringify(route.mock.calls[0][0]);
+      expect(prompt).toContain('Offer a test drive');
+      expect(prompt).toContain('Robin Example (Sales Manager)');
+      expect(prompt).not.toContain('robin@example.invalid');
+      expect(prompt).not.toContain('555-0144');
+      expect(prompt).not.toContain('Superseded wording');
+      expect(prompt).not.toContain('price is negotiable');
+      expect(prompt).not.toContain('shuttle');
+      const h = unwrap<{ items: Array<{ item: string; status: string }> }>(
+        (
+          await api('nissan')
+            .get(`knowledge/health?locationId=${N().locationId}`)
+            .expect(200)
+        ).body,
+      );
+      expect(h.items.find((i) => /Old policy/.test(i.item))?.status).toBe(
+        'STALE',
+      );
+      await ctx.prisma.crmWfControl.deleteMany({
+        where: { tenantId: N().tenantId },
+      });
+    });
+
+    it('inventory lookup is store-scoped and shows recorded status; feeds name the missing dependency', async () => {
+      const base = {
+        tenantId: N().tenantId,
+        year: 2025,
+        make: 'Nissan',
+        model: 'Rogue',
+        freshnessState: 'FRESH' as const,
+        lastSeenAt: new Date(),
+        source: 'vauto_feed',
+      };
+      await ctx.prisma.vehicle.create({
+        data: {
+          ...base,
+          vin: 'TESTKNOW000000001',
+          stock: 'N1001',
+          locationId: N().locationId,
+          status: 'AVAILABLE',
+        },
+      });
+      await ctx.prisma.vehicle.create({
+        data: {
+          ...base,
+          tenantId: ids.chevy.tenantId,
+          vin: 'TESTKNOW000000002',
+          stock: 'C2002',
+          locationId: ids.chevy.locationId,
+          make: 'Chevrolet',
+          model: 'Tahoe',
+          status: 'AVAILABLE',
+        },
+      });
+      const byStock = unwrap<{
+        by: string;
+        results: Array<{ vin: string; status: string }>;
+      }>(
+        (
+          await api('nissan', 'staff')
+            .get(`inventory/lookup?q=N1001&locationId=${N().locationId}`)
+            .expect(200)
+        ).body,
+      );
+      expect(byStock).toMatchObject({
+        by: 'stock',
+        results: [{ vin: 'TESTKNOW000000001', status: 'AVAILABLE' }],
+      });
+      const other = unwrap<{ results: unknown[] }>(
+        (
+          await api('nissan', 'staff')
+            .get(`inventory/lookup?q=C2002&locationId=${N().locationId}`)
+            .expect(200)
+        ).body,
+      );
+      expect(other.results).toHaveLength(0);
+      const byVin = unwrap<{ by: string; results: unknown[] }>(
+        (
+          await api('nissan', 'staff')
+            .get(
+              `inventory/lookup?q=TESTKNOW000000002&locationId=${N().locationId}`,
+            )
+            .expect(200)
+        ).body,
+      );
+      expect(byVin.results).toHaveLength(0);
+      await api('nissan', 'staff')
+        .get(`inventory/lookup?q=x&locationId=${N().locationId}`)
+        .expect(400);
+      const feeds = unwrap<{ syncEnabled: boolean; feeds: unknown[] }>(
+        (
+          await api('nissan', 'staff')
+            .get(`inventory/feeds?locationId=${N().locationId}`)
+            .expect(200)
+        ).body,
+      );
+      expect(feeds.syncEnabled).toBe(false);
+    });
+  });
+
+  describe('operations hardening: privacy coverage, offboarding, access log, report delivery', () => {
+    it('the platform-wide privacy export and deletion include CRM Workforce data and keep the opt-out', async () => {
+      const r = rec({
+        sourceRecordId: 'PLATFORM-PRIV-1',
+        inbound: 'STOP',
+        outboundHoursAgo: 5,
+      });
+      await intake.ingest(scope('nissan'), 'fixture', [r]);
+      const exp = unwrap<{ modules: { crmWorkforce: { records: unknown[] } } }>(
+        (
+          await http()
+            .post('/api/privacy/export')
+            .set('Authorization', `Bearer ${ids.nissan.admin}`)
+            .send({ phone: r.phone })
+            .expect(201)
+        ).body,
+      );
+      expect(exp.modules.crmWorkforce.records).toHaveLength(1);
+      const del = unwrap<{ modules: { crmWorkforce: unknown } }>(
+        (
+          await http()
+            .post('/api/privacy/delete')
+            .set('Authorization', `Bearer ${ids.nissan.admin}`)
+            .send({ phone: r.phone })
+            .expect(201)
+        ).body,
+      );
+      expect(JSON.stringify(del.modules.crmWorkforce)).not.toContain('error');
+      expect(
+        await ctx.prisma.crmWfLead.count({
+          where: {
+            tenantId: ids.nissan.tenantId,
+            sourceRecordId: 'PLATFORM-PRIV-1',
+          },
+        }),
+      ).toBe(0);
+      const h = ctx.app.get(CrmWfVaultService).endpoint('SMS', r.phone)!.hash;
+      expect(
+        await ctx.prisma.crmWfSuppression.count({
+          where: { tenantId: ids.nissan.tenantId, endpointHash: h },
+        }),
+      ).toBeGreaterThan(0);
+    });
+
+    it('offboarding ends sessions, removes group access, returns work and is audited; access log records failed sign-ins', async () => {
+      await ctx.prisma.user.deleteMany({
+        where: { email: 'invited-off@example.invalid' },
+      });
+      const inv = unwrap<{ userId: string; link: string }>(
+        (
+          await api('nissan')
+            .post('admin/staff/invite', {
+              email: 'invited-off@example.invalid',
+              firstName: 'Off',
+              lastName: 'Boarded',
+              role: 'STAFF',
+              locationId: ids.nissan.locationId,
+            })
+            .expect(201)
+        ).body,
+      );
+      const token = new URL(
+        'http://x' + inv.link.replace('#/', ''),
+      ).searchParams.get('token')!;
+      await http()
+        .post('/api/public/crm-workforce/staff-link/accept')
+        .send({ token, password: 'offboard-password-1' })
+        .expect(201);
+      await http()
+        .post('/api/auth/login')
+        .send({
+          email: 'invited-off@example.invalid',
+          password: 'offboard-password-1',
+          tenantSlug: 'crmwf-nissan',
+        })
+        .expect(201);
+      await http()
+        .post('/api/auth/login')
+        .send({
+          email: 'invited-off@example.invalid',
+          password: 'wrong-password-xx',
+          tenantSlug: 'crmwf-nissan',
+        })
+        .expect(401);
+      const group = await ctx.prisma.dealerGroup.upsert({
+        where: { slug: 'crmwf-test-group' },
+        create: { slug: 'crmwf-test-group', name: 'CRMWF Test Group' },
+        update: {},
+      });
+      await ctx.prisma.dealerGroupMembership.create({
+        data: {
+          dealerGroupId: group.id,
+          userId: inv.userId,
+          role: 'GROUP_VIEWER',
+        },
+      });
+      await api('nissan')
+        .post(`admin/staff/${inv.userId}/offboard`, { reason: 'x' })
+        .expect(400);
+      await api('nissan', 'manager')
+        .post(`admin/staff/${inv.userId}/offboard`, {
+          reason: 'left the company',
+        })
+        .expect(403);
+      const r = unwrap<{
+        sessionsEnded: number;
+        groupMembershipsRemoved: number;
+      }>(
+        (
+          await api('nissan')
+            .post(`admin/staff/${inv.userId}/offboard`, {
+              reason: 'left the company',
+            })
+            .expect(201)
+        ).body,
+      );
+      expect(r.sessionsEnded).toBeGreaterThanOrEqual(1);
+      expect(r.groupMembershipsRemoved).toBe(1);
+      expect(
+        await ctx.prisma.refreshToken.count({
+          where: { userId: inv.userId, revokedAt: null },
+        }),
+      ).toBe(0);
+      await http()
+        .post('/api/auth/login')
+        .send({
+          email: 'invited-off@example.invalid',
+          password: 'offboard-password-1',
+          tenantSlug: 'crmwf-nissan',
+        })
+        .expect(401);
+      const log = unwrap<
+        Array<{ action: string; email: string | null; reason: string | null }>
+      >((await api('nissan').get('admin/access-log').expect(200)).body);
+      const mine = log
+        .filter(
+          (x) =>
+            x.email === 'invited-off@example.invalid' ||
+            x.subjectEmail === 'invited-off@example.invalid',
+        )
+        .map((x) => x.action);
+      expect(mine).toEqual(
+        expect.arrayContaining([
+          'auth.login',
+          'auth.login.failed',
+          'crmwf.staff.offboarded',
+        ]),
+      );
+      expect(JSON.stringify(log)).not.toMatch(
+        /offboard-password|wrong-password/,
+      );
+      await api('nissan', 'manager').get('admin/access-log').expect(403);
+      await api('chevy')
+        .get('admin/access-log')
+        .then((x) =>
+          expect(JSON.stringify(x.body)).not.toContain(
+            'invited-off@example.invalid',
+          ),
+        );
+      await ctx.prisma.user.deleteMany({
+        where: { email: 'invited-off@example.invalid' },
+      });
+    });
+
+    it('scheduled reports are off by default and, when on, each report is delivered once however often the tick runs', async () => {
+      const sched = ctx.app.get(CrmWfReportSchedulerService);
+      expect((await sched.tick(new Date('2026-12-01T13:40:00Z'))).sent).toBe(0);
+      const saved = { ...process.env };
+      Object.assign(process.env, {
+        CRM_WORKFORCE_REPORTS_ENABLED: 'true',
+        CRM_WORKFORCE_REPORT_CHANNEL: 'webhook',
+        CRM_WORKFORCE_REPORT_WEBHOOK_URL: 'https://hooks.example.invalid/x',
+      });
+      try {
+        await ctx.prisma.auditLog.deleteMany({
+          where: {
+            action: { in: ['crmwf.report.sent', 'crmwf.report.failed'] },
+          },
+        });
+        await ctx.prisma.tenant.update({
+          where: { id: ids.nissan.tenantId },
+          data: { featureFlags: { crmWorkforce: true } },
+        });
+        const sent: string[] = [];
+        const send = async (_c: unknown, subject: string, text: string) => {
+          expect(text).not.toMatch(/@|\d{3}-\d{3}-\d{4}/);
+          sent.push(subject);
+        };
+        const at = new Date('2026-12-01T13:40:00Z'); // 07:40 Chicago
+        await Promise.all([
+          sched.tick(at, send),
+          sched.tick(at, send),
+          sched.tick(new Date(at.getTime() + 600_000), send),
+        ]);
+        expect(sent.filter((x) => x.startsWith('CRMWF nissan'))).toHaveLength(
+          1,
+        );
+        const p = unwrap<{ text: string }>(
+          (
+            await api('nissan', 'manager')
+              .get(
+                `report-delivery/preview?kind=morning&locationId=${ids.nissan.locationId}`,
+              )
+              .expect(200)
+          ).body,
+        );
+        expect(p.text).toContain('morning report');
+      } finally {
+        for (const k of [
+          'CRM_WORKFORCE_REPORTS_ENABLED',
+          'CRM_WORKFORCE_REPORT_CHANNEL',
+          'CRM_WORKFORCE_REPORT_WEBHOOK_URL',
+        ])
+          if (saved[k] === undefined) delete process.env[k];
+          else process.env[k] = saved[k];
+      }
     });
   });
 

@@ -1061,9 +1061,9 @@ model OutboxEvent {
   publishedAt   DateTime?
 
   /// Lease for multi-worker safe claiming (FOR UPDATE SKIP LOCKED)
-  claimedAt      DateTime?
-  claimedBy      String?
-  leaseExpiresAt DateTime?
+  claimedAt        DateTime?
+  claimedBy        String?
+  leaseExpiresAt   DateTime?
   /// Set when THIS claim's handler started (after an ownership re-check). NULL = claimed only.
   handlerStartedAt DateTime?
 
@@ -2952,8 +2952,8 @@ model CrmWfWorkItem {
 model CrmWfStaffToken {
   id String @id @default(cuid())
 
-  tenantId String
-  userId   String
+  tenantId  String
+  userId    String
   /// INVITE | RESET
   purpose   String
   tokenHash String    @unique
@@ -2966,4 +2966,40 @@ model CrmWfStaffToken {
   createdAt DateTime @default(now())
 
   @@index([tenantId, userId])
+}
+
+/// Dealership knowledge that has no other home in the platform: staff directory, department
+/// managers, escalation contacts, customer policies and store guidance for agents. Each entry
+/// carries its source, verification date, approval state and expiry. Hours (Location), offers
+/// (Spotlight), inventory (Vehicle) and the verified dealer directory keep their existing homes;
+/// DealerKnowledgeService reads all of them as one layer for both the Concierge and CRM Workforce.
+model DealerKnowledgeEntry {
+  id           String    @id @default(cuid())
+  tenantId     String
+  locationId   String
+  /// SALES | SERVICE | PARTS, or null for the whole store
+  department   String?
+  /// STAFF_MEMBER | DEPARTMENT_MANAGER | ESCALATION_CONTACT | POLICY | AGENT_INSTRUCTION
+  kind         String
+  title        String
+  body         String
+  /// Kind-specific fields, e.g. { name, role, email, phone, handles: ["COMPLAINT"] }
+  data         Json?
+  /// Where the fact comes from, e.g. "GM by phone 2026-11-25", "dealer handbook p.4"
+  source       String
+  /// PROPOSED | APPROVED | REJECTED | RETIRED
+  status       String    @default("PROPOSED")
+  verifiedAt   DateTime  @default(now())
+  /// Re-verify after this many days; older approved entries are STALE and not given to agents
+  reviewByDays Int       @default(90)
+  expiresAt    DateTime?
+  proposedById String?
+  approvedById String?
+  approvedAt   DateTime?
+  reviewNote   String?
+  supersedesId String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([tenantId, locationId, kind, status])
 }

@@ -55,6 +55,11 @@ import { CrmWfIntakeService } from './intake.service';
 import { CrmWfLeadControlService } from './lead-control.service';
 import { CrmWfPrivacyService } from './privacy.service';
 import { CrmWfKeyRotationService } from './key-rotation.service';
+import { DealerKnowledgeService } from '../dealer-knowledge/dealer-knowledge.service';
+import { InventoryEngine } from '../chat/engines/inventory.engine';
+import { feedStatusForStore } from './inventory-feeds';
+import { CrmWfReportSchedulerService } from './report-scheduler.service';
+import { REPORT_KINDS, type ReportKind } from './director.service';
 import { CrmWfQueueService } from './queue.service';
 import { CrmWfReadService } from './read.service';
 import { CrmWfSuppressionService } from './suppression.service';
@@ -205,6 +210,37 @@ class InviteDto {
   @IsOptional() @IsString() @MaxLength(64) locationId?: string;
   @IsOptional() @IsString() @MaxLength(300) reason?: string;
 }
+class KnowledgeDto {
+  @IsString() @MaxLength(64) locationId!: string;
+  @IsOptional() @IsIn(['SALES', 'SERVICE', 'PARTS']) department?: string;
+  @IsIn([
+    'STAFF_MEMBER',
+    'DEPARTMENT_MANAGER',
+    'ESCALATION_CONTACT',
+    'POLICY',
+    'AGENT_INSTRUCTION',
+  ])
+  kind!: string;
+  @IsString() @MinLength(2) @MaxLength(160) title!: string;
+  @IsString() @MinLength(2) @MaxLength(4000) body!: string;
+  @IsOptional() @IsObject() data?: Record<string, unknown>;
+  @IsString() @MinLength(3) @MaxLength(300) source!: string;
+  @IsOptional() @IsString() @MaxLength(40) expiresAt?: string;
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(7)
+  @Max(365)
+  reviewByDays?: number;
+  @IsOptional() @IsString() @MaxLength(64) supersedesId?: string;
+}
+class KnowledgeReviewDto {
+  @IsBoolean() approve!: boolean;
+  @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+class OffboardDto {
+  @IsString() @MinLength(5) @MaxLength(300) reason!: string;
+}
 class RoleDto {
   @IsIn(['STAFF', 'MANAGER', 'ADMIN']) role!: 'STAFF' | 'MANAGER' | 'ADMIN';
   @IsOptional() @IsString() @MaxLength(64) locationId?: string;
@@ -297,6 +333,9 @@ export class CrmWorkforceController {
     private readonly prisma: PrismaService,
     private readonly privacy: CrmWfPrivacyService,
     private readonly keys: CrmWfKeyRotationService,
+    private readonly knowledge: DealerKnowledgeService,
+    private readonly inventory: InventoryEngine,
+    private readonly reportsSched: CrmWfReportSchedulerService,
     private readonly importer: CrmWfImportService,
     private readonly assist: CrmWfAssistService,
     private readonly items: CrmWfWorkItemService,
@@ -1117,6 +1156,35 @@ export class CrmWorkforceController {
       true,
     );
   }
+  /** One-step employee offboarding (see CrmWfStaffService.offboard). */
+  @Roles(...ADMINS)
+  @Post('admin/staff/:id/offboard')
+  offboard(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: OffboardDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.staff.offboard(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      id,
+      dto.reason,
+    );
+  }
+  @Roles(...ADMINS)
+  @Get('admin/access-log')
+  accessLog(
+    @CurrentUser() u: AuthUser,
+    @Query('days') days?: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.staff.accessLog(
+      this.actor(u),
+      this.scope(u, t).tenantId,
+      Number(days) || 30,
+    );
+  }
   @Roles(...ADMINS)
   @Post('admin/staff/:id/role')
   role(
@@ -1162,6 +1230,183 @@ export class CrmWorkforceController {
       { ...this.actor(u), homeTenantId: home },
       dto.halted,
       dto.reason,
+    );
+  }
+
+  // ── shared dealership knowledge ──────────────────────────────────────────
+  private kActor(u: AuthUser) {
+    return { ...this.actor(u), locationId: u.locationId ?? null };
+  }
+  /** What is missing, stale, expired, pending or conflicting for one store. */
+  @Roles(...STAFF)
+  @Get('knowledge/health')
+  knowledgeHealth(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, t, l);
+    if (!s.locationId) throw new BadRequestException('choose_a_rooftop');
+    return this.knowledge.health(s.tenantId, s.locationId);
+  }
+  /** Health counts for every store this person can open (own dealership or group). */
+  @Roles(...MANAGERS)
+  @Get('knowledge/group-health')
+  async knowledgeGroupHealth(@CurrentUser() u: AuthUser) {
+    const mine = await this.myDealerships(u);
+    return this.knowledge.groupHealth(mine.dealerships.map((d) => d.tenantId));
+  }
+  @Roles(...STAFF)
+  @Get('knowledge/entries')
+  knowledgeEntries(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, t, l);
+    if (!s.locationId) throw new BadRequestException('choose_a_rooftop');
+    return this.knowledge.list(s.tenantId, s.locationId);
+  }
+  @Roles(...MANAGERS)
+  @Post('knowledge/entries')
+  proposeKnowledge(
+    @CurrentUser() u: AuthUser,
+    @Body() dto: KnowledgeDto,
+    @Query('tenantId') t?: string,
+  ) {
+    const s = this.scope(u, t, dto.locationId);
+    return this.knowledge.propose(this.kActor(u), s.tenantId, {
+      ...dto,
+      locationId: s.locationId ?? dto.locationId,
+    });
+  }
+  @Roles(...MANAGERS)
+  @Post('knowledge/entries/:id/review')
+  reviewKnowledge(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: KnowledgeReviewDto,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.knowledge.review(
+      this.kActor(u),
+      this.scope(u, t).tenantId,
+      id,
+      dto.approve,
+      dto.note,
+    );
+  }
+  @Roles(...MANAGERS)
+  @Post('knowledge/entries/:id/reverify')
+  reverifyKnowledge(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.knowledge.reverify(
+      this.kActor(u),
+      this.scope(u, t).tenantId,
+      id,
+    );
+  }
+  @Roles(...MANAGERS)
+  @Post('knowledge/entries/:id/retire')
+  retireKnowledge(
+    @CurrentUser() u: AuthUser,
+    @Param('id') id: string,
+    @Query('tenantId') t?: string,
+  ) {
+    return this.knowledge.retire(this.kActor(u), this.scope(u, t).tenantId, id);
+  }
+  /** Copy approved escalation e-mails to the Concierge's escalation recipients for the store. */
+  @Roles(...ADMINS)
+  @Post('knowledge/apply-escalation-recipients')
+  applyEscalation(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, t, l);
+    if (!s.locationId) throw new BadRequestException('choose_a_rooftop');
+    return this.knowledge.applyEscalationRecipients(
+      this.kActor(u),
+      s.tenantId,
+      s.locationId,
+    );
+  }
+
+  // ── inventory (same Vehicle data as the Concierge) ──────────────────────
+  /** Staff lookup by VIN, stock number or search terms. Status is shown as recorded. */
+  @Roles(...STAFF)
+  @Get('inventory/lookup')
+  async inventoryLookup(
+    @CurrentUser() u: AuthUser,
+    @Query('q') q?: string,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, t, l);
+    const term = (q ?? '').trim().slice(0, 80);
+    if (term.length < 2)
+      throw new BadRequestException('enter_a_vin_stock_number_or_model');
+    if (/^[A-HJ-NPR-Z0-9]{17}$/i.test(term)) {
+      const v = await this.inventory.getVehicleByVin(s.tenantId, term);
+      return {
+        by: 'vin',
+        results:
+          v && (!s.locationId || v.locationId === s.locationId) ? [v] : [],
+      };
+    }
+    const byStock = await this.inventory.getVehicleByStock(s.tenantId, term);
+    if (byStock && (!s.locationId || byStock.locationId === s.locationId))
+      return { by: 'stock', results: [byStock] };
+    const [make, ...rest] = term.split(/\s+/);
+    const results = await this.inventory.searchVehicles({
+      tenantId: s.tenantId,
+      locationId: s.locationId,
+      make: rest.length ? make : undefined,
+      model: rest.length ? rest.join(' ') : undefined,
+      query: rest.length ? undefined : term,
+      limit: 20,
+    });
+    return { by: 'search', results };
+  }
+  /** The two expected feeds (new, used) for this store and whether data is arriving. */
+  @Roles(...STAFF)
+  @Get('inventory/feeds')
+  inventoryFeeds(
+    @CurrentUser() u: AuthUser,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    const s = this.scope(u, t, l);
+    if (!s.locationId) throw new BadRequestException('choose_a_rooftop');
+    return feedStatusForStore(this.prisma, s.tenantId, s.locationId);
+  }
+
+  // ── scheduled reports (delivery off until approval R14) ─────────────────
+  @Roles(...MANAGERS)
+  @Get('report-delivery')
+  reportDelivery() {
+    return this.reportsSched.status();
+  }
+  /** The exact text a scheduled report would deliver for this store, without sending it. */
+  @Roles(...MANAGERS)
+  @Get('report-delivery/preview')
+  reportPreview(
+    @CurrentUser() u: AuthUser,
+    @Query('kind') kind: string,
+    @Query('tenantId') t?: string,
+    @Query('locationId') l?: string,
+  ) {
+    if (!(REPORT_KINDS as readonly string[]).includes(kind))
+      throw new BadRequestException('unknown_report');
+    const s = this.scope(u, t, l);
+    if (!s.locationId) throw new BadRequestException('choose_a_rooftop');
+    return this.reportsSched.preview(
+      s.tenantId,
+      s.locationId,
+      kind as ReportKind,
     );
   }
 

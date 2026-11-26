@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api, session, setActingTenant } from '../api';
-import { CostLimitsCard, DealershipSwitcher, GroupStopCard, PolicyCard, TeamTab, type MyDealerships } from './CrmWorkforceAdmin';
+import { KnowledgeTab } from './CrmWorkforceKnowledge';
+import { AccessLogCard, ReportDeliveryCard, CostLimitsCard, DealershipSwitcher, GroupStopCard, PolicyCard, TeamTab, type MyDealerships } from './CrmWorkforceAdmin';
 import { ago, fmtDate, useAsync } from '../hooks';
 import { Badge, Card, Empty, ErrorNote, Stat } from '../ui';
 import { DirectorCard, ImportsTab, MiningTab, PrivacyCard, ReportsCard, RosterCard, WorkItemsTab, WorkspaceTab } from './CrmWorkforceOps';
@@ -10,11 +11,12 @@ import {
   type Action, type Mode, type Overview, type QueueId, type Status, type Task,
 } from '../crmwf/crmWorkforce';
 
-type Tab = 'team' | 'workspace' | 'items' | 'mining' | 'imports' | 'overview' | 'queues' | 'drafts' | 'workforce' | 'controls' | 'compliance' | 'connections' | 'training' | 'performance' | 'audit';
+type Tab = 'knowledge' | 'team' | 'workspace' | 'items' | 'mining' | 'imports' | 'overview' | 'queues' | 'drafts' | 'workforce' | 'controls' | 'compliance' | 'connections' | 'training' | 'performance' | 'audit';
 const TABS: Array<{ id: Tab; label: string; managers?: boolean }> = [
   { id: 'workspace', label: 'Today' },
   { id: 'items', label: 'Appointments and follow-ups' },
   { id: 'mining', label: 'Lead recovery' },
+  { id: 'knowledge', label: 'Store knowledge and inventory' },
   { id: 'overview', label: 'Overview' },
   { id: 'queues', label: 'Automation queue' },
   { id: 'drafts', label: 'Draft approvals' },
@@ -123,9 +125,12 @@ export function CrmWorkforce({ locationId: homeLocationId }: { locationId: strin
         ))}
       </div>
       <div key={tenantId || 'home'}>
+      {tab === 'knowledge' && <KnowledgeTab locationId={locationId} isManager={isManager && !readOnlyGroup} isAdmin={isAdmin && !readOnlyGroup} />}
       {tab === 'team' && mine.data && <GroupStopCard mine={mine.data} />}
       {tab === 'team' && <TeamTab isAdmin={isAdmin} actingRole={role} crossDealership={!home} locations={mine.data?.dealerships.find((d) => d.tenantId === (home ? mine.data?.homeTenantId : tenantId))?.locations ?? []} />}
       {tab === 'team' && <CostLimitsCard isAdmin={isAdmin} />}
+      {tab === 'team' && isAdmin && <AccessLogCard />}
+      {tab === 'team' && <ReportDeliveryCard locationId={locationId} />}
       {tab === 'team' && <PolicyCard />}
       {tab === 'workspace' && <WorkspaceTab locationId={locationId} isManager={isManager} />}
       {tab === 'items' && <WorkItemsTab locationId={locationId} />}

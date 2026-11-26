@@ -359,8 +359,12 @@ export class CrmWfAssistService {
       lead.tenantId,
       lead.locationId,
     );
-    const { facts, appointmentConfirmed } = await this.facts.forLead(lead, now);
+    const { facts, appointmentConfirmed, guidance } = await this.facts.forLead(
+      lead,
+      now,
+    );
     const draft = await this.drafter.draft({
+      guidance,
       lead,
       messages: lead.messages,
       agent,

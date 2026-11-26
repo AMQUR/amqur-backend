@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -231,6 +231,144 @@ export class CrmWfStaffService {
       {},
     );
     return link;
+  }
+
+  /**
+   * Employee offboarding in one step: account off and every session ended, pending links
+   * revoked, group memberships removed, their open staff items returned to the queue, their MFA
+   * reset (so a returning account must re-enrol), and their staff-directory entries retired.
+   * Audit history is kept. Not reversible by reactivation alone: memberships must be re-granted.
+   */
+  async offboard(
+    actor: Actor,
+    tenantId: string,
+    userId: string,
+    reason: string,
+  ) {
+    if ((reason ?? '').trim().length < 5)
+      throw new BadRequestException('offboarding_needs_a_reason');
+    const u = await this.target(actor, tenantId, userId);
+    const now = new Date();
+    const r = await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: u.id },
+        data: {
+          isActive: false,
+          mfaEnabled: false,
+          mfaSecretEnc: Prisma.DbNull,
+          mfaPendingSecretEnc: Prisma.DbNull,
+          mfaRecoveryHashes: [],
+          mfaLastCounter: null,
+          mfaEnrolledAt: null,
+        },
+      });
+      const sessions = await tx.refreshToken.updateMany({
+        where: { userId: u.id, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      await tx.crmWfStaffToken.updateMany({
+        where: { userId: u.id, usedAt: null, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      const memberships = await tx.dealerGroupMembership.deleteMany({
+        where: { userId: u.id },
+      });
+      const items = await tx.crmWfWorkItem.updateMany({
+        where: {
+          tenantId,
+          assignedUserId: u.id,
+          status: { in: ['OPEN', 'IN_PROGRESS'] },
+        },
+        data: { status: 'OPEN', assignedUserId: null, assigneeName: null },
+      });
+      const entries = await tx.dealerKnowledgeEntry.updateMany({
+        where: {
+          tenantId,
+          status: { in: ['APPROVED', 'PROPOSED'] },
+          kind: {
+            in: ['STAFF_MEMBER', 'DEPARTMENT_MANAGER', 'ESCALATION_CONTACT'],
+          },
+          data: { path: ['email'], equals: u.email },
+        },
+        data: { status: 'RETIRED' },
+      });
+      return {
+        sessionsEnded: sessions.count,
+        groupMembershipsRemoved: memberships.count,
+        workItemsReturned: items.count,
+        directoryEntriesRetired: entries.count,
+      };
+    });
+    await this.audit(tenantId, actor, 'crmwf.staff.offboarded', u.id, {
+      reason: reason.trim().slice(0, 300),
+      ...r,
+    });
+    return r;
+  }
+
+  /** Sign-ins, failed sign-ins, MFA events and staff changes for this dealership (no secrets). */
+  async accessLog(actor: Actor, tenantId: string, days = 30) {
+    if (!['ADMIN', 'SUPER_ADMIN'].includes(actor.role))
+      throw new ForbiddenException('access_log_requires_admin');
+    const since = new Date(
+      Date.now() - Math.min(Math.max(days, 1), 90) * 86_400_000,
+    );
+    const rows = await this.prisma.auditLog.findMany({
+      where: {
+        tenantId,
+        createdAt: { gte: since },
+        OR: [
+          { action: { startsWith: 'auth.' } },
+          { action: { startsWith: 'crmwf.staff.' } },
+          { action: { startsWith: 'crmwf.group_membership' } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 300,
+      select: {
+        id: true,
+        action: true,
+        createdAt: true,
+        ip: true,
+        metadata: true,
+        resource: true,
+        resourceId: true,
+        user: { select: { firstName: true, lastName: true, email: true } },
+      },
+    });
+    // Staff changes name both the person who acted and the person affected.
+    const subjectIds = [
+      ...new Set(
+        rows
+          .filter((r) => r.resource === 'User' && r.resourceId)
+          .map((r) => r.resourceId!),
+      ),
+    ];
+    const subjects = new Map(
+      (
+        await this.prisma.user.findMany({
+          where: { id: { in: subjectIds }, tenantId },
+          select: { id: true, firstName: true, lastName: true, email: true },
+        })
+      ).map((u) => [u.id, u]),
+    );
+    return rows.map((r) => {
+      const subj =
+        r.resource === 'User' && r.resourceId
+          ? subjects.get(r.resourceId)
+          : undefined;
+      return {
+        id: r.id,
+        action: r.action,
+        at: r.createdAt,
+        who: r.user ? `${r.user.firstName} ${r.user.lastName}`.trim() : null,
+        email: r.user?.email ?? null,
+        subject: subj ? `${subj.firstName} ${subj.lastName}`.trim() : null,
+        subjectEmail: subj?.email ?? null,
+        ip: r.ip,
+        reason: (r.metadata as { reason?: string } | null)?.reason ?? null,
+      };
+    });
   }
 
   async setActive(

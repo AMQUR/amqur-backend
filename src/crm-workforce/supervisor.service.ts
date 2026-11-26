@@ -314,9 +314,13 @@ export class CrmWfSupervisorService {
             dealership?.name ?? 'the dealership',
           ),
         };
-    const { facts, appointmentConfirmed } = await this.facts.forLead(lead, now);
+    const { facts, appointmentConfirmed, guidance } = await this.facts.forLead(
+      lead,
+      now,
+    );
 
     const draft = await this.drafter.draft({
+      guidance,
       lead,
       messages: lead.messages,
       agent: task.agentKey as AgentKey,
