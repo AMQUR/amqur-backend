@@ -3763,6 +3763,48 @@ describe('CRM Workforce (e2e)', () => {
     });
 
     it('inventory changes show added, missing and removed vehicles, and the same VIN listed by another store', async () => {
+      const g = await ctx.prisma.dealerGroup.upsert({
+        where: { slug: 'crmwf-test-group' },
+        create: { slug: 'crmwf-test-group', name: 'CRMWF Test Group' },
+        update: {},
+      });
+      await ctx.prisma.tenant.updateMany({
+        where: { id: { in: [ids.nissan.tenantId, ids.chevy.tenantId] } },
+        data: { dealerGroupId: g.id },
+      });
+      await ctx.prisma.tenant.update({
+        where: { id: ids.infiniti.tenantId },
+        data: { dealerGroupId: null },
+      });
+      // Same VIN at a dealership OUTSIDE the group: never revealed.
+      await ctx.prisma.vehicle.create({
+        data: {
+          tenantId: ids.infiniti.tenantId,
+          locationId: ids.infiniti.locationId,
+          vin: 'TESTCHG0000000004',
+          year: 2025,
+          make: 'Nissan',
+          model: 'Rogue',
+          status: 'AVAILABLE',
+          freshnessState: 'FRESH',
+          lastSeenAt: new Date(),
+          source: 'vauto_feed',
+        },
+      });
+      await ctx.prisma.vehicle.create({
+        data: {
+          tenantId: ids.nissan.tenantId,
+          locationId: ids.nissan.locationId,
+          vin: 'TESTCHG0000000004',
+          year: 2025,
+          make: 'Nissan',
+          model: 'Rogue',
+          status: 'AVAILABLE',
+          freshnessState: 'FRESH',
+          lastSeenAt: new Date(),
+          source: 'vauto_feed',
+        },
+      });
       const base = {
         year: 2025,
         make: 'Nissan',

@@ -127,7 +127,7 @@ export async function feedStatusForStore(
 /**
  * What changed in a store's inventory in the last `hours`: vehicles added, now missing from
  * the feed, or removed (never "sold" without vendor evidence), plus VINs this store lists that
- * another dealership also lists as available (a data problem to check before quoting either).
+ * another dealership OF THE SAME GROUP also lists as available (a data problem to check first).
  */
 export async function inventoryChanges(
   prisma: PrismaService,
@@ -183,17 +183,32 @@ export async function inventoryChanges(
       take: 5000,
     }),
   ]);
-  const dupes = mine.length
-    ? await prisma.vehicle.findMany({
-        where: {
-          vin: { in: mine.map((v) => v.vin) },
-          tenantId: { not: tenantId },
-          status: { in: ['AVAILABLE', 'IN_TRANSIT'] },
-        },
-        select: { vin: true, tenant: { select: { name: true } } },
-        take: 100,
-      })
+  // Only dealerships of the SAME dealer group are compared: another client's inventory, or even
+  // the fact that it lists a VIN, is never revealed. A store with no group gets no comparison.
+  const own = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { dealerGroupId: true },
+  });
+  const siblings = own?.dealerGroupId
+    ? (
+        await prisma.tenant.findMany({
+          where: { dealerGroupId: own.dealerGroupId, id: { not: tenantId } },
+          select: { id: true },
+        })
+      ).map((t) => t.id)
     : [];
+  const dupes =
+    mine.length && siblings.length
+      ? await prisma.vehicle.findMany({
+          where: {
+            vin: { in: mine.map((v) => v.vin) },
+            tenantId: { in: siblings },
+            status: { in: ['AVAILABLE', 'IN_TRANSIT'] },
+          },
+          select: { vin: true, tenant: { select: { name: true } } },
+          take: 100,
+        })
+      : [];
   return {
     since,
     added,
