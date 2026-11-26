@@ -18,15 +18,14 @@ Approval types: **Owner** · **Dealer principal** · **GM** (per store) · **Pri
 | R17 | Release 3 (key rotation, evaluation set, contracts) | Owner | 2026-11-25 | `89e598d` live |
 | R18 | Release 4 (shared knowledge, inventory lookup, offboarding, privacy coverage, report scheduling; migration `20261127090000`) | Owner | 2026-11-26 | `b8cc6fa` live |
 | K2 | Dedicated data and hash keys | Owner | 2026-11-26 | Set in Railway (API + worker), never displayed |
+| G1–G3 | Reviewed release path: #56 → integration, deploy.yml retargeted with lineage guard (#57), main protected, #55 → main | Owner | 2026-11-26 | `main` = `62be8d0` contains production; see RELEASE_GOVERNANCE.md |
 
 ## Open — needed now (internal, no third party)
 
 | ID | Exact permission requested | Responsible | Store | System / operation | Money | Limits / expiry | Risk | Rollback | Unlocks |
 |---|---|---|---|---|---|---|---|---|---|
 | **K1** | Keep copies of the keys outside Railway: (a) move the backup passphrase into your password manager and delete `.local-secrets/prod-db-backup-20261125.key`; (b) from the Railway dashboard, copy `CRM_WORKFORCE_DATA_KEY` and `CRM_WORKFORCE_HASH_KEY` (backend-production) into the same vault | Owner (you) | — | your vault | none | — | losing the only copy makes backups unreadable | — | Safe key custody |
-| **G1** | Merge PR #56 into `integration/amqur-unified-sandbox` after review | Owner (reviewer) | — | GitHub | none | — | none (no deploy trigger) | revert merge | Integration branch = production lineage |
-| **G3** | Change `deploy.yml` to target `backend-production`/`worker-production`, add the lineage guard, protect `main` | Owner | — | GitHub Actions | none | — | low | revert workflow | A reviewed deploy path that cannot drop live code |
-| **G2** | After G3: review and merge PR #55 (`integration` → `main`) | Owner (reviewer) | — | GitHub, then reviewed deploy | none | — | medium: first reviewed deploy; guard enforces lineage | revert; redeploy prior tag | Production built from `main` again |
+| **G4** | Create a Railway workspace token covering `amqur-platform-staging` and set it as GitHub secret `RAILWAY_API_TOKEN`; re-run the Deploy workflow | Owner (you) | — | Railway + GitHub | none | rotate yearly | low; staging deploy of code identical to production | revert the secret | Reviewed deploys from `main` (staging automatic, production on your approval) |
 | **R14** | Internal report destination: which channel (e-mail via existing Resend, or an internal chat webhook), which recipients (staff only), and the schedule (default 07:30 / 12:30 / 18:30 daily, Mon 08:00 weekly, Chicago) | Owner | per store or group | Worker; `CRM_WORKFORCE_REPORT_*` | none (existing Resend) | revocable any time | low: counts only, no customer data | unset `CRM_WORKFORCE_REPORTS_ENABLED` | Scheduled reports + critical alerts |
 | **I1** | Create one Railway Bucket plus a daily cron backup job (read-only DB role, encrypted dumps, 30 daily + 12 monthly kept) | Owner | — | Railway `amqur-platform-staging` | Railway storage per GB-month for ~10 MB; check the price in Railway | review yearly | low | delete bucket and job | Off-volume backups, 24 h RPO |
 | **I2** | Decide on a Railway plan that enables native volume backups (optional if I1 is done) | Owner | — | Railway billing | plan difference, per Railway's price page | — | — | downgrade | Point-in-time recovery |

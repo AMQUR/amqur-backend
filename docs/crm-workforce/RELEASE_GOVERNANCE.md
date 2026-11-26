@@ -58,3 +58,20 @@ Until G1–G3 are approved, releases continue as before: a manual deploy of a re
 - Migrations are additive: new tables and indexes only. No existing table has been altered by CRM Workforce (R1 `20261125090000`, R2 `20261126090000`, R4 `20261127090000`).
 - An encrypted, fully verified backup is taken before every release that carries a migration.
 - The schema is never rolled back. Application rollback redeploys an earlier tag; new tables are left unused.
+
+## G1–G3 executed (2026-11-26)
+
+| Step | Result |
+|---|---|
+| G1 | PR AMQUR/amqur-backend#56 merged into `integration/amqur-unified-sandbox` (`6a6710c`); contains production `b8cc6fa` |
+| G3 workflow | PR AMQUR/amqur-backend#57 merged (`7e6d6a6`): `deploy.yml` targets `amqur-platform-staging` only and runs the lineage guard before production. Dry runs against the real services: env preflight PASS ×4, staging acceptance 15/0, production identity OK |
+| G3 protection | `main` protected: pull request required; checks build-test, e2e-postgres, migrations-empty-db, docker-build, command-center, sbom required; no force-push or deletion; admins may bypass (break-glass) |
+| G2 | PR AMQUR/amqur-backend#55 merged: `main` = `62be8d0`, contains production `b8cc6fa` (180 commits brought in) |
+| First reviewed Deploy run | Run 45760140276 stopped at the staging preflight: `RAILWAY_API_TOKEN` is not authorized for `amqur-platform-staging`. Nothing deployed; the production job was skipped. This is the designed safe failure |
+
+**G4, the remaining owner action.**
+1. In Railway, create a token with access to the workspace that holds `amqur-platform-staging` (Account → Tokens, workspace scope).
+2. In GitHub, set it as the repository secret `RAILWAY_API_TOKEN`.
+3. Re-run the failed Deploy run. Staging deploys `main`, then production waits for your approval.
+
+`main` contains exactly production's code plus workflow and docs changes, so approving it is a no-op for behaviour. If the token no longer covers `dial-us-now-platform`, the manual `railway-var-presence.yml` helper (which targets that legacy project) will stop working; nothing else uses it.

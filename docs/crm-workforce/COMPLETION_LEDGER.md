@@ -20,7 +20,7 @@ Status vocabulary:
 | Production API + worker, migrations applied once | PV | R1–R3 evidence files; `_prisma_migrations` checks |
 | Staging rehearsal before each release | PV | R2/R3 smoke checks on staging |
 | Release lineage guard | PV | `scripts/release/verify-lineage.sh`; refuses `main` today |
-| Reviewed deploy path from `main` | EA | G1–G3; `RELEASE_GOVERNANCE.md` |
+| Reviewed deploy path from `main` | PI | G1–G3 done 2026-11-26 (`main` contains production; workflow retargeted; main protected). First run stopped safely: token lacks access (G4) |
 | Tags for every production deploy | PV | `prod-2026-11-25-*` pushed |
 
 ## 2. Product and administration
@@ -116,7 +116,7 @@ These scores use the owner's 2026-11-25 rubric. Earlier reports scored "engineer
 
 | # | Area | Max | Engineering completeness | Verified in production |
 |---|---|---|---|---|
-| 1 | Architecture and production isolation | 10 | 10 | 8 (no reviewed deploy path yet: G1–G3) |
+| 1 | Architecture and production isolation | 10 | 10 | 9 (reviewed path in place; token for automatic deploys pending: G4) |
 | 2 | Functional product and administration | 10 | 9 | 7 (all deployed; not yet used by employees) |
 | 3 | Verified knowledge and inventory | 10 | 8 | 2 (identity/phones/links only; no hours, staff, offers or inventory) |
 | 4 | Real authorized CRM integration | 15 | 6 | 2 (employee-assisted only) |
@@ -126,15 +126,15 @@ These scores use the owner's 2026-11-25 rubric. Earlier reports scored "engineer
 | 8 | Communication compliance and trust | 10 | 9 | 4 (enforced in code; counsel policy and consent not on file) |
 | 9 | Security, privacy, DR | 10 | 9 | 8 (dedicated keys set; off-volume/scheduled backups pending) |
 | 10 | Monitoring, reporting, cost | 5 | 4 | 2 (report delivery off; model prices not configured) |
-| | **Total** | **100** | **74** | **39** |
+| | **Total** | **100** | **74** | **40** |
 
 | View | Score | Basis |
 |---|---|---|
 | Engineering completeness | **74 / 100** | What is built and tested; external-only work counts as not built |
-| Production deployment readiness | **88 / 100** | R4 deployed and verified; open items are G1–G3 (reviewed path) and I1 (off-volume backups) |
+| Production deployment readiness | **92 / 100** | R4 live; reviewed path in place; open: G4 (deploy token), I1 (off-volume backups) |
 | Employee-assisted operational readiness | **45 / 100** | Usable today, but stores lack hours, staff, contacts, offers and inventory, and no employee has used it |
 | CRM integration readiness | **15 / 100** | Contracts and tasks ready; no authorized Tekion access |
 | Autonomous operational readiness | **5 / 100** | Blocked by policy, consent, CRM access and permits |
-| **Overall verified production readiness** | **39 / 100** | Production evidence only |
+| **Overall verified production readiness** | **40 / 100** | Production evidence only |
 
 The path to 100 is external: dealership data (D1–D6), inventory credentials (V1), Tekion (T1), counsel (R7, R11, R12), and the operational evidence that follows.
