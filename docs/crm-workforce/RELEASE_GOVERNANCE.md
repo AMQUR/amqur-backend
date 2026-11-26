@@ -23,9 +23,9 @@ main (cdc9a66)
 
 `main` is **behind production by 173+ commits**. Production does not run `main`.
 
-## The risk this creates
+## The risk this created (fixed by G1–G3, 2026-11-26)
 
-- `.github/workflows/deploy.yml` deploys `main` on every push. It goes to staging, then to production once an `AMQUR` reviewer approves in the GitHub `production` environment. Its last five runs (18 Nov) all failed, and it targets services named `prod-api` / `prod-worker`, not the `backend-production` / `worker-production` services that serve AMQUR today.
+- `.github/workflows/deploy.yml` deployed `main` on every push into Railway project **`dial-us-now-platform`** (`api.dialusnow.com`, services `api`/`prod-api`), a separate legacy system, not AMQUR's `backend-production`/`worker-production`. Its last five runs (18 Nov) failed. It now targets `amqur-platform-staging` only and runs the lineage guard before production.
 - Even so, if that workflow were repaired and approved as things stand, it would deploy `main`. That would remove the Concierge sales journey, ADF delivery and CRM Workforce from production; the database tables would stay, with nothing reading them.
 - `main` has no branch protection.
 
@@ -38,7 +38,7 @@ scripts/release/verify-lineage.sh 670992c   # OK: contains production 89e598d
 scripts/release/verify-lineage.sh origin/main   # REFUSED: would remove live functionality
 ```
 
-## The reviewed release path (requires approval G1–G3 in the approval register)
+## The reviewed release path (approved G1–G3, 2026-11-26)
 
 1. **G1. Merge PR #56 into `integration/amqur-unified-sandbox`** after review. The integration branch then equals the production lineage. No deploy is triggered: `deploy.yml` listens only to `main`.
 2. **G2. Review and merge PR #55 (`integration` → `main`)** with the CRM Workforce commits included. This is not "blindly merging sandbox code". The 154 integration commits are what production has run since before 25 November, and #55 is their review. Merge it **only after G3**, because a push to `main` starts `deploy.yml`.
