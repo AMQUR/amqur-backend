@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 
 import { isCredentialController } from './common/guards/credential-routes';
+import { createThrottlerStorage } from './common/guards/redis-throttler.storage';
 import { ConfigModule } from '@nestjs/config';
 import { envValidationSchema } from './config/env.validation';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -83,23 +84,27 @@ function isCredentialRoute(context: ExecutionContext): boolean {
       },
     }),
 
-    ThrottlerModule.forRoot([
-      {
-        name: 'default',
-        ttl: 60_000,
-        // Higher ceiling in test/load labs; production stays 120/min.
-        limit: rateLimit(120, 10_000),
-      },
-      {
-        // Credential endpoints only (login, MFA, password, invite redemption). Without this
-        // filter a named throttler applies to EVERY route, which capped the public widget
-        // (config + token + chat on each page view) at 20 requests a minute per address.
-        name: 'auth',
-        ttl: 60_000,
-        limit: rateLimit(20, 5_000),
-        skipIf: (context) => !isCredentialRoute(context),
-      },
-    ]),
+    ThrottlerModule.forRoot({
+      // Shared across API replicas when REDIS_URL is set (per-process otherwise).
+      storage: createThrottlerStorage(),
+      throttlers: [
+        {
+          name: 'default',
+          ttl: 60_000,
+          // Higher ceiling in test/load labs; production stays 120/min.
+          limit: rateLimit(120, 10_000),
+        },
+        {
+          // Credential endpoints only (login, MFA, password, invite redemption). Without this
+          // filter a named throttler applies to EVERY route, which capped the public widget
+          // (config + token + chat on each page view) at 20 requests a minute per address.
+          name: 'auth',
+          ttl: 60_000,
+          limit: rateLimit(20, 5_000),
+          skipIf: (context) => !isCredentialRoute(context),
+        },
+      ],
+    }),
 
     ScheduleModule.forRoot(),
     PrismaModule,
