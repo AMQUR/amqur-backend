@@ -1,0 +1,16 @@
+# Go-live stages — Dial Auto Group
+
+Each stage starts only when the stage before it holds and its own prerequisites are met. Approval IDs refer to `APPROVAL_REGISTER.md`. A stage is reported as live only with the evidence listed.
+
+| Stage | What it is | Prerequisites | Permissions | Controls | Evidence that it is live | Cost limit | People | Success | Roll back when |
+|---|---|---|---|---|---|---|---|---|---|
+| **A — Assist at five stores** | Employees use drafts and work items | R18 deployed; D1 hours; D2 contacts; D3 staff invited | Done (R2b) except D1–D3 | Store stop, department stop, group stop; sending off | ≥1 employee per store records a sent reply; health shows no MISSING hours or contacts | 500 drafts per store per day (lower per store if wanted) | GM, BDC manager, staff | Faster first replies, measured from staff confirmations | wrong-store data, a staff complaint, a guard failure |
+| **B — Real CRM imports** | Tekion exports feed lead recovery | A; R4 per store; K2 | Dealer principal + privacy | Import preview, undo, synthetic detection, retention | Import batch with real rows, then undo tested | none (no model use) | BDC manager | Recovery queues show real opportunities with eligibility | import error, privacy concern |
+| **C — Live CRM read** | Leads and history read automatically | T1 (sandbox, then live) | Tekion + dealer | Per-store connection, health, kill switch | SANDBOX VERIFIED, then LIVE VERIFIED per operation | API limits per Tekion | Platform operator | Mirror matches Tekion for sampled leads | mismatch, auth failure, rate limiting |
+| **D — Inbound reply detection** | Replies cancel stale drafts, set P0 | C (scope 3) | Tekion | Dedupe, signature check, cursor | Reply detected within one tick in production | — | Operator | No draft ever sent over a newer reply | missed or duplicate replies |
+| **E — Supervised sending** | A manager approves; the system sends via Tekion | D; R7; R11; D6; T1 scope 6 | Counsel + GM + Tekion | Per-message approval; send-time compliance; read-back verification | VERIFIED messages (read back) at one store | daily send caps per policy | GM approves | Zero policy violations; replies received | any violation, an opt-out mishandled |
+| **F — Appointment integration** | Real slots, confirmed bookings | C; T1 scope 8 | Tekion + GM | Slot rules; booking read-back; no double booking | CONFIRMED booking with Tekion reference | — | Service/sales managers | Shows recorded against confirmed bookings | double booking, wrong slot |
+| **G — Controlled autonomy** | Routine workflows run without per-message approval | E for 30 days without incident; R12 per workflow | GM + counsel per workflow | Permit fields; 90-day expiry; volume and window caps | Permit on record plus audited sends | permit's daily cap and budget | GM | Same quality as supervised at lower staff load | any breach: the permit is suspended |
+| **H — Five-store operations** | Sales, Service, Parts, Recovery at all stores | A–G per store | per store | per store | per-store evidence for each stage | per store | each GM | Verified outcomes per store | per-store rollback |
+
+**Where we are:** Stage A is enabled. It becomes fully usable once Release 4 (R18) is deployed and each store supplies hours, contacts and staff (D1–D3). Stages B–H have not started, and none is reported as live.

@@ -4,6 +4,8 @@ An additive division of the AMQUR backend that works CRM leads for a dealership:
 
 **Status as of 2026-11-25:** implemented and tested locally on branch `feat/crm-workforce` (pull request AMQUR/amqur-backend#56, draft). Not deployed. No CRM is connected. No customer has been contacted. Customer sending cannot be turned on by this code alone (see [What must be true before a message is sent](#what-must-be-true-before-a-message-is-sent)).
 
+Status of record: `docs/crm-workforce/COMPLETION_LEDGER.md` (status, 100-point assessment), `APPROVAL_REGISTER.md` (every open decision), `GO_LIVE_STAGES.md`, `RELEASE_GOVERNANCE.md`, `DISASTER_RECOVERY.md`.
+
 Related documents in `docs/crm-workforce/`: `TEKION_CAPABILITY_MAP.md`, `RELEASE_PLAN.md`, `APPROVAL_REGISTER.md`, `IMPLEMENTATION_LEDGER.md`, `NISSAN_PILOT.md`.
 
 ## What is on and what is off

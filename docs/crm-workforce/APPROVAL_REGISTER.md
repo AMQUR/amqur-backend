@@ -1,23 +1,72 @@
-# External approval register — CRM Workforce
+# Approval register — AMQUR CRM Workforce
 
-One row per approval that only a person outside engineering can give. Nothing below has been requested on your behalf; "Request" is the exact ask.
+**Consolidated 2026-11-25.** This is the single list of decisions that engineering cannot make. Completed approvals are recorded and are never asked again. Nothing here has been sent to anyone outside AMQUR; requests that go to third parties are drafted for the owner to send.
 
-| # | Approval | Who gives it | Request | Unblocks | Status |
+Approval types: **Owner** · **Dealer principal** · **GM** (per store) · **Privacy** · **Counsel** · **Tekion** · **Infrastructure** (owner, with cost) · **Third-party technical**.
+
+## Completed
+
+| ID | What was approved | By | When | Result |
+|---|---|---|---|---|
+| R1 | Production release of CRM Workforce (everything off) | Owner | 2026-11-25 | `0b8e7e3` live |
+| B1 | Non-destructive production backup + isolated restore rehearsal | Owner | 2026-11-25 | Done; repeated before each release |
+| R2 | Nissan pilot in Assist mode | Owner | 2026-11-25 | Done |
+| A1 | Create the owner's administrator accounts (owner typed the password) | Owner | 2026-11-25 | ADMIN at all five stores |
+| R2b | Assist mode at all five stores; sending, imports and CRM access off | Owner | 2026-11-25 | Done |
+| R15 | Release 2 (administration, migration `20261126090000`) | Owner | 2026-11-25 | `a08e49e` live |
+| R16 | Owner GROUP_ADMIN membership | Owner | 2026-11-25 | Granted, audited |
+| R17 | Release 3 (key rotation, evaluation set, contracts) | Owner | 2026-11-25 | `89e598d` live |
+
+## Open — needed now (internal, no third party)
+
+| ID | Exact permission requested | Responsible | Store | System / operation | Money | Limits / expiry | Risk | Rollback | Unlocks |
+|---|---|---|---|---|---|---|---|---|---|
+| **R18** | Deploy the Release 4 candidate (the commit named in the approval request) to production API + worker, applying additive migration `20261127090000` | Owner | all five | Railway `backend-production`, `worker-production` | none new | one release | low: additive table, all features gated | redeploy `89e598d` (table unused) | Knowledge screen, inventory lookup, department hours, offboarding, access log, privacy coverage, report preview |
+| **K2** | Set dedicated keys: `CRM_WORKFORCE_HASH_KEY` = Railway reference to the existing integration key; new random `CRM_WORKFORCE_DATA_KEY` generated straight into Railway | Owner | all | Railway variables (API + worker) | none | permanent | very low: production holds 0 sealed values | unset both variables | Workforce data sealed with its own key; integration-key compromise no longer exposes it |
+| **K1** | Move the backup passphrase into your password manager, then delete `.local-secrets/prod-db-backup-20261125.key` | Owner (you) | — | your vault | none | — | losing the only copy makes backups unreadable | — | Safe key custody |
+| **G1** | Merge PR #56 into `integration/amqur-unified-sandbox` after review | Owner (reviewer) | — | GitHub | none | — | none (no deploy trigger) | revert merge | Integration branch = production lineage |
+| **G3** | Change `deploy.yml` to target `backend-production`/`worker-production`, add the lineage guard, protect `main` | Owner | — | GitHub Actions | none | — | low | revert workflow | A reviewed deploy path that cannot drop live code |
+| **G2** | After G3: review and merge PR #55 (`integration` → `main`) | Owner (reviewer) | — | GitHub, then reviewed deploy | none | — | medium: first reviewed deploy; guard enforces lineage | revert; redeploy prior tag | Production built from `main` again |
+| **R14** | Internal report destination: which channel (e-mail via existing Resend, or an internal chat webhook), which recipients (staff only), and the schedule (default 07:30 / 12:30 / 18:30 daily, Mon 08:00 weekly, Chicago) | Owner | per store or group | Worker; `CRM_WORKFORCE_REPORT_*` | none (existing Resend) | revocable any time | low: counts only, no customer data | unset `CRM_WORKFORCE_REPORTS_ENABLED` | Scheduled reports + critical alerts |
+| **I1** | Create one Railway Bucket plus a daily cron backup job (read-only DB role, encrypted dumps, 30 daily + 12 monthly kept) | Owner | — | Railway `amqur-platform-staging` | Railway storage per GB-month for ~10 MB; check the price in Railway | review yearly | low | delete bucket and job | Off-volume backups, 24 h RPO |
+| **I2** | Decide on a Railway plan that enables native volume backups (optional if I1 is done) | Owner | — | Railway billing | plan difference, per Railway's price page | — | — | downgrade | Point-in-time recovery |
+
+## Open — store data that only the dealership has
+
+| ID | Exact request | Responsible | Store | Where it is entered | Unlocks |
 |---|---|---|---|---|---|
-| R1 | Production release of the CRM Workforce (migration + code, everything off) | AMQUR owner | "Approve deploying `feat/crm-workforce` at `<sha>` to backend-production and worker-production per RELEASE_PLAN.md, with no env switch set." | Staff can sign in and use the workspace in production | **Needed now** |
-| R2 | Pilot rooftop configuration | Owner + Dial Nissan GM | "Approve switching Dial Nissan to Assist mode with the employee-assisted connection, customer sending off (pilot-setup script, `--apply`)." | Employees start using Mode A at Nissan | Needed after R1 |
-| R3 | Staff accounts and roles for the pilot | Dial Nissan GM | Names, roles and rooftop for each employee who will use the workspace | Named access, audit by person | Needed after R1 |
-| R4 | Import of real customer exports | Dealer principal (per rooftop) + privacy reviewer | "Authorize uploading Tekion lead exports for `<rooftop>` to AMQUR; fields limited to those in the mapping screen; retention `<N>` days." | `crmWorkforceRealImports` for that rooftop | Not requested |
-| R5 | Backup and restore evidence for production Postgres | AMQUR owner / operator | Run the restore drill in `docs/BACKUP_AND_RESTORE.md`; record schedule, retention and result | Prerequisite for R4 (real data) | Open — existing blocker B-11 |
-| R6 | Dedicated data key | Operator | Set `CRM_WORKFORCE_DATA_KEY` (≥32 chars, from the vault) on backend-production and worker-production | Workforce data sealed with its own key instead of the shared integration key | Recommended before R4 |
-| R7 | Communication policy | Dealership counsel | Approve limits, contact window, consent wording and identity disclosure; give a document reference | Any system send | Not requested |
-| R8 | Tekion: agreement review | Dial Auto Group (contract holder) | Does the Tekion subscription agreement permit automated access to the CRM interface? | Mode C decision | Not requested |
-| R9 | Tekion: written automation permission, or APC API scopes | Tekion account team | Use `TEKION_PARTNER_REQUEST_TEMPLATE.md`; ask for lead read, conversation read, message send, task/note write, appointment scopes, sandbox and rate limits | Mode C or D | Not requested |
-| R10 | Dedicated Tekion identity per rooftop | Each rooftop's Tekion admin | A least-privilege user for the worker, created by the dealership | Mode C | After R9 |
-| R11 | Consent basis for outbound contact | Counsel + GM | Which existing customers have valid consent, and the evidence, per channel | Any outbound send | Not requested |
-| R12 | Per-workflow autonomy permit | GM + counsel, per rooftop and workflow | The fourteen fields in the permit (account, department, operation, audience, channel, consent, limits, window, escalation, expiry ≤ 90 days) | Level 3 for that one workflow | Not requested |
-| R13 | Virtual identities | GMs | Confirm Alex / Sarah / Victoria / James / Ryan and titles | System sends under that name | Not requested |
-| R14 | Internal notification channel for reports and alerts | Owner | Which existing channel (email list / chat) may receive internal reports | Scheduled report delivery | Not requested |
-| R15 | Release 2: administration screens (migration `20261126090000`, additive) | AMQUR owner | "Approve both" (2026-11-25) | Staff management, dealership switching, cost limits, group stop in production | **Done** — `a08e49e` live 2026-11-25 |
-| R16 | Owner group administration | AMQUR owner | "Approve both" (2026-11-25) | GROUP_ADMIN membership for the owner's Nissan ADMIN account in Dial Auto Group; audited as `crmwf.group_membership.granted` | **Done** 2026-11-25 |
-| R17 | Release 3: key rotation, evaluation set, booking/reply contracts, guard fixes (no migration) | AMQUR owner | "Approve release 3" (2026-11-25) | Rotation-ready vault and corrected availability guard in production | **Done** — `89e598d` live 2026-11-25 |
+| **D1** | Weekly store hours, sales/service/parts hours, and holiday hours (Thanksgiving 26 Nov, Christmas Eve/Day, New Year's Eve/Day) | GM of each store | each of five | Rooftop settings → Hours, then "I verified" | Concierge and agents can state hours |
+| **D2** | Department managers and escalation contacts (name, role, work e-mail/phone) | GM | each | CRM Workforce → Store knowledge | Escalations reach a named person |
+| **D3** | Staff directory (salespeople, advisors, parts) and accounts for those who will use the workspace | GM | each | Store knowledge + Team → Invite | Named ownership, staff use |
+| **D4** | Current approved offers/specials and manufacturer programs with end dates and disclaimers | GM + compliance | each | Spotlights → approve | Agents may mention offers |
+| **D5** | Customer policies the agents may state (e.g. pricing disclaimer, appointment policy) | GM / counsel | each | Store knowledge → Policy | Agents state policy accurately |
+| **D6** | Confirm or replace the virtual identities: Alex (Chevy, Virtual BDC Manager), Sarah (Nissan, Virtual BDC Manager), Victoria (INFINITI, Virtual Client Concierge), James (CDJR South, Virtual BDC Manager), Ryan (Jeep North, Virtual BDC Manager). Each must not match a real employee | GM of that store | each | AI workforce → identities | Use of the identity in any system message |
+
+## Open — inventory (third-party technical)
+
+| ID | Exact request | Responsible | Unlocks |
+|---|---|---|---|
+| **V1** | Read-only SFTP account `amqur_inventory_reader` on the Dial Difference SFTPGo host (host, user, password, host-key fingerprint), delivered through a secure channel, then set `AMQUR_VAUTO_SFTP_*`, `AMQUR_VAUTO_SFTP_ENABLED=true` and `INVENTORY_SYNC_ENABLED=true` on API and worker | Owner + the operator of the vAuto/SFTPGo host | All ten feeds (new + used × five stores) into the shared inventory; Google VLA feeds unaffected |
+| **V2** | Decide whether feed prices may be shown (`AMQUR_VAUTO_PUBLISH_PRICES`), per store, after compliance review of advertised-price rules | GM + counsel per store | Verified price statements |
+
+## Open — CRM, messaging and autonomy (counsel / Tekion / dealer)
+
+| ID | Exact request | Responsible | Store | Unlocks |
+|---|---|---|---|---|
+| **T1** | Send the Dial Auto Group authorization letter and AMQUR's APC request (`TEKION_REQUEST_PACKET.md`, track 1) | Owner / dealer principal sends | all five | Sandbox → live Tekion read, webhooks, native send, tasks, appointments |
+| **T2** | Counsel reviews the Tekion subscription agreement (track 2) | Dial counsel | — | Decision on browser method |
+| **T3** | Only if T1 is slow: written permission for a dedicated browser user (track 3) | Dealer principal → Tekion | per store | Authorized browser worker |
+| **R4** | Authorize importing Tekion CSV exports for a named store, with fields limited to the mapping screen and a retention period | Dealer principal + privacy reviewer | per store | Real lead imports |
+| **R7** | Counsel-approved communication policy (contact window, frequency, wording, identity disclosure) with a document reference | Dealership counsel | per store | Any system-sent message |
+| **R11** | Consent basis per channel for the customers to be messaged, with evidence | Counsel + GM | per store | Outbound messages to those customers |
+| **R12** | Per-workflow autonomy permit (all fields; maximum 90 days) | GM + counsel | per store, per workflow | Controlled autonomy for that workflow |
+
+## Retired entries
+
+| Old ID | Why |
+|---|---|
+| R3 (staff accounts via API) | Replaced by the invite screen (D3) |
+| R5 (backup evidence) | Done (B1) and superseded by I1/I2 for schedule and off-volume storage |
+| R6 (dedicated data key) | Superseded by K2 |
+| R8–R10 (Tekion) | Superseded by T1–T3 |
+| R13 (identities) | Superseded by D6 |

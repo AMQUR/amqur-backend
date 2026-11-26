@@ -60,6 +60,65 @@ Command Center → **CRM Workforce**. The tabs:
 | Lower the daily model limits | **Team, limits and policy** → Model cost limits (administrators) |
 | Read the communication policy | **Team, limits and policy** → Communication policy |
 
+## Store knowledge and inventory (Release 4)
+
+| You want to | Go to |
+|---|---|
+| See what the agents know and what is missing for a store | **Store knowledge and inventory**: the health table at the top, gaps first |
+| Enter store, department and holiday hours | **Rooftop settings** → Hours / Department hours → Save → **I verified these hours are correct** |
+| Add an escalation contact, manager, staff member, policy or guidance | **Store knowledge** → Add knowledge → Propose; a second manager or an administrator approves |
+| Make approved escalation e-mails receive Concierge escalations | **Store knowledge** → Apply escalation contacts to Concierge (administrators) |
+| Approve an offer | **Spotlights** (offers need a source, a disclaimer and an end date) |
+| Look up a vehicle | **Store knowledge and inventory** → Inventory → VIN, stock number or make and model |
+| See whether inventory feeds are arriving | Same card: each feed's state and the exact missing dependency |
+| Offboard someone who left | **Team, limits and policy** → Offboard (administrators) |
+| See sign-ins and failed sign-ins | **Team, limits and policy** → Staff access log (administrators) |
+| Preview a scheduled report | **Team, limits and policy** → Scheduled reports → Preview |
+
+## By role
+
+**Owner / group administrator**
+- Each morning:
+  1. Open **Group overview**.
+  2. Switch through the stores with **Dealership**, checking each one's Store knowledge health.
+  3. Read the **Morning** report.
+- Weekly: check the **Weekly** report, the access log, and Performance and costs.
+- Keep the emergency controls in mind: **Stop all dealerships** (Team tab), a store's red Stop button, or the environment stop through the platform operator.
+
+**General manager**
+1. Make sure hours, holiday hours, managers and escalation contacts are on file and re-confirmed every 90 days.
+2. Approve offers in Spotlights with end dates.
+3. Invite staff, and offboard leavers the same day.
+4. Read the end-of-day report.
+
+**BDC manager**
+1. Clear **Automation queue** and **Appointments and follow-ups** first.
+2. Rate a few sent replies under **Draft approvals → Sent**.
+3. Add store guidance when the same correction keeps coming up.
+4. Watch **Overview → Needs attention**.
+
+**Salesperson / BDC representative**
+1. Open **Today**. Work unanswered customers first, then new leads.
+2. For each customer, choose **Write a reply**, then edit it.
+3. Send the reply from Tekion as yourself, then choose **I sent this in the CRM**.
+4. When the customer answers, paste the reply in under **The customer replied**.
+5. Look up a vehicle in **Inventory** before promising anything. When inventory is not connected, say you will check.
+
+**Service advisor**
+- Service requests arrive as **Appointments and follow-ups** items. Book in Tekion, then mark the item done with the Tekion reference.
+- Never confirm a time before it is booked.
+
+**Parts employee**
+- Parts inquiries arrive as items. Answer fitment and availability only from the parts system.
+- The workforce never confirms fitment, price or an order.
+
+## Training a new employee (20 minutes)
+1. They accept their invitation and set their own password; managers and administrators also set up an authenticator.
+2. Walk through one customer in **Today**: write a reply, edit it, send it from Tekion, then confirm.
+3. Show **The customer replied**, **I'll handle this customer** and **Appointment**.
+4. Explain the rules: the system never states a price, availability, appointment or offer it cannot verify, and the employee must not add one either.
+5. Check after a week: their sent replies are rated in **Agent training**.
+
 ## Daily routines
 
 **Salesperson / BDC (Assist mode):**
@@ -81,7 +140,8 @@ Command Center → **CRM Workforce**. The tabs:
 | Editing the communication policy | Read-only on screen. A change needs counsel-approved wording and is recorded by the platform operator |
 | Pausing one named agent | Not a separate switch. Pause its department or workflow instead |
 | Platform-wide stop outside the group | Environment switch `CRM_WORKFORCE_EMERGENCY_STOP=true` (platform operator) |
-| Scheduled report delivery | Not built. Reports are on request |
+| Scheduled report delivery | Built, off until approval R14 names the channel and recipients |
+| Inventory | Off until the read-only feed credentials are provided (V1) |
 | Sending from the system, reading Tekion, booking | Blocked until Tekion access and the communication approvals are in place |
 
 ## Costs
