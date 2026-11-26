@@ -199,6 +199,7 @@ export type PendingQuestion =
   | 'appointment_date'
   | 'appointment_time'
   | 'contact_name'
+  | 'contact_last_name'
   | 'contact_method'
   | 'vehicle_choice'
   | 'parts_vin'
@@ -676,6 +677,27 @@ export function extractContact(
       )
         out.lastName = cap(last);
     }
+  } else if (pending === 'contact_last_name') {
+    // "Jones", "it's Jones", "Garcia Lopez": a bare surname in answer to "and your last name?"
+    const clean = text
+      .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, ' ')
+      .replace(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g, ' ')
+      .replace(
+        /^\s*(?:it'?s|its|my last name is|last name is|es|mi apellido es)\s+/i,
+        '',
+      )
+      .replace(/[,;.!]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const words = clean.split(/\s+/).filter(Boolean);
+    if (
+      words.length >= 1 &&
+      words.length <= 2 &&
+      /^[A-Za-zÀ-ÿ'\s-]+$/.test(clean) &&
+      !NAME_STOPWORDS.has(words[0].toLowerCase()) &&
+      !/^(no|nope|skip|pass|why|later|prefer|rather)$/i.test(words[0])
+    )
+      out.lastName = words.map(cap).join(' ');
   } else if (
     pending === 'contact_name' ||
     // "Mike Jones 312-555-0188" in answer to "best number?": a capitalized name next to the
@@ -1766,11 +1788,18 @@ export function understandTurn(
   // ── contact provided
   if (
     e.contact &&
-    (e.contact.phone || e.contact.email || e.contact.firstName)
+    (e.contact.phone ||
+      e.contact.email ||
+      e.contact.firstName ||
+      e.contact.lastName)
   ) {
     add(
       'PROVIDE_CONTACT',
-      pending === 'contact_name' || pending === 'contact_method' ? 0.95 : 0.7,
+      pending === 'contact_name' ||
+        pending === 'contact_last_name' ||
+        pending === 'contact_method'
+        ? 0.95
+        : 0.7,
       'contact details',
     );
   }

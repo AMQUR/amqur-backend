@@ -307,6 +307,7 @@ export class LeadsService {
     email?: string;
     interestedVin?: string;
     interestedStock?: string;
+    zipCode?: string;
     budget?: number;
     desiredPayment?: number;
     financingNeeded?: boolean;
@@ -341,6 +342,11 @@ export class LeadsService {
       email: set(p.email?.toLowerCase()),
       interestedVin: set(p.interestedVin),
       interestedStock: set(p.interestedStock),
+      zipCode: set(
+        p.zipCode && /^\d{5}(?:-\d{4})?$/.test(p.zipCode)
+          ? p.zipCode
+          : undefined,
+      ),
       budget: set(p.budget),
       desiredPayment: set(p.desiredPayment),
       financingNeeded: set(p.financingNeeded),

@@ -211,6 +211,16 @@ export type JourneyState = {
     creditPreview?: boolean;
   };
   handoff?: { escalationId?: string; notified?: boolean; queued?: boolean };
+  /**
+   * The shopper asked for something only a person can give (an out-the-door number, a call
+   * back, a salesperson). Contact details are collected for a lead, and the shopper is told a
+   * specialist will reach out only once that lead exists.
+   */
+  specialist?: {
+    reason: 'otd' | 'callback' | 'salesperson';
+    lastNameAskedTurn?: number;
+    promised?: boolean;
+  };
   /** customer questions we could not answer yet — resolved before pushing a CTA */
   openQuestions: string[];
   recentOpeners: string[];
