@@ -349,3 +349,24 @@ describe('understandTurn — generic inventory browse (five-rooftop journey regr
     expect(ids(m)).not.toContain('INVENTORY_SEARCH');
   });
 });
+
+describe('urgent safety language with words in between', () => {
+  it.each([
+    'My brakes just failed while I was driving my Jeep',
+    'my brakes completely went out',
+    'the brakes suddenly stopped working on the highway',
+    'brakes are not working',
+    'my steering just locked up',
+    'mis frenos fallaron',
+  ])('"%s" is an urgent safety report', (m) => {
+    expect(ids(m)).toContain('SAFETY_URGENT');
+  });
+
+  it.each([
+    'Do you have brake pads for a 2020 Jeep Wrangler?',
+    'How much is a brake inspection?',
+    'What do you have for brake pads?',
+  ])('"%s" is not', (m) => {
+    expect(ids(m)).not.toContain('SAFETY_URGENT');
+  });
+});

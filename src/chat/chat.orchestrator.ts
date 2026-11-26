@@ -1490,6 +1490,40 @@ export class ChatOrchestrator {
     return stores.length ? { stores } : null;
   }
 
+  /**
+   * Dealer stores this turn can point to when nobody on staff would be notified: no escalation
+   * channel is configured, and this tenant has a verified store directory. Null otherwise
+   * (an escalation channel exists, or a tenant without a directory keeps its own wording).
+   */
+  private async storesWhenStaffUnreachable(
+    t: Turn,
+  ): Promise<DealerStore[] | null> {
+    if (process.env.CRM_WEBHOOK_URL?.trim()) return null;
+    const directory = await this.dealerDirectory(t);
+    if (!directory) return null;
+    const named = storesNamedIn(t.message ?? '', directory.stores);
+    return named.length ? named : directory.stores;
+  }
+
+  /** Show the stores' own phone and contact cards instead of asking for contact details. */
+  private showStoreContactCards(
+    t: Turn,
+    stores: DealerStore[],
+    focus: 'visit' | 'service',
+  ) {
+    const lang = t.lang === 'es' ? 'es' : 'en';
+    t.cards = t.cards.filter((c) => c.kind !== 'dealership');
+    for (const d of stores) t.cards.push(buildDealershipCard(d, focus, lang));
+    t.sources.add('dealer_directory');
+    void this.analytics.trackEvent(
+      t.tenantId,
+      t.locationId,
+      'direct_contact_shown',
+      { stores: stores.map((d) => d.sourceRecordId), typedContact: false },
+      t.s.externalKey,
+    );
+  }
+
   /** True when this conversation has at least one working action tool (booking or leads). */
   private async toolsConnected(t: Turn): Promise<boolean> {
     const [appointments, leads] = await Promise.all([
@@ -2631,6 +2665,24 @@ export class ChatOrchestrator {
       state: notified ? 'notified' : queued ? 'queued' : 'recorded',
       escalationId: escalation.id,
     });
+    // Nobody would receive a number typed here: point to the store's own phone instead.
+    const unreachable =
+      !notified && !queued ? await this.storesWhenStaffUnreachable(t) : null;
+    if (unreachable) {
+      this.showStoreContactCards(
+        t,
+        unreachable,
+        st.department === 'service' ? 'service' : 'visit',
+      );
+      t.narration.push(
+        tr(
+          t.lang,
+          'This chat cannot notify the team yet, so please call the store directly using the button below.',
+          'Este chat todavía no puede avisar al equipo, así que llame directamente a la agencia con el botón de abajo.',
+        ),
+      );
+      return;
+    }
     if (!st.contact.phone && !st.contact.email) {
       this.ask(
         t,
@@ -2831,6 +2883,21 @@ export class ChatOrchestrator {
       !st.contact.phone &&
       !st.contact.email
     ) {
+      const unreachable = !recorded.channelConfigured
+        ? await this.storesWhenStaffUnreachable(t)
+        : null;
+      if (unreachable) {
+        this.showStoreContactCards(t, unreachable, 'visit');
+        const last = t.answers.length - 1;
+        const more = tr(
+          t.lang,
+          "To reach a manager who wasn't involved, call the store directly using the button below.",
+          'Para hablar con un gerente que no estuvo involucrado, llame directamente a la agencia con el botón de abajo.',
+        );
+        if (last >= 0) t.answers[last] = `${t.answers[last]} ${more}`;
+        else t.answers.push(more);
+        return;
+      }
       this.ask(
         t,
         'contact_method',
