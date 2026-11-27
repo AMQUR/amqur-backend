@@ -129,6 +129,7 @@ export class CrmWfSupervisorService {
       department: lead.department,
       workflowKey,
       assignedTo: lead.assignedTo,
+      agentKey: task.agentKey,
     });
     if (control.halted) {
       await this.queue.defer(

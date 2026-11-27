@@ -16,6 +16,11 @@ import { CrmWfEngineService } from '../../src/crm-workforce/engine.service';
 import { CrmWfIntakeService } from '../../src/crm-workforce/intake.service';
 import { CrmWfPrivacyService } from '../../src/crm-workforce/privacy.service';
 import { CrmWfReportSchedulerService } from '../../src/crm-workforce/report-scheduler.service';
+import { CrmWfReplyIngestService } from '../../src/crm-workforce/reply-ingest.service';
+import type {
+  ReplySource,
+  ReplyPage,
+} from '../../src/crm-workforce/adapters/reply-detection.contract';
 import { CrmWfKeyRotationService } from '../../src/crm-workforce/key-rotation.service';
 import { CrmWfQueueService } from '../../src/crm-workforce/queue.service';
 import { CrmWfVaultService } from '../../src/crm-workforce/vault.service';
@@ -3461,6 +3466,409 @@ describe('CRM Workforce (e2e)', () => {
           if (saved[k] === undefined) delete process.env[k];
           else process.env[k] = saved[k];
       }
+    });
+  });
+
+  describe('live-conversation safety: agent pause, stale drafts, reply ingestion, inventory changes', () => {
+    const assist = async () => {
+      await api('nissan')
+        .post('controls', {
+          scope: 'LOCATION',
+          locationId: ids.nissan.locationId,
+          mode: 'ASSIST',
+          reason: 'assist',
+        })
+        .expect(201);
+      await api('nissan')
+        .post('connectors', {
+          locationId: ids.nissan.locationId,
+          adapterKey: 'manual_assist',
+          enabled: true,
+        })
+        .expect(201);
+    };
+    const newLead = async () =>
+      unwrap<{ id: string }>(
+        (
+          await api('nissan', 'staff')
+            .post('assist/leads', {
+              locationId: ids.nissan.locationId,
+              department: 'SALES',
+              firstName: 'Test',
+              customerMessage: 'Is the Rogue still available?',
+            })
+            .expect(201)
+        ).body,
+      ).id;
+
+    it('an individual agent can be paused and resumed without stopping the others', async () => {
+      await assist();
+      const lead = await newLead();
+      const first = unwrap<{ actionId: string }>(
+        (
+          await api('nissan', 'staff')
+            .post(`leads/${lead}/draft`, {})
+            .expect(201)
+        ).body,
+      );
+      const agent = (
+        (
+          await ctx.prisma.crmWfAction.findUniqueOrThrow({
+            where: { id: first.actionId },
+          })
+        ).payload as { agent: string }
+      ).agent;
+      expect(agent).toBeTruthy();
+      await api('nissan', 'staff')
+        .post('controls', {
+          scope: 'WORKFLOW',
+          locationId: ids.nissan.locationId,
+          subjectKey: `agent:${agent}`,
+          halted: true,
+          reason: 'pause one agent',
+        })
+        .expect(201);
+      const r = await api('nissan', 'staff')
+        .post(`leads/${lead}/draft`, {})
+        .expect(409);
+      expect(JSON.stringify(r.body)).toContain(`agent:${agent}`);
+      // A different agent keeps working: a parts question with no customer reply is handled by the Parts BDC agent.
+      const other = agent === 'parts_bdc' ? 'SERVICE' : 'PARTS';
+      const lead2 = unwrap<{ id: string }>(
+        (
+          await api('nissan', 'staff')
+            .post('assist/leads', {
+              locationId: ids.nissan.locationId,
+              department: other,
+              firstName: 'Test',
+            })
+            .expect(201)
+        ).body,
+      ).id;
+      const d2 = unwrap<{ actionId?: string; kind: string }>(
+        (
+          await api('nissan', 'staff')
+            .post(`leads/${lead2}/draft`, {})
+            .expect(201)
+        ).body,
+      );
+      const agent2 = d2.actionId
+        ? (
+            (
+              await ctx.prisma.crmWfAction.findUniqueOrThrow({
+                where: { id: d2.actionId },
+              })
+            ).payload as { agent: string }
+          ).agent
+        : null;
+      expect(agent2).not.toBe(agent);
+      await api('nissan', 'staff')
+        .post('controls', {
+          scope: 'WORKFLOW',
+          locationId: ids.nissan.locationId,
+          subjectKey: `agent:${agent}`,
+          halted: false,
+          reason: 'staff cannot resume',
+        })
+        .expect(403);
+      await api('nissan', 'manager')
+        .post('controls', {
+          scope: 'WORKFLOW',
+          locationId: ids.nissan.locationId,
+          subjectKey: `agent:${agent}`,
+          halted: false,
+          reason: 'resume',
+        })
+        .expect(201);
+      await api('nissan', 'staff').post(`leads/${lead}/draft`, {}).expect(201);
+    });
+
+    it('a newer customer message cancels every unsent reply drafted before it, and sending re-checks it', async () => {
+      await assist();
+      const lead = await newLead();
+      const d = unwrap<{ actionId: string }>(
+        (
+          await api('nissan', 'staff')
+            .post(`leads/${lead}/draft`, {})
+            .expect(201)
+        ).body,
+      );
+      expect(d.actionId).toBeTruthy();
+      await new Promise((r) => setTimeout(r, 5));
+      await api('nissan', 'staff')
+        .post(`leads/${lead}/messages`, {
+          direction: 'INBOUND',
+          text: 'Actually, do you have it in blue?',
+        })
+        .expect(201);
+      const a = await ctx.prisma.crmWfAction.findUniqueOrThrow({
+        where: { id: d.actionId },
+      });
+      expect(a).toMatchObject({
+        status: 'CANCELLED',
+        statusReason: 'customer_sent_a_newer_message',
+      });
+      // Send-time check: an APPROVED message older than the latest reply is blocked, never sent.
+      const older = await ctx.prisma.crmWfAction.update({
+        where: { id: d.actionId },
+        data: {
+          status: 'APPROVED',
+          createdAt: new Date(Date.now() - 3_600_000),
+        },
+      });
+      const after = await actions.execute(older.id);
+      expect(after).toMatchObject({
+        status: 'BLOCKED',
+        statusReason: 'customer_sent_a_newer_message',
+      });
+      expect(route).toHaveBeenCalled();
+    });
+
+    it('CRM replies are applied once, opt-outs suppress, and the cursor moves only after the page', async () => {
+      const ing = ctx.app.get(CrmWfReplyIngestService);
+      await intake.ingest(scope('nissan'), 'fixture', [
+        rec({ sourceRecordId: 'REPLY-LEAD-1', outboundHoursAgo: 5 }),
+        rec({ sourceRecordId: 'REPLY-LEAD-2', outboundHoursAgo: 5 }),
+      ]);
+      await ctx.prisma.crmWfConnector.upsert({
+        where: {
+          tenantId_locationId_adapterKey: {
+            tenantId: ids.nissan.tenantId,
+            locationId: ids.nissan.locationId,
+            adapterKey: 'fixture',
+          },
+        },
+        create: {
+          tenantId: ids.nissan.tenantId,
+          locationId: ids.nissan.locationId,
+          adapterKey: 'fixture',
+          enabled: true,
+          status: 'READY',
+        },
+        update: { enabled: true, syncCursor: null },
+      });
+      const at = new Date().toISOString();
+      const pages: ReplyPage[] = [
+        {
+          status: 'OK',
+          nextCursor: 'c1',
+          replies: [
+            {
+              sourceMessageId: 'm1',
+              crmLeadRef: 'REPLY-LEAD-1',
+              channel: 'SMS',
+              occurredAt: at,
+              body: 'Saturday works',
+            },
+            {
+              sourceMessageId: 'm1',
+              crmLeadRef: 'REPLY-LEAD-1',
+              channel: 'SMS',
+              occurredAt: at,
+              body: 'Saturday works',
+            },
+            {
+              sourceMessageId: 'm2',
+              crmLeadRef: 'REPLY-LEAD-2',
+              channel: 'SMS',
+              occurredAt: at,
+              body: 'STOP',
+            },
+            {
+              sourceMessageId: 'm3',
+              crmLeadRef: 'NOT-IN-MIRROR',
+              channel: 'SMS',
+              occurredAt: at,
+              body: 'hello',
+            },
+          ],
+        },
+        {
+          status: 'OK',
+          nextCursor: 'c2',
+          replies: [
+            {
+              sourceMessageId: 'm1',
+              crmLeadRef: 'REPLY-LEAD-1',
+              channel: 'SMS',
+              occurredAt: at,
+              body: 'Saturday works',
+            },
+          ],
+        },
+        {
+          status: 'THROTTLED',
+          replies: [],
+          nextCursor: null,
+          reason: 'rate_limited',
+        },
+      ];
+      const seen: Array<string | null> = [];
+      const src: ReplySource = {
+        key: 'fixture',
+        poll: (_s, cursor) => {
+          seen.push(cursor);
+          return Promise.resolve(pages.shift()!);
+        },
+      };
+      const r1 = await ing.pollOnce(scope('nissan'), 'fixture', src);
+      expect(r1).toMatchObject({ status: 'OK', applied: 2, unknownLeads: 1 });
+      const r2 = await ing.pollOnce(scope('nissan'), 'fixture', src);
+      expect(r2).toMatchObject({ status: 'OK', applied: 0, duplicates: 1 });
+      const r3 = await ing.pollOnce(scope('nissan'), 'fixture', src);
+      expect(r3.status).toBe('THROTTLED');
+      expect(seen).toEqual([null, 'c1', 'c2']);
+      const conn = await ctx.prisma.crmWfConnector.findFirstOrThrow({
+        where: { tenantId: ids.nissan.tenantId, adapterKey: 'fixture' },
+      });
+      expect(conn.syncCursor).toBe('c2'); // a throttled page never moves it
+      const l1 = await ctx.prisma.crmWfLead.findFirstOrThrow({
+        where: {
+          tenantId: ids.nissan.tenantId,
+          sourceRecordId: 'REPLY-LEAD-1',
+        },
+        include: { messages: true },
+      });
+      expect(
+        l1.messages.filter((m) => m.sourceRecordId === 'crm:m1'),
+      ).toHaveLength(1);
+      const t1 = await ctx.prisma.crmWfTask.findFirstOrThrow({
+        where: { crmLeadId: l1.id, status: 'PENDING' },
+      });
+      expect(t1.priority).toBe(0);
+      const l2 = await ctx.prisma.crmWfLead.findFirstOrThrow({
+        where: {
+          tenantId: ids.nissan.tenantId,
+          sourceRecordId: 'REPLY-LEAD-2',
+        },
+      });
+      expect(
+        await ctx.prisma.crmWfSuppression.count({
+          where: { tenantId: ids.nissan.tenantId, endpointHash: l2.phoneHash! },
+        }),
+      ).toBeGreaterThan(0);
+      expect(
+        await ctx.prisma.crmWfTask.count({
+          where: { crmLeadId: l2.id, status: 'PENDING' },
+        }),
+      ).toBe(0);
+      // A disabled connector reads nothing.
+      await ctx.prisma.crmWfConnector.updateMany({
+        where: { tenantId: ids.nissan.tenantId, adapterKey: 'fixture' },
+        data: { enabled: false },
+      });
+      expect((await ing.pollOnce(scope('nissan'), 'fixture', src)).status).toBe(
+        'DISABLED',
+      );
+    });
+
+    it('inventory changes show added, missing and removed vehicles, and the same VIN listed by another store', async () => {
+      const g = await ctx.prisma.dealerGroup.upsert({
+        where: { slug: 'crmwf-test-group' },
+        create: { slug: 'crmwf-test-group', name: 'CRMWF Test Group' },
+        update: {},
+      });
+      await ctx.prisma.tenant.updateMany({
+        where: { id: { in: [ids.nissan.tenantId, ids.chevy.tenantId] } },
+        data: { dealerGroupId: g.id },
+      });
+      await ctx.prisma.tenant.update({
+        where: { id: ids.infiniti.tenantId },
+        data: { dealerGroupId: null },
+      });
+      // Same VIN at a dealership OUTSIDE the group: never revealed.
+      await ctx.prisma.vehicle.create({
+        data: {
+          tenantId: ids.infiniti.tenantId,
+          locationId: ids.infiniti.locationId,
+          vin: 'TESTCHG0000000004',
+          year: 2025,
+          make: 'Nissan',
+          model: 'Rogue',
+          status: 'AVAILABLE',
+          freshnessState: 'FRESH',
+          lastSeenAt: new Date(),
+          source: 'vauto_feed',
+        },
+      });
+      await ctx.prisma.vehicle.create({
+        data: {
+          tenantId: ids.nissan.tenantId,
+          locationId: ids.nissan.locationId,
+          vin: 'TESTCHG0000000004',
+          year: 2025,
+          make: 'Nissan',
+          model: 'Rogue',
+          status: 'AVAILABLE',
+          freshnessState: 'FRESH',
+          lastSeenAt: new Date(),
+          source: 'vauto_feed',
+        },
+      });
+      const base = {
+        year: 2025,
+        make: 'Nissan',
+        model: 'Rogue',
+        freshnessState: 'FRESH' as const,
+        lastSeenAt: new Date(),
+        source: 'vauto_feed',
+      };
+      await ctx.prisma.vehicle.createMany({
+        data: [
+          {
+            ...base,
+            tenantId: ids.nissan.tenantId,
+            locationId: ids.nissan.locationId,
+            vin: 'TESTCHG0000000001',
+            status: 'AVAILABLE',
+          },
+          {
+            ...base,
+            tenantId: ids.nissan.tenantId,
+            locationId: ids.nissan.locationId,
+            vin: 'TESTCHG0000000002',
+            status: 'MISSING',
+          },
+          {
+            ...base,
+            tenantId: ids.nissan.tenantId,
+            locationId: ids.nissan.locationId,
+            vin: 'TESTCHG0000000003',
+            status: 'REMOVED_FROM_LISTING',
+            listingRemovedAt: new Date(),
+          },
+          {
+            ...base,
+            tenantId: ids.chevy.tenantId,
+            locationId: ids.chevy.locationId,
+            vin: 'TESTCHG0000000001',
+            status: 'AVAILABLE',
+          },
+        ],
+      });
+      const c = unwrap<{
+        added: Array<{ vin: string }>;
+        missing: Array<{ vin: string }>;
+        removed: Array<{ vin: string }>;
+        duplicateVinsElsewhere: Array<{ vin: string; alsoListedBy: string }>;
+      }>(
+        (
+          await api('nissan', 'staff')
+            .get(`inventory/changes?locationId=${ids.nissan.locationId}`)
+            .expect(200)
+        ).body,
+      );
+      expect(c.added.map((v) => v.vin)).toEqual(
+        expect.arrayContaining(['TESTCHG0000000001']),
+      );
+      expect(c.missing.map((v) => v.vin)).toContain('TESTCHG0000000002');
+      expect(c.removed.map((v) => v.vin)).toContain('TESTCHG0000000003');
+      expect(c.duplicateVinsElsewhere).toEqual([
+        { vin: 'TESTCHG0000000001', alsoListedBy: 'CRMWF chevy' },
+      ]);
+      await ctx.prisma.vehicle.deleteMany({
+        where: { vin: { startsWith: 'TESTCHG' } },
+      });
     });
   });
 

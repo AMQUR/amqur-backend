@@ -365,6 +365,20 @@ export class CrmWfIntakeService {
       include: { messages: true },
     });
     if (!row) return null;
+    // A newer customer message makes every unsent reply drafted before it stale: cancel them so
+    // nothing is ever sent over the customer. (Execution re-checks this at the moment of sending.)
+    if (row.lastInboundAt)
+      await this.prisma.crmWfAction.updateMany({
+        where: {
+          crmLeadId: row.id,
+          status: { in: ['DRAFT', 'PENDING_APPROVAL', 'APPROVED'] },
+          createdAt: { lt: row.lastInboundAt },
+        },
+        data: {
+          status: 'CANCELLED',
+          statusReason: 'customer_sent_a_newer_message',
+        },
+      });
     const lead = this.vault.withMessages(row);
     const { facts, signals } = leadFacts(lead, lead.messages);
     const done = (extra: object = {}) =>

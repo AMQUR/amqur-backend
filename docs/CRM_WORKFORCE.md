@@ -110,6 +110,15 @@ P0 customer waiting on a reply · P1 new lead, no response · P2 appointment cha
 - **Model cost limits** per dealership, only ever tighter than the platform environment limits; the drafter enforces the effective limit.
 - **Group emergency stop** sets the TENANT kill switch on every dealership in the group (group administrators only); resuming restores each previous mode.
 
+## Live-conversation safety (2026-11-26)
+
+- **Individual agent pause:** a WORKFLOW-scope control with subject `agent:<key>` halts that agent at one rooftop, on both the drafting and engine paths. Anyone may pause; only managers resume.
+- **Stale drafts:** when a newer customer message arrives, every unsent reply drafted before it is cancelled (`customer_sent_a_newer_message`), and sending re-checks this.
+- **Reply ingestion:** `CrmWfReplyIngestService` applies CRM-detected replies once, keyed by CRM message id.
+  - It reuses intake planning: an opt-out suppresses, a needs-a-person message escalates, anything else makes the customer P0.
+  - It moves the connector's `syncCursor` only after a full page is handled, under an advisory lock.
+- **Inventory changes:** `GET inventory/changes` lists vehicles added, missing or removed, and VINs that another store also lists.
+
 ## Evaluation
 
 `npm run eval:crm-workforce` runs the golden set (`src/crm-workforce/evaluation/golden.ts`): 42 inbound cases (English and Spanish; opt-outs, people-only topics, hostile input, ordinary questions) and 21 reply cases (unsourced price, availability, booking, diagnosis, impersonation, disclosure, tone). Critical cases gate a release. `scoreReply()` scores real model output against the same rules. The set found one false positive in the output guard (a multi-word subject in "check whether the white Rogue is still here"), fixed with regression tests.
