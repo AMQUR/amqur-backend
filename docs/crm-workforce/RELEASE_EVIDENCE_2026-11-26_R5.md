@@ -26,3 +26,19 @@ Another Claude session working for the owner ("AMQUR agent demo readiness") depl
 1. `/api/version` reports the `APP_COMMIT_SHA` variable, not the running image. It showed `5e0d58e` while the API ran `6dc3796`. Releases are now also confirmed against Railway deployment records and files inside the containers.
 2. Sessions deploying to shared environments announce before deploying, and the lineage guard runs immediately before `railway up`, not minutes earlier.
 3. A single combined commit `34270c6` (Release 5 plus PR #60, CI green, verified on staging with both builds present) is prepared as the one next production deploy.
+
+## Combined release `34270c6` (Release 5 + PR #60), 2026-11-27
+
+| Item | Result |
+|---|---|
+| Approval | Owner, in chat: "Approve combined deploy" |
+| Commit / tag | `34270c6` (merge of `main` `6dc3796` into `feat/crmwf-completion`); tag `prod-2026-11-27-crmwf-r5-pr60` |
+| Coordination | The other session was told before the deploy and acknowledged; it deployed nothing during the release |
+| CI | all six checks green on `34270c6` |
+| Staging | `34270c6` on both staging services; both builds' files present; staging acceptance 15/0 |
+| Lineage guard | run immediately before deploy: contains production `5e0d58e` (6 new commits); no migrations |
+| Backup | `amqur-prod-pre-34270c6-20261127.dump.enc`, 332,208 B, sha256 `1a14fe4e…8963c66a`; full decrypt + `pg_restore` read (72 table-data entries) |
+| Deploy | Railway `backend-production` `09c8caf6` and `worker-production` `a5f04830`, both SUCCESS |
+| Verified running code | files inside both containers include Release 5 (`reply-ingest.service.js`) and PR #60 (`redis-throttler.storage.js`) |
+| Production | health 200, `/cc/` 200, site 200, widget config 200 for all five stores; 0 pending migrations |
+| Five stores | all Assist, not halted, sending off, imports off; 0 actions sent or executing; ADF on; dedicated keys present; owner group membership intact |
